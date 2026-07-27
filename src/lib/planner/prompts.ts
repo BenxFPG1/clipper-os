@@ -13,6 +13,10 @@ Regels:
 - "ironie" beschrijft wat de kijker straks weet dat op dat moment nog niet zichtbaar is.
 - Verzin niets dat niet in het transcript staat.`;
 
+export function planSystem(maxClips: number): string {
+  return PLAN_SYSTEM.replace('Lever 10 tot 25 clips', `Lever 10 tot ${maxClips} clips`);
+}
+
 export const PLAN_SYSTEM = `Je bent een clip-strateeg. Je bouwt uit een lange bronvideo een plan voor short-form clips (TikTok/Reels/Shorts) die als mini-verhalen werken.
 
 Elke clip heeft vier beats:

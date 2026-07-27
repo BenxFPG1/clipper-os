@@ -5,7 +5,7 @@ Alles wat buiten de huidige scope valt. Niets hieruit gaat de sprint in zonder e
 ## Blokkeert nu iets
 
 - **ScrapeCreators-key ontbreekt.** Blokkeert alleen nog Instagram/Reels (accounts, zoeken, tracking) en zoeken op TikTok. TikTok-accounts, Shorts en het tracken van eigen TikTok/Shorts-clips werken gratis via yt-dlp.
-- **Anthropic-credits zijn op (27 juli).** Plannen, scripts en decoderen liggen stil tot er credits bij zijn; de scout blijft wel vondsten verzamelen.
+- **Claude Code CLI is uitgelogd.** `CLAUDE_BACKEND=claude-code` staat klaar zodat alles uit het abonnement betaald wordt, maar vereist eenmalig `claude login` in een terminal. Tot die tijd (of tot er API-credits zijn) liggen plannen, scripts en decoderen stil; de scout blijft wel vondsten verzamelen.
 
 ## Bekende beperkingen
 
@@ -14,6 +14,8 @@ Alles wat buiten de huidige scope valt. Niets hieruit gaat de sprint in zonder e
 - **Instagram-metrics zijn het wankelst.** TikTok en YouTube leveren betrouwbare cijfers via de providers; Reels wisselt per provider en per post.
 
 ## Later
+
+- **Batch API voor plannen (API-backend).** 50% korting op alle tokens; een plan mag best een uur onderweg zijn. Alleen relevant als de API-route weer de hoofdroute wordt.
 
 - **Doorlooptijd van het clip-plan.** Op een video van 39 minuten duurt de pipeline ongeveer tien minuten, waar de definition of done vijf noemt. Instelbaar via `PLAN_EFFORT`; of `high` even goede plannen geeft moet op eigen materiaal getest worden.
 - Speaker-diarization in het transcript (nu leidt de analysestap sprekers uit context af).

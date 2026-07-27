@@ -1,12 +1,12 @@
 import { structuredCall } from '../claude';
-import { CHARMAP_EFFORT, PLAN_EFFORT } from '../env';
+import { CHARMAP_EFFORT, PLAN_EFFORT, PLAN_MAX_CLIPS } from '../env';
 import { TranscriptSegment, renderTranscript, transcriptDuration } from '../ingest/transcript';
 import { VaultSnapshot, renderVaultForPrompt } from '../vault';
 import {
   CHARACTER_MAP_SYSTEM,
-  PLAN_SYSTEM,
   buildCharacterMapUser,
   buildPlanUser,
+  planSystem,
 } from './prompts';
 import {
   CharacterMap,
@@ -52,7 +52,7 @@ export async function generateClipPlan(
   input: PlannerInput & { characterMap: CharacterMap },
 ): Promise<ClipPlan> {
   const plan = await structuredCall({
-    system: PLAN_SYSTEM,
+    system: planSystem(PLAN_MAX_CLIPS),
     user: buildPlanUser({
       title: input.title,
       durationSeconds: input.durationSeconds,

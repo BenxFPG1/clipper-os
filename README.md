@@ -112,6 +112,16 @@ src/app/               UI-schermen en API-routes
 
 Versionering: elke plan-run legt `prompt_version`, `schema_version` en een volledige `vault_snapshot` vast, zodat een plan later exact te herleiden is naar de gewichten waarmee het gemaakt is.
 
+## Betalen uit je abonnement in plaats van API-credits
+
+Standaard staat `CLAUDE_BACKEND=claude-code` in `.env`: alle Claude-calls (plannen, scripts, decoderingen, retro) lopen dan via de lokale Claude Code CLI en tellen mee in je Claude-abonnement in plaats van losse API-credits. Eenmalig nodig:
+
+```bash
+claude login
+```
+
+Let op: dit werkt alleen op je eigen machine. Op Vercel bestaat de CLI niet — zet daar `CLAUDE_BACKEND=api` met een `ANTHROPIC_API_KEY`. De tool haalt bij dit backend bewust `ANTHROPIC_API_KEY` uit de omgeving van het subprocess, zodat er nooit stiekem tóch credits verbranden. Zware dagen kunnen tegen de rate-limits van je abonnement aanlopen; dan is de API het vangnet.
+
 ## Kosten en doorlooptijd
 
 Gemeten op een echte aflevering van 39 minuten (440 transcriptsegmenten):
@@ -131,7 +141,14 @@ SCRIPT_EFFORT=xhigh
 AGENT_EFFORT=high
 ```
 
-`PLAN_EFFORT=high` halveert de doorlooptijd ruwweg. Of dat de kwaliteit merkbaar raakt moet je op je eigen materiaal testen — bij een plan dat je één keer per bronvideo maakt en waar Marlou daarna uren op edit, is tien minuten wachten meestal de betere ruil. Vink bij een tweede planversie "character map hergebruiken" aan; dat scheelt de helft.
+De knoppen om een plan goedkoper te maken, op volgorde van impact:
+
+1. **`CLAUDE_BACKEND=claude-code`** — geen API-kosten meer, zie hierboven.
+2. **`PLAN_MAX_CLIPS=15`** (10-25) — de output-tokens zijn de grootste post; minder vulling-clips scheelt direct, de topclips veranderen er niet van.
+3. **"Character map hergebruiken"** aanvinken bij een nieuwe planversie — scheelt de hele stap 1.
+4. **`PLAN_EFFORT=high`** i.p.v. `xhigh` — halveert de doorlooptijd ruwweg; test op eigen materiaal of je verschil ziet.
+
+Draai de eval alleen bij prompt- of vaultwijzigingen: die kost een volledige plan-run per case.
 
 Providerkosten worden per call gelogd in `provider_usage`. De tracking-run geeft een alert zodra de maandkosten `COST_ALERT_EUR` (standaard €20) overschrijden.
 
