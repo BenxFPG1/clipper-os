@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { structuredCall } from '../claude';
+import { AGENT_EFFORT } from '../env';
 import { db, logProviderUsage } from '../supabase';
 import { loadVault, renderVaultForPrompt } from '../vault';
 import { median } from '../tracking/performance';
@@ -141,7 +142,7 @@ export async function runScoutAgent(options?: { limitPerAccount?: number }): Pro
       toolName: 'lever_scout_analyse',
       toolDescription: 'Lever de decodering van deze posts plus kandidaat-heuristieken.',
       maxTokens: 16000,
-      effort: 'high',
+      effort: AGENT_EFFORT,
       operation: 'scout_agent',
     });
   }

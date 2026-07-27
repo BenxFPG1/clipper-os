@@ -104,7 +104,26 @@ src/app/               UI-schermen en API-routes
 
 Versionering: elke plan-run legt `prompt_version`, `schema_version` en een volledige `vault_snapshot` vast, zodat een plan later exact te herleiden is naar de gewichten waarmee het gemaakt is.
 
-## Kosten
+## Kosten en doorlooptijd
+
+Gemeten op een echte aflevering van 39 minuten (440 transcriptsegmenten):
+
+| Stap | Duur | Kosten |
+| --- | --- | --- |
+| Character map | onderdeel van de 10 min | €0,27 |
+| Clip-plan (23 clips) | samen ±10 min | €1,14 |
+| Script uit een briefing | ±2,5 min | €0,18 |
+
+Een volledig plan kost dus ongeveer €1,40. De tien minuten zitten boven de vijf uit de definition of done; dat komt door de denkdiepte. Die staat per stap in `.env`:
+
+```
+CHARMAP_EFFORT=high
+PLAN_EFFORT=xhigh
+SCRIPT_EFFORT=xhigh
+AGENT_EFFORT=high
+```
+
+`PLAN_EFFORT=high` halveert de doorlooptijd ruwweg. Of dat de kwaliteit merkbaar raakt moet je op je eigen materiaal testen — bij een plan dat je één keer per bronvideo maakt en waar Marlou daarna uren op edit, is tien minuten wachten meestal de betere ruil. Vink bij een tweede planversie "character map hergebruiken" aan; dat scheelt de helft.
 
 Providerkosten worden per call gelogd in `provider_usage`. De tracking-run geeft een alert zodra de maandkosten `COST_ALERT_EUR` (standaard €20) overschrijden.
 

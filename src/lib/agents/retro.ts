@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { structuredCall } from '../claude';
+import { AGENT_EFFORT } from '../env';
 import { db, one } from '../supabase';
 import { loadVault } from '../vault';
 import { median } from '../tracking/performance';
@@ -110,7 +111,7 @@ export async function runRetroAgent(): Promise<{ agentRunId: string; proposal: R
             toolName: 'lever_vault_voorstel',
             toolDescription: 'Lever de voorgestelde vault-gewichtswijzigingen met bewijs.',
             maxTokens: 16000,
-            effort: 'high',
+            effort: AGENT_EFFORT,
             operation: 'retro_agent',
           }),
           eligible,

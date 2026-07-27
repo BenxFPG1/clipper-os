@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { structuredCall } from '../claude';
+import { SCRIPT_EFFORT } from '../env';
 import { db } from '../supabase';
 import { loadVault, renderVaultForPrompt } from '../vault';
 
@@ -103,7 +104,7 @@ ${renderVaultForPrompt(vault)}${scoutBlok}`,
     toolName: 'lever_script',
     toolDescription: 'Lever het volledige script voor deze briefing.',
     maxTokens: 32000,
-    effort: 'xhigh',
+    effort: SCRIPT_EFFORT,
     operation: 'scriptwriter',
   });
 

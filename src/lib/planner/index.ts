@@ -1,4 +1,5 @@
 import { structuredCall } from '../claude';
+import { CHARMAP_EFFORT, PLAN_EFFORT } from '../env';
 import { TranscriptSegment, renderTranscript, transcriptDuration } from '../ingest/transcript';
 import { VaultSnapshot, renderVaultForPrompt } from '../vault';
 import {
@@ -41,7 +42,7 @@ export async function generateCharacterMap(input: {
     toolName: 'lever_character_map',
     toolDescription: 'Lever de narratieve analyse van de volledige video.',
     maxTokens: 32000,
-    effort: 'high',
+    effort: CHARMAP_EFFORT,
     operation: 'character_map',
   });
 }
@@ -65,7 +66,7 @@ export async function generateClipPlan(
     toolDescription: 'Lever het volledige clip-plan voor deze bronvideo.',
     maxTokens: 64000,
     // Het plan is het inhoudelijke werk: hier loont extra denkwerk het meest.
-    effort: 'xhigh',
+    effort: PLAN_EFFORT,
     operation: 'clip_plan',
   });
 

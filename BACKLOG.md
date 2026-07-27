@@ -5,7 +5,6 @@ Alles wat buiten de huidige scope valt. Niets hieruit gaat de sprint in zonder e
 ## Blokkeert nu iets
 
 - **ScrapeCreators-key ontbreekt.** Zonder die key kan de Scout-agent niet bij andere accounts kijken en kan de tracking geen views ophalen. Dit is de enige harde blokkade op twee complete modules.
-- **Eval-case #1 wacht op het transcript.** Het script en de verwachtingen staan klaar (`npm run seed:eval -- <bestand>`), maar zonder het Supergaande "Raad de Vrouw"-transcript kan de eval-poort niet groen draaien. Tot die tijd is er geen automatische rem op promptwijzigingen.
 
 ## Bekende beperkingen
 
@@ -15,6 +14,7 @@ Alles wat buiten de huidige scope valt. Niets hieruit gaat de sprint in zonder e
 
 ## Later
 
+- **Doorlooptijd van het clip-plan.** Op een video van 39 minuten duurt de pipeline ongeveer tien minuten, waar de definition of done vijf noemt. Instelbaar via `PLAN_EFFORT`; of `high` even goede plannen geeft moet op eigen materiaal getest worden.
 - Speaker-diarization in het transcript (nu leidt de analysestap sprekers uit context af).
 - Meerdere eigen accounts per platform in `tracked_accounts`; nu wordt één mediaan per platform bijgehouden onder handle `ons_account`.
 - Plan- en scriptversies naast elkaar vergelijken in de UI (oude versies worden wel bewaard, maar niet getoond).
