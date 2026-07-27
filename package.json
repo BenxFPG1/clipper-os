@@ -8,11 +8,12 @@
     "start": "next start",
     "seed": "tsx scripts/seed.ts",
     "seed:eval": "tsx scripts/seed-eval-case.ts",
+    "transcribe": "tsx scripts/transcribe.ts",
     "eval": "tsx scripts/run-eval.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.32.1",
+    "@anthropic-ai/sdk": "^0.115.0",
     "@supabase/supabase-js": "^2.45.4",
     "next": "^14.2.15",
     "react": "^18.3.1",

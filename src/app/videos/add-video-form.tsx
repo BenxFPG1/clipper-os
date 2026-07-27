@@ -9,6 +9,7 @@ export function AddVideoForm({ campaigns }: { campaigns: { id: string; name: str
   const [sourceUrl, setSourceUrl] = useState('');
   const [title, setTitle] = useState('');
   const [transcript, setTranscript] = useState('');
+  const [forceTranscribe, setForceTranscribe] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -25,6 +26,7 @@ export function AddVideoForm({ campaigns }: { campaigns: { id: string; name: str
         title: title || undefined,
         source_url: sourceUrl || undefined,
         transcript_text: transcript || undefined,
+        force_transcribe: forceTranscribe,
       }),
     });
 
@@ -83,6 +85,18 @@ export function AddVideoForm({ campaigns }: { campaigns: { id: string; name: str
           placeholder="https://www.youtube.com/watch?v=..."
           className="mt-1 w-full rounded border border-neutral-700 bg-neutral-900 px-3 py-2"
         />
+        <span className="mt-1 block text-xs text-neutral-500">
+          Zonder captions bouwen we zelf een transcript met Whisper. Dat duurt een paar minuten.
+        </span>
+      </label>
+
+      <label className="flex items-center gap-2 text-sm text-neutral-400">
+        <input
+          type="checkbox"
+          checked={forceTranscribe}
+          onChange={(e) => setForceTranscribe(e.target.checked)}
+        />
+        Captions overslaan en altijd zelf transcriberen (nauwkeuriger tijdcodes)
       </label>
 
       <label className="block text-sm">

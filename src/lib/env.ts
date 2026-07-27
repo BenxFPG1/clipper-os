@@ -8,5 +8,5 @@ export function optionalEnv(name: string, fallback = ''): string {
   return process.env[name] || fallback;
 }
 
-export const CLAUDE_MODEL = optionalEnv('CLAUDE_MODEL', 'claude-sonnet-4-6');
+export const CLAUDE_MODEL = optionalEnv('CLAUDE_MODEL', 'claude-opus-5');
 export const COST_ALERT_EUR = Number(optionalEnv('COST_ALERT_EUR', '20'));

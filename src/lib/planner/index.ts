@@ -40,8 +40,8 @@ export async function generateCharacterMap(input: {
     schema: characterMapSchema,
     toolName: 'lever_character_map',
     toolDescription: 'Lever de narratieve analyse van de volledige video.',
-    maxTokens: 16000,
-    temperature: 0.3,
+    maxTokens: 32000,
+    effort: 'high',
     operation: 'character_map',
   });
 }
@@ -63,8 +63,9 @@ export async function generateClipPlan(
     schema: clipPlanSchema,
     toolName: 'lever_clip_plan',
     toolDescription: 'Lever het volledige clip-plan voor deze bronvideo.',
-    maxTokens: 32000,
-    temperature: 0.3,
+    maxTokens: 64000,
+    // Het plan is het inhoudelijke werk: hier loont extra denkwerk het meest.
+    effort: 'xhigh',
     operation: 'clip_plan',
   });
 
