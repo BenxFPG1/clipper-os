@@ -183,3 +183,51 @@ create table if not exists provider_usage (
   created_at timestamptz not null default now()
 );
 create index if not exists provider_usage_month_idx on provider_usage (created_at);
+
+-- ============================================================ uitbreiding v1.1
+
+-- Wat de Scout-agent buiten onze eigen clips vindt: posts van andere accounts
+-- die het goed doen. Ruwe vondsten blijven bewaard zodat een heuristiek altijd
+-- terug te voeren is op concrete posts.
+create table if not exists scout_finds (
+  id uuid primary key default gen_random_uuid(),
+  tracked_account_id uuid references tracked_accounts(id) on delete cascade,
+  handle text not null,
+  platform text not null check (platform in ('tiktok', 'reels', 'shorts')),
+  post_url text not null,
+  posted_at timestamptz,
+  views bigint,
+  likes int,
+  comments int,
+  outlier_score numeric,          -- views t.o.v. de mediaan van dat account
+  caption text,
+  transcript jsonb,
+  decoded jsonb,                  -- hook-type, structuur en waarom het werkt
+  created_at timestamptz not null default now(),
+  unique (post_url)
+);
+create index if not exists scout_finds_score_idx on scout_finds (outlier_score desc nulls last);
+
+-- Opdrachten: een briefing erin, een volledig script eruit, gebouwd op de vault.
+create table if not exists briefs (
+  id uuid primary key default gen_random_uuid(),
+  campaign_id uuid references campaigns(id) on delete set null,
+  titel text not null,
+  briefing text not null,
+  doel text,                      -- bv. views, comments, verkeer naar profiel
+  platform text check (platform in ('tiktok', 'reels', 'shorts')),
+  duur_seconden int,
+  status text not null default 'concept' check (status in ('concept', 'goedgekeurd', 'gemaakt', 'afgewezen')),
+  created_at timestamptz not null default now()
+);
+
+create table if not exists brief_scripts (
+  id uuid primary key default gen_random_uuid(),
+  brief_id uuid not null references briefs(id) on delete cascade,
+  prompt_version text not null,
+  schema_version text not null,
+  vault_snapshot jsonb not null,
+  script jsonb not null,
+  created_at timestamptz not null default now()
+);
+create index if not exists brief_scripts_brief_idx on brief_scripts (brief_id, created_at desc);

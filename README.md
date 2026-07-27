@@ -62,6 +62,20 @@ Interne tool voor de clipping-workflow: van lange bronvideo naar strategisch cli
 
 6. **Wekelijkse retro** — zondagochtend. Het voorstel komt in `/inbox`; Antonie keurt goed of af. Pas bij goedkeuring verandert de vault, met changelog-entry en version bump.
 
+## Kijken bij anderen (Scout)
+
+Op `/scout` voeg je accounts toe die je wilt volgen: concurrent-clippers en de creator zelf. De scout draait dagelijks (of via de knop) en doet drie dingen: recente posts ophalen per account, de uitschieters eruit halen (minstens 3× de mediaan van dat account zelf, zodat een groot account niet automatisch wint), en die laten decoderen op hook en structuur.
+
+Wat eruit komt zijn **kandidaat**-regels, geen actieve. Een patroon telt pas mee als het bij minstens twee verschillende accounts terugkomt, en het wordt pas een echte vaultregel als de retro het met onze eigen cijfers bevestigt. Zo blijft de vault gebaseerd op wat bij ons werkt, niet op wat er elders toevallig viraal ging.
+
+Dit vraagt wel een `SCRAPECREATORS_API_KEY`; zonder die key kan de scout niet bij andere accounts kijken.
+
+## Opdrachten: briefing in, script uit
+
+`/opdrachten` is de andere kant van de tool. In plaats van knippen uit bestaand materiaal schrijf je hier een briefing, en krijg je een volledig script terug: concept, hook met tekst-overlay en gesproken tekst, een shotlist per seconde met beeld, tekst en editnotitie, captions per platform, benodigdheden, varianten, en een onderbouwing.
+
+Het script wordt geschreven op basis van dezelfde vault als de clip-planner, plus de best presterende scout-vondsten. De onderbouwing legt uit waarom juist die structuur en hook gekozen zijn. Elke generatie wordt bewaard als aparte versie met de vault-snapshot erbij.
+
 ## Evals
 
 Eval-case #1 vraagt om het Supergaande "Raad de Vrouw"-transcript:
