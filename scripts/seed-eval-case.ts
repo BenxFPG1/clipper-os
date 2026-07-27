@@ -23,20 +23,38 @@ const EXPECTED_PROPERTIES = {
 };
 
 async function main() {
-  const path = process.argv[2];
-  if (!path) {
-    console.error('Gebruik: npx tsx scripts/seed-eval-case.ts <pad-naar-transcript.txt>');
+  const arg = process.argv[2];
+  if (!arg) {
+    console.error(
+      'Gebruik: npx tsx scripts/seed-eval-case.ts <pad-naar-transcript.txt>\n' +
+        '     of: npx tsx scripts/seed-eval-case.ts --video <video-uuid>',
+    );
     process.exit(1);
   }
 
-  const segments = parseManualTranscript(readFileSync(path, 'utf8'));
-  if (segments.length === 0) {
-    console.error('Geen tijdcodes gevonden. Verwacht regels als "0:07 tekst".');
+  const supabase = db();
+  let segments;
+
+  if (arg === '--video') {
+    // Een video die al in de tool staat hergebruiken, zodat de eval precies het
+    // transcript test dat de planner ook echt te zien krijgt.
+    const { data, error } = await supabase
+      .from('videos')
+      .select('transcript')
+      .eq('id', process.argv[3])
+      .single();
+    if (error) throw error;
+    segments = data.transcript as ReturnType<typeof parseManualTranscript>;
+  } else {
+    segments = parseManualTranscript(readFileSync(arg, 'utf8'));
+  }
+
+  if (!segments?.length) {
+    console.error('Geen bruikbaar transcript gevonden.');
     process.exit(1);
   }
 
   const name = 'Supergaande — Raad de Vrouw';
-  const supabase = db();
 
   const { data: existing } = await supabase.from('eval_cases').select('id').eq('name', name).maybeSingle();
   const row = {

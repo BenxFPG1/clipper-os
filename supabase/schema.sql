@@ -231,3 +231,11 @@ create table if not exists brief_scripts (
   created_at timestamptz not null default now()
 );
 create index if not exists brief_scripts_brief_idx on brief_scripts (brief_id, created_at desc);
+
+-- Zelfgemaakte video's (uit een briefing) moeten net zo goed getrackt worden als
+-- geknipte clips, anders leert de retro alleen van de helft van ons werk.
+-- Daarom mag een clip ook aan een script hangen in plaats van aan een clip-plan.
+alter table clips alter column clip_plan_id drop not null;
+alter table clips add column if not exists brief_script_id uuid references brief_scripts(id) on delete cascade;
+alter table clips add column if not exists bron text not null default 'clip' check (bron in ('clip', 'script'));
+create index if not exists clips_brief_script_idx on clips (brief_script_id);

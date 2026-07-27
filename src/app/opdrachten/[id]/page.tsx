@@ -2,6 +2,7 @@ import { notFound } from 'next/navigation';
 import { db } from '@/lib/supabase';
 import type { Script } from '@/lib/scriptwriter';
 import { GenerateScriptButton } from './generate-script-button';
+import { PublishButton } from './publish-button';
 
 export const dynamic = 'force-dynamic';
 
@@ -20,6 +21,10 @@ export default async function BriefDetailPage({ params }: { params: { id: string
   const latest = scripts?.[0];
   const script = latest?.script as Script | undefined;
 
+  const { data: gepubliceerd } = latest
+    ? await supabase.from('clips').select('id, status, post_url').eq('brief_script_id', latest.id).maybeSingle()
+    : { data: null };
+
   return (
     <div className="space-y-8">
       <div>
@@ -37,6 +42,8 @@ export default async function BriefDetailPage({ params }: { params: { id: string
       </section>
 
       <GenerateScriptButton briefId={brief.id} hasScript={Boolean(script)} versies={scripts?.length ?? 0} />
+
+      {script && <PublishButton briefId={brief.id} clip={gepubliceerd} />}
 
       {script ? (
         <section className="space-y-5">
