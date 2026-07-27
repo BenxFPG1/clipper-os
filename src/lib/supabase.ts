@@ -11,6 +11,12 @@ export function db(): SupabaseClient {
   if (!cached) {
     cached = createClient(requireEnv('NEXT_PUBLIC_SUPABASE_URL'), requireEnv('SUPABASE_SERVICE_ROLE_KEY'), {
       auth: { persistSession: false },
+      global: {
+        // Next.js cachet fetch in route handlers standaard. Zonder no-store krijg
+        // je daar het antwoord van de vorige identieke query terug — een lege
+        // lijst blijft dan leeg, ook nadat er rijen bij zijn gekomen.
+        fetch: (input, init) => fetch(input, { ...init, cache: 'no-store' }),
+      },
     });
   }
   return cached;
