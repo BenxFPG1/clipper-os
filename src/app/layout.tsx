@@ -11,7 +11,7 @@ const NAV = [
   { href: '/', label: 'Dashboard' },
   { href: '/videos', label: "Video's" },
   { href: '/opdrachten', label: 'Opdrachten' },
-  { href: '/scout', label: 'Scout' },
+  { href: '/scout', label: 'Research' },
   { href: '/vault', label: 'Vault' },
   { href: '/performance', label: 'Performance' },
   { href: '/inbox', label: 'Agent-inbox' },

@@ -3,6 +3,7 @@ import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { optionalEnv } from '../env';
+import { resolveBinary } from './binaries';
 import { TranscriptSegment, closeOpenEnds } from './transcript';
 
 export type YoutubeCaptions = {
@@ -156,7 +157,7 @@ function mergeShortSegments(segments: TranscriptSegment[], targetSeconds = 8): T
 
 export function runYtdlp(args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
-    const child = spawn('yt-dlp', [...ytdlpAuthArgs(), '--no-warnings', ...args]);
+    const child = spawn(resolveBinary('yt-dlp'), [...ytdlpAuthArgs(), '--no-warnings', ...args]);
     let stdout = '';
     let stderr = '';
     child.stdout.on('data', (d) => (stdout += d));

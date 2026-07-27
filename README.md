@@ -62,13 +62,17 @@ Interne tool voor de clipping-workflow: van lange bronvideo naar strategisch cli
 
 6. **Wekelijkse retro** — zondagochtend. Het voorstel komt in `/inbox`; Antonie keurt goed of af. Pas bij goedkeuring verandert de vault, met changelog-entry en version bump.
 
-## Kijken bij anderen (Scout)
+## Research: kijken wat op de platforms werkt
 
-Op `/scout` voeg je accounts toe die je wilt volgen: concurrent-clippers en de creator zelf. De scout draait dagelijks (of via de knop) en doet drie dingen: recente posts ophalen per account, de uitschieters eruit halen (minstens 3× de mediaan van dat account zelf, zodat een groot account niet automatisch wint), en die laten decoderen op hook en structuur.
+Op `/scout` (menu-item "Research") kijkt de tool naar buiten, op twee manieren:
 
-Wat eruit komt zijn **kandidaat**-regels, geen actieve. Een patroon telt pas mee als het bij minstens twee verschillende accounts terugkomt, en het wordt pas een echte vaultregel als de retro het met onze eigen cijfers bevestigt. Zo blijft de vault gebaseerd op wat bij ons werkt, niet op wat er elders toevallig viraal ging.
+**Zoektermen** — het Sandcastles-idee. Je geeft zoektermen op ("supergaande", "raad de vrouw") en de scout zoekt daarmee zelf op de platforms, ongeacht van wie de posts zijn. Binnen elke zoekset geldt views-per-dag als maat, zodat een verse post eerlijk vergeleken wordt met een oude. Alles boven 2× de mediaan van de set wordt bewaard en gedecodeerd. Shorts werkt **zonder scraping-key** (via yt-dlp); TikTok en Reels lopen via ScrapeCreators.
 
-Dit vraagt wel een `SCRAPECREATORS_API_KEY`; zonder die key kan de scout niet bij andere accounts kijken.
+**Accounts volgen** — concurrent-clippers en de creator zelf. Uitschieters zijn hier posts boven 3× de mediaan van dat account zelf, zodat een groot account niet automatisch wint. Dit vraagt de ScrapeCreators-key.
+
+Beide stromen komen samen in één decodering: Claude legt per vondst uit wat de hook en structuur is en waarom het werkt, en destilleert er kandidaat-regels uit. Een patroon telt pas als het bij minstens twee verschillende accounts terugkomt, en het wordt pas een echte vaultregel als de retro het met onze eigen cijfers bevestigt. Zo blijft de vault gebaseerd op wat bij óns werkt, niet op wat er elders toevallig viraal ging.
+
+De scout draait dagelijks om 07:00 (cron) of handmatig via de knop.
 
 ## Opdrachten: briefing in, script uit
 

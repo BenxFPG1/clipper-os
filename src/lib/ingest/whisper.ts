@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { optionalEnv, requireEnv } from '../env';
+import { resolveBinary } from './binaries';
 import { TranscriptSegment, closeOpenEnds } from './transcript';
 import { ytdlpAuthArgs } from './youtube';
 
@@ -204,7 +205,7 @@ async function assertBinary(binary: string): Promise<void> {
 
 function run(command: string, args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args);
+    const child = spawn(resolveBinary(command), args);
     let stdout = '';
     let stderr = '';
     child.stdout.on('data', (d) => (stdout += d));

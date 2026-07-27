@@ -4,7 +4,7 @@ Alles wat buiten de huidige scope valt. Niets hieruit gaat de sprint in zonder e
 
 ## Blokkeert nu iets
 
-- **ScrapeCreators-key ontbreekt.** Zonder die key kan de Scout-agent niet bij andere accounts kijken en kan de tracking geen views ophalen. Dit is de enige harde blokkade op twee complete modules.
+- **ScrapeCreators-key ontbreekt.** Blokkeert de views-tracking van eigen clips, het volgen van accounts, en research-zoektermen op TikTok en Reels. Research op Shorts werkt zonder key (yt-dlp).
 
 ## Bekende beperkingen
 

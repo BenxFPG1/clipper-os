@@ -10,7 +10,8 @@
     "seed:eval": "tsx scripts/seed-eval-case.ts",
     "transcribe": "tsx scripts/transcribe.ts",
     "eval": "tsx scripts/run-eval.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "retro:dryrun": "tsx scripts/retro-dryrun.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.115.0",

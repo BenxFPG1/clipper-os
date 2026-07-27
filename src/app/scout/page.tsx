@@ -1,5 +1,6 @@
 import { db } from '@/lib/supabase';
 import { AccountsPanel } from './accounts-panel';
+import { QueriesPanel } from './queries-panel';
 
 export const dynamic = 'force-dynamic';
 
@@ -13,8 +14,9 @@ type Decoded = {
 
 export default async function ScoutPage() {
   const supabase = db();
-  const [accounts, finds, kandidaten] = await Promise.all([
+  const [accounts, queries, finds, kandidaten] = await Promise.all([
     supabase.from('tracked_accounts').select('*').order('handle'),
+    supabase.from('search_queries').select('*').order('created_at'),
     supabase
       .from('scout_finds')
       .select('*')
@@ -26,12 +28,14 @@ export default async function ScoutPage() {
   return (
     <div className="space-y-10">
       <div>
-        <h1 className="text-2xl font-semibold">Scout</h1>
+        <h1 className="text-2xl font-semibold">Research</h1>
         <p className="mt-1 text-sm text-neutral-400">
-          Wat bij andere accounts bovengemiddeld werkt. Kandidaat-regels worden pas actief nadat de retro ze met onze
-          eigen cijfers bevestigt.
+          Wat op de platforms bovengemiddeld werkt: via accounts die we volgen én via eigen zoektermen.
+          Kandidaat-regels worden pas actief nadat de retro ze met onze eigen cijfers bevestigt.
         </p>
       </div>
+
+      <QueriesPanel queries={queries.data ?? []} />
 
       <AccountsPanel accounts={accounts.data ?? []} />
 
@@ -74,11 +78,17 @@ export default async function ScoutPage() {
                 <article key={f.id} className="rounded border border-neutral-800 px-4 py-3">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <a href={f.post_url} target="_blank" rel="noreferrer" className="font-medium hover:underline">
-                      @{f.handle}
+                      {f.caption ? String(f.caption).slice(0, 70) : `@${f.handle}`}
                     </a>
                     <span className="text-sm text-neutral-400">
-                      {(f.views ?? 0).toLocaleString('nl-NL')} views · {f.outlier_score}× mediaan · {f.platform}
+                      {(f.views ?? 0).toLocaleString('nl-NL')} views
+                      {f.views_per_dag ? ` · ${Number(f.views_per_dag).toLocaleString('nl-NL')}/dag` : ''} ·{' '}
+                      {f.outlier_score}× mediaan · {f.platform}
                     </span>
+                  </div>
+                  <div className="mt-0.5 text-xs text-neutral-600">
+                    @{f.handle}
+                    {f.gevonden_via ? ` · via ${String(f.gevonden_via).replace(':', ' "')}"` : ''}
                   </div>
                   {d.hook_beschrijving && (
                     <p className="mt-1 text-sm">

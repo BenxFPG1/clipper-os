@@ -239,3 +239,16 @@ alter table clips alter column clip_plan_id drop not null;
 alter table clips add column if not exists brief_script_id uuid references brief_scripts(id) on delete cascade;
 alter table clips add column if not exists bron text not null default 'clip' check (bron in ('clip', 'script'));
 create index if not exists clips_brief_script_idx on clips (brief_script_id);
+
+-- Research/discovery (Sandcastles-idee): niet alleen accounts volgen, maar zelf
+-- op de platforms zoeken naar wat viraal gaat binnen onze niche.
+create table if not exists search_queries (
+  id uuid primary key default gen_random_uuid(),
+  query text not null,
+  platform text not null check (platform in ('tiktok', 'reels', 'shorts')),
+  actief boolean not null default true,
+  created_at timestamptz not null default now(),
+  unique (query, platform)
+);
+alter table scout_finds add column if not exists gevonden_via text;
+alter table scout_finds add column if not exists views_per_dag bigint;

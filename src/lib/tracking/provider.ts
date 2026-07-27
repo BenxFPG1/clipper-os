@@ -10,7 +10,7 @@ export type PostMetrics = {
 
 export type Platform = 'tiktok' | 'reels' | 'shorts';
 
-/** Eén post van een account dat we volgen, zoals de Scout-agent hem tegenkomt. */
+/** Eén post zoals de Scout-agent hem tegenkomt, via een account of een zoekterm. */
 export type AccountPost = {
   post_url: string;
   posted_at: string | null;
@@ -18,6 +18,8 @@ export type AccountPost = {
   likes: number | null;
   comments: number | null;
   caption: string | null;
+  /** Wie hem plaatste, als de bron dat meegeeft. */
+  handle: string | null;
   raw: unknown;
 };
 
@@ -32,6 +34,8 @@ export interface MetricsProvider {
   fetchPostMetrics(postUrl: string, platform: Platform): Promise<PostMetrics>;
   /** Recente posts van een account — de basis voor de Scout-agent. */
   fetchAccountPosts(handle: string, platform: Platform, limit?: number): Promise<AccountPost[]>;
+  /** Zoekt posts op de platforms zelf op een zoekterm — de research-kant. */
+  searchPosts(query: string, platform: Platform, limit?: number): Promise<AccountPost[]>;
 }
 
 export function detectPlatform(postUrl: string): Platform | null {
@@ -78,6 +82,24 @@ class ScrapeCreatorsProvider implements MetricsProvider {
 
     const json = (await res.json()) as Record<string, unknown>;
     return normalizePosts(json, platform, handle);
+  }
+
+  async searchPosts(query: string, platform: Platform, limit = 30): Promise<AccountPost[]> {
+    const endpoint: Record<Platform, string> = {
+      tiktok: 'https://api.scrapecreators.com/v1/tiktok/search/keyword',
+      reels: 'https://api.scrapecreators.com/v1/instagram/search/reels',
+      shorts: 'https://api.scrapecreators.com/v1/youtube/search',
+    };
+
+    const url = new URL(endpoint[platform]);
+    url.searchParams.set('query', query);
+    url.searchParams.set('amount', String(limit));
+
+    const res = await fetch(url, { headers: { 'x-api-key': requireEnv('SCRAPECREATORS_API_KEY') } });
+    if (!res.ok) throw new Error(`ScrapeCreators ${res.status}: ${await res.text()}`);
+
+    const json = (await res.json()) as Record<string, unknown>;
+    return normalizePosts(json, platform, '');
   }
 }
 
@@ -128,6 +150,27 @@ class ApifyProvider implements MetricsProvider {
     const items = (await res.json()) as Record<string, unknown>[];
     return items.map((item) => toAccountPost(item, platform, handle));
   }
+
+  async searchPosts(query: string, platform: Platform, limit = 30): Promise<AccountPost[]> {
+    const actor: Record<Platform, string> = {
+      tiktok: 'clockworks~tiktok-scraper',
+      reels: 'apify~instagram-scraper',
+      shorts: 'streamers~youtube-scraper',
+    };
+    const input: Record<string, unknown> =
+      platform === 'tiktok'
+        ? { searchQueries: [query], resultsPerPage: limit }
+        : { search: query, resultsLimit: limit };
+
+    const res = await fetch(
+      `https://api.apify.com/v2/acts/${actor[platform]}/run-sync-get-dataset-items?token=${requireEnv('APIFY_TOKEN')}`,
+      { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(input) },
+    );
+    if (!res.ok) throw new Error(`Apify ${res.status}: ${await res.text()}`);
+
+    const items = (await res.json()) as Record<string, unknown>[];
+    return items.map((item) => toAccountPost(item, platform, ''));
+  }
 }
 
 /** Providers leveren een lijst onder wisselende sleutels; we pakken de eerste array die we vinden. */
@@ -157,6 +200,12 @@ function toAccountPost(item: Record<string, unknown>, platform: Platform, handle
   const timestamp = pick('createTimeISO', 'timestamp', 'publishedAt', 'taken_at_date');
   const epoch = typeof item.createTime === 'number' ? new Date(item.createTime * 1000).toISOString() : null;
 
+  const author = item.author as Record<string, unknown> | string | undefined;
+  const authorHandle =
+    typeof author === 'string'
+      ? author
+      : ((author?.uniqueId ?? author?.username ?? author?.name) as string | undefined);
+
   return {
     post_url: url,
     posted_at: timestamp ?? epoch,
@@ -164,6 +213,7 @@ function toAccountPost(item: Record<string, unknown>, platform: Platform, handle
     likes: metrics.likes,
     comments: metrics.comments,
     caption: pick('text', 'caption', 'title', 'description'),
+    handle: authorHandle ?? pick('uniqueId', 'username', 'channel', 'channelName', 'ownerUsername') ?? (handle || null),
     raw: item,
   };
 }
