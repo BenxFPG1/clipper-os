@@ -123,7 +123,9 @@ export async function runRetroAgent(): Promise<{ agentRunId: string; proposal: R
       agent: 'retro',
       input_summary: { groepen: stats.length, in_aanmerking: eligible.length, stats },
       proposal,
-      status: 'pending',
+      // Een run zonder wijzigingen vraagt niets van je; die hoort in de historie,
+      // niet in de inbox. Anders staat er elke week een leeg voorstel te wachten.
+      status: proposal.wijzigingen.length > 0 ? 'pending' : 'auto',
     })
     .select()
     .single();
