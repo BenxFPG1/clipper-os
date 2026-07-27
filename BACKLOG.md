@@ -4,7 +4,8 @@ Alles wat buiten de huidige scope valt. Niets hieruit gaat de sprint in zonder e
 
 ## Blokkeert nu iets
 
-- **ScrapeCreators-key ontbreekt.** Blokkeert de views-tracking van eigen clips, het volgen van accounts, en research-zoektermen op TikTok en Reels. Research op Shorts werkt zonder key (yt-dlp).
+- **ScrapeCreators-key ontbreekt.** Blokkeert alleen nog Instagram/Reels (accounts, zoeken, tracking) en zoeken op TikTok. TikTok-accounts, Shorts en het tracken van eigen TikTok/Shorts-clips werken gratis via yt-dlp.
+- **Anthropic-credits zijn op (27 juli).** Plannen, scripts en decoderen liggen stil tot er credits bij zijn; de scout blijft wel vondsten verzamelen.
 
 ## Bekende beperkingen
 

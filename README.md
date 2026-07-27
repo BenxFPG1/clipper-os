@@ -66,9 +66,13 @@ Interne tool voor de clipping-workflow: van lange bronvideo naar strategisch cli
 
 Op `/scout` (menu-item "Research") kijkt de tool naar buiten, op twee manieren:
 
-**Zoektermen** — het Sandcastles-idee. Je geeft zoektermen op ("supergaande", "raad de vrouw") en de scout zoekt daarmee zelf op de platforms, ongeacht van wie de posts zijn. Binnen elke zoekset geldt views-per-dag als maat, zodat een verse post eerlijk vergeleken wordt met een oude. Alles boven 2× de mediaan van de set wordt bewaard en gedecodeerd. Shorts werkt **zonder scraping-key** (via yt-dlp); TikTok en Reels lopen via ScrapeCreators.
+**Zoektermen** — het Sandcastles-idee. Je geeft zoektermen op ("supergaande", "raad de vrouw") en de scout zoekt daarmee zelf op de platforms, ongeacht van wie de posts zijn. Voor Shorts gebruikt hij YouTube's eigen "deze week"-filter, zodat de set vers is en views direct vergelijkbaar zijn; alles boven 2× de mediaan van de set wordt bewaard en gedecodeerd.
 
-**Accounts volgen** — concurrent-clippers en de creator zelf. Uitschieters zijn hier posts boven 3× de mediaan van dat account zelf, zodat een groot account niet automatisch wint. Dit vraagt de ScrapeCreators-key.
+**Accounts volgen** — concurrent-clippers en de creator zelf. Uitschieters zijn hier posts boven 3× de mediaan van dat account zelf, zodat een groot account niet automatisch wint.
+
+Wat werkt zonder scraping-key (gratis, via yt-dlp met je browsercookies): TikTok-accounts, Shorts-kanalen, Shorts-zoektermen, en het tracken van je eigen TikTok/Shorts-clips. Wat de ScrapeCreators-key nodig heeft: alles op Instagram/Reels (de gratis extractor is daar upstream kapot) en zoeken op TikTok. De tool kiest automatisch: zonder key de gratis route, mét key de provider.
+
+Faalt de Claude-decodering (bijvoorbeeld op credits), dan bewaart de scout de vondsten alsnog en decodeert een volgende run ze alsnog.
 
 Beide stromen komen samen in één decodering: Claude legt per vondst uit wat de hook en structuur is en waarom het werkt, en destilleert er kandidaat-regels uit. Een patroon telt pas als het bij minstens twee verschillende accounts terugkomt, en het wordt pas een echte vaultregel als de retro het met onze eigen cijfers bevestigt. Zo blijft de vault gebaseerd op wat bij óns werkt, niet op wat er elders toevallig viraal ging.
 

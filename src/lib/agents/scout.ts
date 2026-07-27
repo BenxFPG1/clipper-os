@@ -110,12 +110,13 @@ export async function runScoutAgent(options?: { limitPerAccount?: number }): Pro
         if (post.views === null || !post.post_url) continue;
         const score = post.views / accountMediaan;
         if (score < OUTLIER_DREMPEL) continue;
+        const vpd = viewsPerDag(post);
         outliers.push({
           ...post,
           handle: post.handle ?? account.handle,
           platform: account.platform as Platform,
           outlier_score: round2(score),
-          views_per_dag: viewsPerDag(post),
+          views_per_dag: vpd !== null ? Math.round(vpd) : null,
           gevonden_via: `account:@${account.handle}`,
           accountId: account.id,
         });
@@ -144,14 +145,16 @@ export async function runScoutAgent(options?: { limitPerAccount?: number }): Pro
 
       // Binnen een zoekset is views-per-dag de eerlijke maat: een post van
       // gisteren met 40k views verslaat een post van twee jaar oud met 200k.
-      const metVpd = posts
-        .map((p) => ({ post: p, vpd: viewsPerDag(p) }))
-        .filter((x): x is { post: AccountPost; vpd: number } => x.vpd !== null && Boolean(x.post.post_url));
-      const setMediaan = median(metVpd.map((x) => x.vpd));
+      // Geeft de bron geen posttijd (de snelle Shorts-listing filtert dan al op
+      // "deze week"), dan zijn ruwe views binnen de set alsnog vergelijkbaar.
+      const scored = posts
+        .map((p) => ({ post: p, vpd: viewsPerDag(p), metriek: viewsPerDag(p) ?? p.views }))
+        .filter((x): x is typeof x & { metriek: number } => x.metriek !== null && Boolean(x.post.post_url));
+      const setMediaan = median(scored.map((x) => x.metriek));
       if (!setMediaan) continue;
 
-      const hits = metVpd
-        .map((x) => ({ ...x, score: x.vpd / setMediaan }))
+      const hits = scored
+        .map((x) => ({ ...x, score: x.metriek / setMediaan }))
         .filter((x) => x.score >= DISCOVERY_DREMPEL)
         .sort((a, b) => b.score - a.score)
         .slice(0, 10);
@@ -161,7 +164,7 @@ export async function runScoutAgent(options?: { limitPerAccount?: number }): Pro
           ...hit.post,
           platform,
           outlier_score: round2(hit.score),
-          views_per_dag: Math.round(hit.vpd),
+          views_per_dag: hit.vpd !== null ? Math.round(hit.vpd) : null,
           gevonden_via: `zoekterm:${q.query}`,
           accountId: null,
         });
@@ -174,40 +177,22 @@ export async function runScoutAgent(options?: { limitPerAccount?: number }): Pro
   outliers.sort((a, b) => b.outlier_score - a.outlier_score);
   const teDecoderen = dedupeByUrl(outliers).slice(0, 25);
 
+  // Decoderen is een verrijking, geen voorwaarde: als de Claude-call faalt
+  // (bijvoorbeeld op credits), bewaren we de vondsten alsnog en decoderen we
+  // een volgende run. Research-data mag niet verdwijnen omdat het LLM hapert.
   let decoded: ScoutDecoded = { posts: [], kandidaat_heuristieken: [] };
   if (teDecoderen.length > 0) {
-    const vault = await loadVault();
-    decoded = await structuredCall({
-      system: SCOUT_SYSTEM,
-      user: `=== ONZE VAULT ===\n${renderVaultForPrompt(vault)}\n\n=== UITSCHIETERS OP DE PLATFORMS ===\n${JSON.stringify(
-        teDecoderen.map((o) => ({
-          post_url: o.post_url,
-          account: o.handle,
-          platform: o.platform,
-          gevonden_via: o.gevonden_via,
-          views: o.views,
-          views_per_dag: o.views_per_dag,
-          likes: o.likes,
-          comments: o.comments,
-          outlier_score: o.outlier_score,
-          titel_of_caption: o.caption,
-        })),
-        null,
-        2,
-      )}`,
-      schema: decodedSchema,
-      toolName: 'lever_scout_analyse',
-      toolDescription: 'Lever de decodering van deze posts plus kandidaat-heuristieken.',
-      maxTokens: 16000,
-      effort: AGENT_EFFORT,
-      operation: 'scout_agent',
-    });
+    try {
+      decoded = await decodeer(teDecoderen);
+    } catch (e) {
+      fouten.push({ bron: 'decodering', error: e instanceof Error ? e.message : String(e) });
+    }
   }
 
   // Vondsten bewaren, zodat elke heuristiek terug te voeren is op echte posts.
   for (const outlier of teDecoderen) {
     const analyse = decoded.posts.find((p) => p.post_url === outlier.post_url);
-    await supabase.from('scout_finds').upsert(
+    const { error: upsertError } = await supabase.from('scout_finds').upsert(
       {
         tracked_account_id: outlier.accountId,
         handle: outlier.handle ?? 'onbekend',
@@ -225,6 +210,9 @@ export async function runScoutAgent(options?: { limitPerAccount?: number }): Pro
       },
       { onConflict: 'post_url' },
     );
+    if (upsertError) {
+      fouten.push({ bron: `opslaan:${outlier.post_url}`, error: upsertError.message });
+    }
   }
 
   const kandidaten = await schrijfKandidaten(decoded, teDecoderen);
@@ -254,6 +242,35 @@ export async function runScoutAgent(options?: { limitPerAccount?: number }): Pro
     outliers: outliers.length,
     kandidaten,
   };
+}
+
+async function decodeer(teDecoderen: Outlier[]): Promise<ScoutDecoded> {
+  const vault = await loadVault();
+  return structuredCall({
+    system: SCOUT_SYSTEM,
+    user: `=== ONZE VAULT ===\n${renderVaultForPrompt(vault)}\n\n=== UITSCHIETERS OP DE PLATFORMS ===\n${JSON.stringify(
+      teDecoderen.map((o) => ({
+        post_url: o.post_url,
+        account: o.handle,
+        platform: o.platform,
+        gevonden_via: o.gevonden_via,
+        views: o.views,
+        views_per_dag: o.views_per_dag,
+        likes: o.likes,
+        comments: o.comments,
+        outlier_score: o.outlier_score,
+        titel_of_caption: o.caption,
+      })),
+      null,
+      2,
+    )}`,
+    schema: decodedSchema,
+    toolName: 'lever_scout_analyse',
+    toolDescription: 'Lever de decodering van deze posts plus kandidaat-heuristieken.',
+    maxTokens: 16000,
+    effort: AGENT_EFFORT,
+    operation: 'scout_agent',
+  });
 }
 
 function viewsPerDag(post: AccountPost): number | null {

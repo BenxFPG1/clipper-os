@@ -248,14 +248,62 @@ function normalizeMetrics(raw: Record<string, unknown>): Omit<PostMetrics, 'raw'
   };
 }
 
+/**
+ * Gratis backend via yt-dlp met browsercookies. Dekt TikTok en Shorts; voor
+ * Reels bestaat geen gratis route (de Instagram-extractor is upstream kapot),
+ * dus daar geeft hij een duidelijke fout die naar de scraping-key wijst.
+ *
+ * Werkt alleen waar yt-dlp en browsercookies zijn — op je eigen machine dus,
+ * niet op Vercel serverless.
+ */
+class YtdlpFreeProvider implements MetricsProvider {
+  readonly name = 'ytdlp';
+  readonly costPerCallEur = 0;
+
+  async fetchPostMetrics(postUrl: string, platform: Platform): Promise<PostMetrics> {
+    const { fetchVideoMetricsViaYtdlp, ytdlpSupports } = await import('./ytdlp-social');
+    if (!ytdlpSupports(platform)) throw this.reelsError();
+    return fetchVideoMetricsViaYtdlp(postUrl);
+  }
+
+  async fetchAccountPosts(handle: string, platform: Platform, limit = 30): Promise<AccountPost[]> {
+    const { fetchTiktokAccountPosts, fetchYoutubeChannelShorts } = await import('./ytdlp-social');
+    if (platform === 'tiktok') return fetchTiktokAccountPosts(handle, limit);
+    if (platform === 'shorts') return fetchYoutubeChannelShorts(handle, limit);
+    throw this.reelsError();
+  }
+
+  async searchPosts(query: string, platform: Platform, limit = 12): Promise<AccountPost[]> {
+    if (platform === 'shorts') {
+      const { searchYoutubeShorts } = await import('./youtube-discovery');
+      return searchYoutubeShorts(query, limit);
+    }
+    throw new Error(
+      `Zoeken op ${platform} kan niet gratis via yt-dlp. Zet SCRAPECREATORS_API_KEY in .env; Shorts-zoektermen werken wel zonder key.`,
+    );
+  }
+
+  private reelsError(): Error {
+    return new Error(
+      'Instagram/Reels kan niet gratis via yt-dlp (extractor is upstream kapot). Zet SCRAPECREATORS_API_KEY in .env.',
+    );
+  }
+}
+
 export function getMetricsProvider(): MetricsProvider {
-  return optionalEnv('SCRAPING_PROVIDER', 'scrapecreators') === 'apify'
-    ? new ApifyProvider()
-    : new ScrapeCreatorsProvider();
+  if (optionalEnv('SCRAPING_PROVIDER', 'scrapecreators') === 'apify' && optionalEnv('APIFY_TOKEN')) {
+    return new ApifyProvider();
+  }
+  if (optionalEnv('SCRAPECREATORS_API_KEY')) return new ScrapeCreatorsProvider();
+  // Zonder key: de gratis route. TikTok en Shorts werken meteen; Reels legt in
+  // zijn foutmelding uit wat er nodig is.
+  return new YtdlpFreeProvider();
 }
 
 export function getFallbackProvider(primary: MetricsProvider): MetricsProvider | null {
   if (primary.name === 'scrapecreators' && optionalEnv('APIFY_TOKEN')) return new ApifyProvider();
   if (primary.name === 'apify' && optionalEnv('SCRAPECREATORS_API_KEY')) return new ScrapeCreatorsProvider();
+  // Betaalde provider stuk? Dan is gratis alsnog beter dan niets.
+  if (primary.name !== 'ytdlp') return new YtdlpFreeProvider();
   return null;
 }
