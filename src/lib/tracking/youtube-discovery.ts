@@ -15,6 +15,20 @@ import { AccountPost } from './provider';
 export async function searchYoutubeShorts(query: string, limit = 25): Promise<AccountPost[]> {
   // sp=EgIIAw%3D%3D is YouTube's eigen "upload deze week"-filter.
   const url = `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}&sp=EgIIAw%3D%3D`;
+  return flatListing(url, limit);
+}
+
+/**
+ * Wat er nu platformbreed goed loopt op YouTube, los van accounts of
+ * zoektermen: de trending-feed. Mainstream, maar precies daarom nuttig — de
+ * scout decodeert wat er patroonmatig werkt en de retro filtert wat voor ons
+ * materiaal relevant is.
+ */
+export async function fetchYoutubeTrendingShorts(limit = 30): Promise<AccountPost[]> {
+  return flatListing('https://www.youtube.com/feed/trending', limit);
+}
+
+async function flatListing(url: string, limit: number): Promise<AccountPost[]> {
   const out = await runYtdlp(['--flat-playlist', '--dump-json', '-I', `1:${limit}`, url]);
 
   const posts: AccountPost[] = [];
@@ -36,8 +50,8 @@ export async function searchYoutubeShorts(query: string, limit = 25): Promise<Ac
 
     posts.push({
       post_url: link,
-      // De flat listing geeft geen uploaddatum; door het weekfilter is de hele
-      // set even vers, dus views alleen zijn hier al vergelijkbaar.
+      // Flat listings geven geen uploaddatum; deze feeds zijn per definitie
+      // vers, dus views alleen zijn binnen de set vergelijkbaar.
       posted_at: null,
       views,
       likes: numberOf(entry.like_count),

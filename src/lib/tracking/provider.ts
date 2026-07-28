@@ -36,6 +36,8 @@ export interface MetricsProvider {
   fetchAccountPosts(handle: string, platform: Platform, limit?: number): Promise<AccountPost[]>;
   /** Zoekt posts op de platforms zelf op een zoekterm — de research-kant. */
   searchPosts(query: string, platform: Platform, limit?: number): Promise<AccountPost[]>;
+  /** Wat er platformbreed trending is, los van accounts of zoektermen. */
+  fetchTrending(platform: Platform, limit?: number): Promise<AccountPost[]>;
 }
 
 export function detectPlatform(postUrl: string): Platform | null {
@@ -93,6 +95,25 @@ class ScrapeCreatorsProvider implements MetricsProvider {
 
     const url = new URL(endpoint[platform]);
     url.searchParams.set('query', query);
+    url.searchParams.set('amount', String(limit));
+
+    const res = await fetch(url, { headers: { 'x-api-key': requireEnv('SCRAPECREATORS_API_KEY') } });
+    if (!res.ok) throw new Error(`ScrapeCreators ${res.status}: ${await res.text()}`);
+
+    const json = (await res.json()) as Record<string, unknown>;
+    return normalizePosts(json, platform, '');
+  }
+
+  async fetchTrending(platform: Platform, limit = 30): Promise<AccountPost[]> {
+    if (platform === 'shorts') {
+      const { fetchYoutubeTrendingShorts } = await import('./youtube-discovery');
+      return fetchYoutubeTrendingShorts(limit);
+    }
+    const endpoint: Record<Exclude<Platform, 'shorts'>, string> = {
+      tiktok: 'https://api.scrapecreators.com/v1/tiktok/trending',
+      reels: 'https://api.scrapecreators.com/v1/instagram/trending',
+    };
+    const url = new URL(endpoint[platform]);
     url.searchParams.set('amount', String(limit));
 
     const res = await fetch(url, { headers: { 'x-api-key': requireEnv('SCRAPECREATORS_API_KEY') } });
@@ -170,6 +191,14 @@ class ApifyProvider implements MetricsProvider {
 
     const items = (await res.json()) as Record<string, unknown>[];
     return items.map((item) => toAccountPost(item, platform, ''));
+  }
+
+  async fetchTrending(platform: Platform, limit = 30): Promise<AccountPost[]> {
+    if (platform === 'shorts') {
+      const { fetchYoutubeTrendingShorts } = await import('./youtube-discovery');
+      return fetchYoutubeTrendingShorts(limit);
+    }
+    throw new Error(`Trending op ${platform} is niet beschikbaar via Apify; gebruik ScrapeCreators.`);
   }
 }
 
@@ -280,6 +309,16 @@ class YtdlpFreeProvider implements MetricsProvider {
     }
     throw new Error(
       `Zoeken op ${platform} kan niet gratis via yt-dlp. Zet SCRAPECREATORS_API_KEY in .env; Shorts-zoektermen werken wel zonder key.`,
+    );
+  }
+
+  async fetchTrending(platform: Platform, limit = 30): Promise<AccountPost[]> {
+    if (platform === 'shorts') {
+      const { fetchYoutubeTrendingShorts } = await import('./youtube-discovery');
+      return fetchYoutubeTrendingShorts(limit);
+    }
+    throw new Error(
+      `Trending op ${platform} kan niet gratis via yt-dlp. Zet SCRAPECREATORS_API_KEY in .env; Shorts-trending werkt wel zonder key.`,
     );
   }
 

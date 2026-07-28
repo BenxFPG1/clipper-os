@@ -17,7 +17,7 @@ on:
         description: 'Welke taak'
         required: true
         type: choice
-        options: [tracking, scout, retro]
+        options: [tracking, scout, retro, diag]
 
 concurrency:
   group: clipper-jobs
@@ -71,7 +71,18 @@ jobs:
           echo "$YTDLP_COOKIES_B64" | base64 -d > "$RUNNER_TEMP/cookies.txt"
           echo "YTDLP_COOKIES_FILE=$RUNNER_TEMP/cookies.txt" >> "$GITHUB_ENV"
 
+      # Diagnose: toont alleen de VORM van de token (prefix + lengte), nooit de
+      # inhoud, en doet één kale CLI-call zodat de echte foutmelding zichtbaar is.
+      - name: Diagnose abonnements-token
+        if: ${{ steps.kies.outputs.job == 'diag' }}
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          echo "prefix: $(echo "$CLAUDE_CODE_OAUTH_TOKEN" | cut -c1-11)…  lengte: ${#CLAUDE_CODE_OAUTH_TOKEN}"
+          echo 'Zeg alleen: OK' | claude -p --output-format json --model claude-opus-5 --effort low --no-session-persistence || true
+
       - name: Draai ${{ steps.kies.outputs.job }}
+        if: ${{ steps.kies.outputs.job != 'diag' }}
         env:
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}

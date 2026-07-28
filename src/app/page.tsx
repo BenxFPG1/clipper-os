@@ -33,31 +33,23 @@ async function loadDashboard() {
     totalViews += perf?.views_7d ?? 0;
   }
 
+  // Omzet berekenen we bewust niet: dat staat al op het dashboard van ClipArmy.
   const campaignList = (campaigns.data ?? []) as CampaignSummary[];
-  const cpm = campaignList[0]?.cpm_eur ?? 0.5;
-  const maxPerClip = campaignList[0]?.platform_rules?.max_eur_per_clip ?? Infinity;
 
-  // Verdiensten-schatting: views x CPM, per clip gecapt op het campagnemaximum.
-  const earnings = (clips.data ?? []).reduce((sum, clip) => {
-    const views = one<{ views_7d: number | null }>(clip.clip_performance)?.views_7d ?? 0;
-    return sum + Math.min((views / 1000) * cpm, maxPerClip);
-  }, 0);
-
-  return { campaigns: campaignList, perStatus, totalViews, earnings, topClip: topClip.data };
+  return { campaigns: campaignList, perStatus, totalViews, topClip: topClip.data };
 }
 
 import { ImportCampaignForm } from './import-campaign-form';
 
 export default async function DashboardPage() {
-  const { campaigns, perStatus, totalViews, earnings, topClip } = await loadDashboard();
+  const { campaigns, perStatus, totalViews, topClip } = await loadDashboard();
 
   return (
     <div className="space-y-8">
       <h1 className="text-2xl font-semibold">Dashboard</h1>
 
-      <div className="grid gap-4 sm:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-3">
         <Stat label="Views (7d)" value={totalViews.toLocaleString('nl-NL')} />
-        <Stat label="Geschatte omzet" value={`€${earnings.toFixed(2)}`} />
         <Stat label="Gepost" value={String(perStatus.posted ?? 0)} />
         <Stat label="Nog te editen" value={String((perStatus.planned ?? 0) + (perStatus.edited ?? 0))} />
       </div>

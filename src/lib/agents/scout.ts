@@ -174,6 +174,43 @@ export async function runScoutAgent(options?: { limitPerAccount?: number }): Pro
     }
   }
 
+  // Deel 3 — platformbreed: wat is er überhaupt trending, los van wie we
+  // volgen of waar we op zoeken. Shorts is gratis; TikTok en Reels zodra de
+  // scraping-key er is (tot die tijd wordt de fout per platform gelogd).
+  for (const platform of ['shorts', 'tiktok', 'reels'] as Platform[]) {
+    try {
+      const posts = await provider.fetchTrending(platform, 30);
+      if (platform !== 'shorts') {
+        await logProviderUsage(provider.name, 'fetch_trending', 1, provider.costPerCallEur);
+      }
+
+      const scored = posts
+        .map((p) => ({ post: p, vpd: viewsPerDag(p), metriek: viewsPerDag(p) ?? p.views }))
+        .filter((x): x is typeof x & { metriek: number } => x.metriek !== null && Boolean(x.post.post_url));
+      const setMediaan = median(scored.map((x) => x.metriek));
+      if (!setMediaan) continue;
+
+      const hits = scored
+        .map((x) => ({ ...x, score: x.metriek / setMediaan }))
+        .filter((x) => x.score >= DISCOVERY_DREMPEL)
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 10);
+
+      for (const hit of hits) {
+        outliers.push({
+          ...hit.post,
+          platform,
+          outlier_score: round2(hit.score),
+          views_per_dag: hit.vpd !== null ? Math.round(hit.vpd) : null,
+          gevonden_via: `trending:${platform}`,
+          accountId: null,
+        });
+      }
+    } catch (e) {
+      fouten.push({ bron: `trending:${platform}`, error: e instanceof Error ? e.message : String(e) });
+    }
+  }
+
   outliers.sort((a, b) => b.outlier_score - a.outlier_score);
   const teDecoderen = dedupeByUrl(outliers).slice(0, 25);
 
