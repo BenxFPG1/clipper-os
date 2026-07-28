@@ -27,6 +27,8 @@ jobs:
   run:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      YTDLP_COOKIES_B64: ${{ secrets.YTDLP_COOKIES_B64 }}
     steps:
       - name: Bepaal taak uit trigger
         id: kies
@@ -64,9 +66,7 @@ jobs:
       # Zonder dit secret werkt TikTok meestal wel en kan YouTube-research
       # geweigerd worden; de scout logt dat dan als fout per bron en gaat door.
       - name: YouTube-cookies (optioneel)
-        if: ${{ secrets.YTDLP_COOKIES_B64 != '' }}
-        env:
-          YTDLP_COOKIES_B64: ${{ secrets.YTDLP_COOKIES_B64 }}
+        if: ${{ env.YTDLP_COOKIES_B64 != '' }}
         run: |
           echo "$YTDLP_COOKIES_B64" | base64 -d > "$RUNNER_TEMP/cookies.txt"
           echo "YTDLP_COOKIES_FILE=$RUNNER_TEMP/cookies.txt" >> "$GITHUB_ENV"
