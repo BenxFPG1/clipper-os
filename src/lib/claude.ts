@@ -223,6 +223,11 @@ function runClaudeCli(
       delete env[key];
     }
   }
+  // Uitzondering op de schoonmaak: de langlevende abonnements-token van
+  // `claude setup-token`. Op een server (GitHub Actions) is dit de enige auth.
+  if (process.env.CLAUDE_CODE_OAUTH_TOKEN) {
+    env.CLAUDE_CODE_OAUTH_TOKEN = process.env.CLAUDE_CODE_OAUTH_TOKEN;
+  }
 
   const args = [
     '-p',

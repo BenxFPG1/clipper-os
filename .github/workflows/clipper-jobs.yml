@@ -1,0 +1,84 @@
+# Achtergrondtaken in de cloud, zonder Mac en zonder API-credits:
+# de LLM-stappen lopen via de Claude Code CLI met een abonnements-token
+# (`claude setup-token` -> secret CLAUDE_CODE_OAUTH_TOKEN).
+#
+# Tijden staan in UTC. Nederlandse zomertijd = UTC+2 (winter +1); een uurtje
+# verschuiven per seizoen maakt voor deze taken niets uit.
+name: clipper-jobs
+
+on:
+  schedule:
+    - cron: '15 0,6,12,18 * * *' # tracking: 4x per dag
+    - cron: '30 5 * * *'         # scout: dagelijks ~7:30 NL
+    - cron: '30 7 * * 0'         # retro: zondag ~9:30 NL
+  workflow_dispatch:
+    inputs:
+      job:
+        description: 'Welke taak'
+        required: true
+        type: choice
+        options: [tracking, scout, retro]
+
+concurrency:
+  group: clipper-jobs
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Bepaal taak uit trigger
+        id: kies
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "job=${{ inputs.job }}" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event.schedule }}" = "30 5 * * *" ]; then
+            echo "job=scout" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event.schedule }}" = "30 7 * * 0" ]; then
+            echo "job=retro" >> "$GITHUB_OUTPUT"
+          else
+            echo "job=tracking" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Installeer yt-dlp en ffmpeg
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q ffmpeg
+          pipx install yt-dlp || pip install --user yt-dlp
+
+      - name: Dependencies
+        run: npm ci
+
+      - name: Claude Code CLI
+        run: npm install -g @anthropic-ai/claude-code
+
+      # Optioneel: YouTube-cookies voor de bot-check (base64 van een cookies.txt).
+      # Zonder dit secret werkt TikTok meestal wel en kan YouTube-research
+      # geweigerd worden; de scout logt dat dan als fout per bron en gaat door.
+      - name: YouTube-cookies (optioneel)
+        if: ${{ secrets.YTDLP_COOKIES_B64 != '' }}
+        env:
+          YTDLP_COOKIES_B64: ${{ secrets.YTDLP_COOKIES_B64 }}
+        run: |
+          echo "$YTDLP_COOKIES_B64" | base64 -d > "$RUNNER_TEMP/cookies.txt"
+          echo "YTDLP_COOKIES_FILE=$RUNNER_TEMP/cookies.txt" >> "$GITHUB_ENV"
+
+      - name: Draai ${{ steps.kies.outputs.job }}
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          CLAUDE_BACKEND: claude-code
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          CLAUDE_MODEL: claude-opus-5
+          SCRAPECREATORS_API_KEY: ${{ secrets.SCRAPECREATORS_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          COST_ALERT_EUR: '20'
+        run: npx tsx scripts/job.ts ${{ steps.kies.outputs.job }}

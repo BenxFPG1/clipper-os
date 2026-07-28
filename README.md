@@ -122,6 +122,36 @@ claude login
 
 Let op: dit werkt alleen op je eigen machine. Op Vercel bestaat de CLI niet — zet daar `CLAUDE_BACKEND=api` met een `ANTHROPIC_API_KEY`. De tool haalt bij dit backend bewust `ANTHROPIC_API_KEY` uit de omgeving van het subprocess, zodat er nooit stiekem tóch credits verbranden. Zware dagen kunnen tegen de rate-limits van je abonnement aanlopen; dan is de API het vangnet.
 
+## Live zonder Mac én zonder API-credits (GitHub Actions)
+
+De taken kunnen ook in de cloud draaien terwijl je Mac dicht is, zonder API-credits. De truc is `claude setup-token`: die geeft een langlevende abonnements-token die op een server werkt. GitHub Actions levert de gratis servertijd; `.github/workflows/clipper-jobs.yml` bevat dezelfde drie taken als launchd.
+
+Eenmalige setup:
+
+1. Token maken (opent je browser):
+
+   ```bash
+   claude setup-token
+   ```
+
+2. De token als secret zetten:
+
+   ```bash
+   gh secret set CLAUDE_CODE_OAUTH_TOKEN --repo BenxFPG1/clipper-os
+   ```
+
+   (plak de token als hij erom vraagt; Supabase-secrets staan er al)
+
+3. Testen zonder te wachten op de klok:
+
+   ```bash
+   gh workflow run clipper-jobs -f job=tracking --repo BenxFPG1/clipper-os
+   ```
+
+Draai launchd en Actions niet allebei; zet de lokale taken uit met `launchctl bootout gui/$UID/nl.clipper-os.<taak>` zodra Actions loopt.
+
+Eerlijke kanttekening: GitHub-servers hebben datacenter-IP's. TikTok-research werkt daar meestal; YouTube kan de bot-check opwerpen. Optioneel secret `YTDLP_COOKIES_B64` (base64 van een geëxporteerde cookies.txt) lost dat op; anders logt de scout het als fout per bron en gaat door. De UI zelf zet je live op Vercel (met `CLAUDE_BACKEND=api` als je dáár ooit wilt genereren — de knoppen in de UI blijven anders Mac-werk).
+
 ## Automatisering op je Mac (launchd)
 
 Met het abonnements-backend draait de automatisering op je eigen Mac. Dat betekent níet dat hij constant open moet: de taken staan in macOS' eigen takenplanner (launchd), en die haalt gemiste taken in zodra je Mac weer wakker is. Is je Mac om 07:30 dicht, dan draait de scout gewoon zodra je hem openklapt.
