@@ -1,3 +1,4 @@
+import { optionalEnv } from '../env';
 import { runYtdlp } from '../ingest/youtube';
 import { AccountPost } from './provider';
 
@@ -19,13 +20,32 @@ export async function searchYoutubeShorts(query: string, limit = 25): Promise<Ac
 }
 
 /**
- * Wat er nu platformbreed goed loopt op YouTube, los van accounts of
- * zoektermen: de trending-feed. Mainstream, maar precies daarom nuttig — de
- * scout decodeert wat er patroonmatig werkt en de retro filtert wat voor ons
- * materiaal relevant is.
+ * Wat er nu platformbreed goed loopt op YouTube, los van gevolgde accounts of
+ * eigen zoektermen. YouTube heeft zijn trending-pagina in 2025 opgeheven, dus
+ * we stellen dezelfde vraag via de zoekfilters: geüpload deze week, gesorteerd
+ * op views (sp=CAMSBAgDEAE=), over een paar brede NL-termen. Aanpasbaar via
+ * DISCOVERY_TRENDING_QUERIES (kommagescheiden).
  */
 export async function fetchYoutubeTrendingShorts(limit = 30): Promise<AccountPost[]> {
-  return flatListing('https://www.youtube.com/feed/trending', limit);
+  const queries = optionalEnv('DISCOVERY_TRENDING_QUERIES', 'nederland,nederlands,nederlandse podcast')
+    .split(',')
+    .map((q) => q.trim())
+    .filter(Boolean);
+
+  const perQuery = Math.max(8, Math.ceil(limit / queries.length));
+  const posts: AccountPost[] = [];
+  for (const query of queries) {
+    // sp=CAMSBggDEAEYAQ== : deze week + korter dan 4 minuten + gesorteerd op views.
+    const url = `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}&sp=CAMSBggDEAEYAQ%3D%3D`;
+    posts.push(...(await flatListing(url, perQuery)));
+  }
+
+  const seen = new Set<string>();
+  return posts.filter((p) => {
+    if (seen.has(p.post_url)) return false;
+    seen.add(p.post_url);
+    return true;
+  });
 }
 
 async function flatListing(url: string, limit: number): Promise<AccountPost[]> {
