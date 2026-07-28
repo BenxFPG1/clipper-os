@@ -46,6 +46,8 @@ async function loadDashboard() {
   return { campaigns: campaignList, perStatus, totalViews, earnings, topClip: topClip.data };
 }
 
+import { ImportCampaignForm } from './import-campaign-form';
+
 export default async function DashboardPage() {
   const { campaigns, perStatus, totalViews, earnings, topClip } = await loadDashboard();
 
@@ -62,6 +64,9 @@ export default async function DashboardPage() {
 
       <section>
         <h2 className="mb-3 text-lg font-medium">Actieve campagnes</h2>
+        <div className="mb-3">
+          <ImportCampaignForm />
+        </div>
         {campaigns.length === 0 ? (
           <Empty>Nog geen actieve campagne. Draai `npm run seed` om de voorbeeldcampagne te laden.</Empty>
         ) : (
