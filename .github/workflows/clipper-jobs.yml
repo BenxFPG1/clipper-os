@@ -50,11 +50,16 @@ jobs:
           node-version: 22
           cache: npm
 
-      - name: Installeer yt-dlp en ffmpeg
+      # ffmpeg staat al op de GitHub-runner. yt-dlp halen we als kant-en-klare
+      # binary op: apt-get bleek minutenlang te kunnen hangen op de runner.
+      - name: Installeer yt-dlp
         run: |
-          sudo apt-get update -q
-          sudo apt-get install -y -q ffmpeg
-          pipx install yt-dlp || pip install --user yt-dlp
+          sudo curl -sSL --retry 3 --max-time 120 \
+            https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux \
+            -o /usr/local/bin/yt-dlp
+          sudo chmod +x /usr/local/bin/yt-dlp
+          yt-dlp --version
+          ffmpeg -version | head -1
 
       - name: Dependencies
         run: npm ci
