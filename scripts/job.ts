@@ -11,6 +11,29 @@ import 'dotenv/config';
  * ~/Library/Logs/clipper-os/. Fouten geven exit-code 1 zodat je ze in de log
  * herkent, maar een taak die inhoudelijk niets te doen heeft is gewoon succes.
  */
+/**
+ * Supabase weigert af en toe de eerste call met "JWT issued at future": een
+ * kleine klokafwijking tussen de runner en hun servers. Het is voorbijgaand,
+ * dus we proberen het een paar keer opnieuw in plaats van de hele taak te laten
+ * klappen.
+ */
+async function metRetry<T>(fn: () => Promise<T>, pogingen = 4): Promise<T> {
+  for (let i = 0; ; i++) {
+    try {
+      return await fn();
+    } catch (e) {
+      const bericht = e instanceof Error ? e.message : String(e);
+      const tijdelijk = /issued at future|PGRST303|fetch failed|ECONNRESET|ETIMEDOUT/i.test(
+        bericht + JSON.stringify(e),
+      );
+      if (!tijdelijk || i >= pogingen - 1) throw e;
+      const wacht = 15_000 * (i + 1);
+      console.log(`${new Date().toISOString()} tijdelijke fout (${bericht.slice(0, 60)}), opnieuw over ${wacht / 1000}s`);
+      await new Promise((r) => setTimeout(r, wacht));
+    }
+  }
+}
+
 async function main() {
   const job = process.argv[2];
   const stamp = new Date().toISOString();
@@ -18,7 +41,7 @@ async function main() {
   switch (job) {
     case 'tracking': {
       const { runTracking } = await import('../src/lib/tracking/run');
-      const r = await runTracking();
+      const r = await metRetry(() => runTracking());
       console.log(
         `${stamp} tracking: ${r.succeeded}/${r.attempted} clips gemeten, performance voor ${r.performanceUpdated} bijgewerkt` +
           (r.failed.length ? `, ${r.failed.length} mislukt` : '') +
@@ -29,7 +52,7 @@ async function main() {
     }
     case 'scout': {
       const { runScoutAgent } = await import('../src/lib/agents/scout');
-      const r = await runScoutAgent();
+      const r = await metRetry(() => runScoutAgent());
       console.log(
         `${stamp} scout: ${r.accountsBekeken} accounts, ${r.zoektermen} zoektermen, ${r.outliers} uitschieters, ${r.kandidaten} nieuwe kandidaat-regels (run ${r.agentRunId})`,
       );
@@ -37,7 +60,7 @@ async function main() {
     }
     case 'retro': {
       const { runRetroAgent } = await import('../src/lib/agents/retro');
-      const r = await runRetroAgent();
+      const r = await metRetry(() => runRetroAgent());
       console.log(
         `${stamp} retro: ${r.proposal.wijzigingen.length} voorgestelde wijzigingen — ${r.proposal.samenvatting.slice(0, 160)}`,
       );
