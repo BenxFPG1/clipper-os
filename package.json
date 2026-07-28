@@ -11,7 +11,8 @@
     "transcribe": "tsx scripts/transcribe.ts",
     "eval": "tsx scripts/run-eval.ts",
     "typecheck": "tsc --noEmit",
-    "retro:dryrun": "tsx scripts/retro-dryrun.ts"
+    "retro:dryrun": "tsx scripts/retro-dryrun.ts",
+    "job": "tsx scripts/job.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.115.0",

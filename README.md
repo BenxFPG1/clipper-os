@@ -122,6 +122,22 @@ claude login
 
 Let op: dit werkt alleen op je eigen machine. Op Vercel bestaat de CLI niet — zet daar `CLAUDE_BACKEND=api` met een `ANTHROPIC_API_KEY`. De tool haalt bij dit backend bewust `ANTHROPIC_API_KEY` uit de omgeving van het subprocess, zodat er nooit stiekem tóch credits verbranden. Zware dagen kunnen tegen de rate-limits van je abonnement aanlopen; dan is de API het vangnet.
 
+## Automatisering op je Mac (launchd)
+
+Met het abonnements-backend draait de automatisering op je eigen Mac. Dat betekent níet dat hij constant open moet: de taken staan in macOS' eigen takenplanner (launchd), en die haalt gemiste taken in zodra je Mac weer wakker is. Is je Mac om 07:30 dicht, dan draait de scout gewoon zodra je hem openklapt.
+
+Wat er is ingepland (`~/Library/LaunchAgents/nl.clipper-os.*.plist`):
+
+| Taak | Wanneer | Wat |
+| --- | --- | --- |
+| tracking | 4× per dag (2:15, 8:15, 14:15, 20:15) | views/likes van geposte clips + performance-berekening |
+| scout | dagelijks 7:30 | research: accounts volgen + zoektermen, decoderen, kandidaat-regels |
+| retro | zondag 9:30 | wekelijks vault-voorstel naar de agent-inbox |
+
+De webserver hoeft er niet voor te draaien; de taken roepen de code rechtstreeks aan (`npm run job -- tracking|scout|retro` doet hetzelfde handmatig). Logs staan in `~/Library/Logs/clipper-os/`. Uitzetten kan per taak met `launchctl bootout gui/$UID/nl.clipper-os.<taak>` plus het plist-bestand weggooien.
+
+Het "zichzelf trainen" heeft je Mac dus maar een paar minuten per dag nodig. De enige stap die echt om jou vraagt is het goedkeuren van retro-voorstellen in de agent-inbox — en dat is bewust zo (sectie 3: de mens keurt goed). Wil je ooit volledige cloud-autonomie zonder Mac: deploy op Vercel met `CLAUDE_BACKEND=api` en de ScrapeCreators-key; dan vervalt alleen de gratis yt-dlp-route.
+
 ## Kosten en doorlooptijd
 
 Gemeten op een echte aflevering van 39 minuten (440 transcriptsegmenten):
