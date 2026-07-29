@@ -116,7 +116,9 @@ export async function runScoutAgent(options?: { limitPerAccount?: number }): Pro
 
       for (const post of posts) {
         if (post.views === null || !post.post_url) continue;
-        const score = post.views / accountMediaan;
+        // Zelfde plafond als elders: een account met één mega-hit levert anders
+        // scores van honderden keer de mediaan, die de retro scheeftrekken.
+        const score = Math.min(post.views / accountMediaan, MAX_OUTLIER_SCORE);
         if (score < OUTLIER_DREMPEL) continue;
         const vpd = viewsPerDag(post);
         outliers.push({
@@ -179,7 +181,11 @@ export async function runScoutAgent(options?: { limitPerAccount?: number }): Pro
   // scraping-key er is (tot die tijd wordt de fout per platform gelogd).
   for (const platform of ['shorts', 'tiktok', 'reels'] as Platform[]) {
     try {
-      const posts = await provider.fetchTrending(platform, 30);
+      // Bewust klein gehouden: de trending-feeds zijn wereldwijd en niet op
+      // regio te filteren, dus ze leveren veel content die niets met ons
+      // materiaal te maken heeft. De themazoekopdrachten met Nederlandse
+      // termen zijn de relevante bron; dit is aanvulling.
+      const posts = await provider.fetchTrending(platform, 20);
       if (platform !== 'shorts') {
         await logProviderUsage(provider.name, 'fetch_trending', 1, provider.costPerCallEur);
       }
@@ -391,15 +397,20 @@ const PLATFORMS: Platform[] = ['shorts', 'tiktok', 'reels'];
  * dan zijn ruwe views binnen die set alsnog vergelijkbaar.
  */
 function pakUitschieters(posts: AccountPost[], maxHits = 8) {
-  const bruikbaar = posts.filter((p) => p.views !== null && Boolean(p.post_url));
+  // Instagram geeft lang niet altijd een viewcount terug; likes zijn daar de
+  // beste beschikbare maat voor hoe goed iets liep.
+  const opLikes = posts.every((p) => p.views === null);
+  const waarde = (p: AccountPost) => (opLikes ? p.likes : p.views);
+
+  const bruikbaar = posts.filter((p) => waarde(p) !== null && Boolean(p.post_url));
 
   // Eén maat voor de hele set. Views-per-dag en ruwe views door elkaar halen
   // levert een onzinnige mediaan op (een post van vandaag met 5.000 views/dag
   // naast een post met 200.000 totale views), en daarmee onzinnige scores.
-  const alleMetDatum = bruikbaar.every((p) => viewsPerDag(p) !== null);
+  const alleMetDatum = !opLikes && bruikbaar.every((p) => viewsPerDag(p) !== null);
   const scored = bruikbaar.map((p) => {
-    const vpd = viewsPerDag(p);
-    return { post: p, vpd, metriek: (alleMetDatum ? vpd : p.views) as number };
+    const vpd = opLikes ? null : viewsPerDag(p);
+    return { post: p, vpd, metriek: (alleMetDatum ? vpd : waarde(p)) as number };
   });
 
   const setMediaan = median(scored.map((x) => x.metriek));

@@ -70,8 +70,8 @@ class ScrapeCreatorsProvider implements MetricsProvider {
 
   async fetchAccountPosts(handle: string, platform: Platform, limit = 30): Promise<AccountPost[]> {
     const endpoint: Record<Platform, string> = {
-      tiktok: 'https://api.scrapecreators.com/v1/tiktok/profile/videos',
-      reels: 'https://api.scrapecreators.com/v1/instagram/user/posts',
+      tiktok: 'https://api.scrapecreators.com/v3/tiktok/profile/videos',
+      reels: 'https://api.scrapecreators.com/v2/instagram/user/posts',
       shorts: 'https://api.scrapecreators.com/v1/youtube/channel/videos',
     };
 
@@ -89,7 +89,7 @@ class ScrapeCreatorsProvider implements MetricsProvider {
   async searchPosts(query: string, platform: Platform, limit = 30): Promise<AccountPost[]> {
     const endpoint: Record<Platform, string> = {
       tiktok: 'https://api.scrapecreators.com/v1/tiktok/search/keyword',
-      reels: 'https://api.scrapecreators.com/v1/instagram/search/reels',
+      reels: 'https://api.scrapecreators.com/v1/instagram/search/hashtag',
       shorts: 'https://api.scrapecreators.com/v1/youtube/search',
     };
 
@@ -110,8 +110,8 @@ class ScrapeCreatorsProvider implements MetricsProvider {
       return fetchYoutubeTrendingShorts(limit);
     }
     const endpoint: Record<Exclude<Platform, 'shorts'>, string> = {
-      tiktok: 'https://api.scrapecreators.com/v1/tiktok/trending',
-      reels: 'https://api.scrapecreators.com/v1/instagram/trending',
+      tiktok: 'https://api.scrapecreators.com/v1/tiktok/get-trending-feed',
+      reels: 'https://api.scrapecreators.com/v1/instagram/reels/trending',
     };
     const url = new URL(endpoint[platform]);
     url.searchParams.set('amount', String(limit));
@@ -205,10 +205,14 @@ class ApifyProvider implements MetricsProvider {
 /** Providers leveren een lijst onder wisselende sleutels; we pakken de eerste array die we vinden. */
 function normalizePosts(json: Record<string, unknown>, platform: Platform, handle: string): AccountPost[] {
   const list =
-    (['videos', 'posts', 'items', 'data', 'aweme_list'] as const)
+    (['aweme_list', 'search_item_list', 'reels', 'videos', 'posts', 'items', 'data'] as const)
       .map((key) => json[key])
       .find((value): value is Record<string, unknown>[] => Array.isArray(value)) ?? [];
-  return list.map((item) => toAccountPost(item, platform, handle));
+
+  return list
+    // TikTok-zoekresultaten verpakken de post nog een laag dieper.
+    .map((item) => (item.aweme_info as Record<string, unknown> | undefined) ?? item)
+    .map((item) => toAccountPost(item, platform, handle));
 }
 
 function toAccountPost(item: Record<string, unknown>, platform: Platform, handle: string): AccountPost {
@@ -221,19 +225,25 @@ function toAccountPost(item: Record<string, unknown>, platform: Platform, handle
     return null;
   };
 
-  const id = pick('id', 'aweme_id', 'videoId', 'shortcode', 'code');
-  const url =
-    pick('url', 'webVideoUrl', 'postUrl', 'link', 'share_url') ??
-    (id ? buildPostUrl(platform, handle, id) : '');
-
-  const timestamp = pick('createTimeISO', 'timestamp', 'publishedAt', 'taken_at_date');
-  const epoch = typeof item.createTime === 'number' ? new Date(item.createTime * 1000).toISOString() : null;
-
   const author = item.author as Record<string, unknown> | string | undefined;
+  const user = item.user as Record<string, unknown> | undefined;
   const authorHandle =
     typeof author === 'string'
       ? author
-      : ((author?.uniqueId ?? author?.username ?? author?.name) as string | undefined);
+      : ((author?.unique_id ?? author?.uniqueId ?? author?.username ?? author?.nickname) as string | undefined) ??
+        ((user?.username ?? user?.full_name) as string | undefined);
+
+  const id = pick('aweme_id', 'id', 'videoId', 'shortcode', 'code');
+  const url =
+    pick('url', 'webVideoUrl', 'postUrl', 'link', 'share_url') ??
+    (id ? buildPostUrl(platform, authorHandle ?? handle, id) : '');
+
+  // Tijdstippen komen in drie smaken binnen: ISO-string, unix-seconden onder
+  // create_time (TikTok) of createTime (Apify).
+  const timestamp = pick('createTimeISO', 'timestamp', 'publishedAt', 'taken_at', 'taken_at_date');
+  const epochVeld = (item.create_time ?? item.createTime) as unknown;
+  const epoch =
+    typeof epochVeld === 'number' && epochVeld > 0 ? new Date(epochVeld * 1000).toISOString() : null;
 
   return {
     post_url: url,
@@ -241,7 +251,7 @@ function toAccountPost(item: Record<string, unknown>, platform: Platform, handle
     views: metrics.views,
     likes: metrics.likes,
     comments: metrics.comments,
-    caption: pick('text', 'caption', 'title', 'description'),
+    caption: pick('desc', 'text', 'caption', 'title', 'description'),
     handle: authorHandle ?? pick('uniqueId', 'username', 'channel', 'channelName', 'ownerUsername') ?? (handle || null),
     raw: item,
   };
@@ -270,8 +280,8 @@ function normalizeMetrics(raw: Record<string, unknown>): Omit<PostMetrics, 'raw'
   };
 
   return {
-    views: pick('play_count', 'playCount', 'viewCount', 'video_view_count', 'views'),
-    likes: pick('digg_count', 'diggCount', 'likeCount', 'likesCount', 'likes'),
+    views: pick('play_count', 'ig_play_count', 'playCount', 'viewCount', 'video_view_count', 'views'),
+    likes: pick('digg_count', 'like_count', 'diggCount', 'likeCount', 'likesCount', 'likes'),
     comments: pick('comment_count', 'commentCount', 'commentsCount', 'comments'),
     shares: pick('share_count', 'shareCount', 'sharesCount', 'shares'),
   };
