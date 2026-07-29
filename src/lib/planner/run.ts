@@ -14,7 +14,7 @@ export async function runPlannerForVideo(videoId: string, options?: { reuseChara
 
   const { data: video, error } = await supabase
     .from('videos')
-    .select('*, campaigns(platform_rules)')
+    .select('*, campaigns(platform_rules, theme)')
     .eq('id', videoId)
     .single();
   if (error) throw error;
@@ -22,7 +22,10 @@ export async function runPlannerForVideo(videoId: string, options?: { reuseChara
 
   const transcript = video.transcript as TranscriptSegment[];
   const durationSeconds = video.duration_seconds ?? Math.round(transcriptDuration(transcript));
-  const vault = await loadVault();
+  // Een clip-plan is niet platformgebonden (dezelfde clip gaat naar TikTok,
+  // Reels en Shorts), maar wel themagebonden.
+  const campaign = video.campaigns as { platform_rules?: unknown; theme?: string | null } | null;
+  const vault = await loadVault({ theme: campaign?.theme ?? null });
 
   const characterMap =
     options?.reuseCharacterMap && video.character_map
@@ -37,7 +40,7 @@ export async function runPlannerForVideo(videoId: string, options?: { reuseChara
     title: video.title,
     durationSeconds,
     transcript,
-    campaignRules: (video.campaigns as { platform_rules?: unknown } | null)?.platform_rules ?? {},
+    campaignRules: campaign?.platform_rules ?? {},
     vault,
     characterMap,
   });

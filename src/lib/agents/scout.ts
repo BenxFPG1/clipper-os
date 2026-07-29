@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { structuredCall } from '../claude';
 import { AGENT_EFFORT } from '../env';
 import { db, logProviderUsage } from '../supabase';
-import { loadVault, renderVaultForPrompt } from '../vault';
+import { Theme, buildClassifyPrompt, loadThemes, loadVault, renderVaultForPrompt } from '../vault';
 import { median } from '../tracking/performance';
 import { AccountPost, Platform, getMetricsProvider } from '../tracking/provider';
 import { searchYoutubeShorts } from '../tracking/youtube-discovery';
@@ -11,6 +11,12 @@ import { searchYoutubeShorts } from '../tracking/youtube-discovery';
 export const OUTLIER_DREMPEL = 3;
 /** Voor zoekresultaten: hoe ver boven de mediaan views-per-dag van de zoekset. */
 export const DISCOVERY_DREMPEL = 2;
+/** Onder deze grenzen is een resultatenset te dun om iets uit af te leiden. */
+export const MIN_SET_OMVANG = 5;
+export const MIN_MEDIAAN = 500;
+/** Bovengrens tegen scheve verhoudingen; alles hierboven is toch "enorm". */
+export const MAX_OUTLIER_SCORE = 100;
+
 /** Een kandidaat-heuristiek moet over minstens zoveel verschillende accounts terugkomen. */
 export const MIN_ACCOUNTS_PER_HEURISTIEK = 2;
 
@@ -50,6 +56,7 @@ Regels:
 
 type Outlier = AccountPost & {
   platform: Platform;
+  theme: string | null;
   outlier_score: number;
   views_per_dag: number | null;
   gevonden_via: string;
@@ -77,17 +84,18 @@ export async function runScoutAgent(options?: { limitPerAccount?: number }): Pro
   const provider = getMetricsProvider();
 
   const [accountsRes, queriesRes] = await Promise.all([
-    supabase.from('tracked_accounts').select('id, handle, platform').eq('our_own', false),
-    supabase.from('search_queries').select('id, query, platform').eq('actief', true),
+    supabase.from('tracked_accounts').select('id, handle, platform, theme').eq('our_own', false),
+    supabase.from('search_queries').select('id, query, platform, theme').eq('actief', true),
   ]);
   if (accountsRes.error) throw accountsRes.error;
   if (queriesRes.error) throw queriesRes.error;
 
   const accounts = accountsRes.data ?? [];
   const queries = queriesRes.data ?? [];
+  const themes: Theme[] = await loadThemes();
 
-  if (accounts.length === 0 && queries.length === 0) {
-    throw new Error('Niets om te onderzoeken. Voeg accounts of zoektermen toe op de Research-pagina.');
+  if (accounts.length === 0 && queries.length === 0 && themes.length === 0) {
+    throw new Error('Niets om te onderzoeken. Voeg thema\'s, accounts of zoektermen toe op de Research-pagina.');
   }
 
   const outliers: Outlier[] = [];
@@ -117,6 +125,7 @@ export async function runScoutAgent(options?: { limitPerAccount?: number }): Pro
           platform: account.platform as Platform,
           outlier_score: round2(score),
           views_per_dag: vpd !== null ? Math.round(vpd) : null,
+          theme: (account.theme as string | null) ?? null,
           gevonden_via: `account:@${account.handle}`,
           accountId: account.id,
         });
@@ -147,17 +156,7 @@ export async function runScoutAgent(options?: { limitPerAccount?: number }): Pro
       // gisteren met 40k views verslaat een post van twee jaar oud met 200k.
       // Geeft de bron geen posttijd (de snelle Shorts-listing filtert dan al op
       // "deze week"), dan zijn ruwe views binnen de set alsnog vergelijkbaar.
-      const scored = posts
-        .map((p) => ({ post: p, vpd: viewsPerDag(p), metriek: viewsPerDag(p) ?? p.views }))
-        .filter((x): x is typeof x & { metriek: number } => x.metriek !== null && Boolean(x.post.post_url));
-      const setMediaan = median(scored.map((x) => x.metriek));
-      if (!setMediaan) continue;
-
-      const hits = scored
-        .map((x) => ({ ...x, score: x.metriek / setMediaan }))
-        .filter((x) => x.score >= DISCOVERY_DREMPEL)
-        .sort((a, b) => b.score - a.score)
-        .slice(0, 10);
+      const hits = pakUitschieters(posts, 10);
 
       for (const hit of hits) {
         outliers.push({
@@ -165,6 +164,7 @@ export async function runScoutAgent(options?: { limitPerAccount?: number }): Pro
           platform,
           outlier_score: round2(hit.score),
           views_per_dag: hit.vpd !== null ? Math.round(hit.vpd) : null,
+          theme: (q.theme as string | null) ?? null,
           gevonden_via: `zoekterm:${q.query}`,
           accountId: null,
         });
@@ -184,17 +184,7 @@ export async function runScoutAgent(options?: { limitPerAccount?: number }): Pro
         await logProviderUsage(provider.name, 'fetch_trending', 1, provider.costPerCallEur);
       }
 
-      const scored = posts
-        .map((p) => ({ post: p, vpd: viewsPerDag(p), metriek: viewsPerDag(p) ?? p.views }))
-        .filter((x): x is typeof x & { metriek: number } => x.metriek !== null && Boolean(x.post.post_url));
-      const setMediaan = median(scored.map((x) => x.metriek));
-      if (!setMediaan) continue;
-
-      const hits = scored
-        .map((x) => ({ ...x, score: x.metriek / setMediaan }))
-        .filter((x) => x.score >= DISCOVERY_DREMPEL)
-        .sort((a, b) => b.score - a.score)
-        .slice(0, 10);
+      const hits = pakUitschieters(posts, 10);
 
       for (const hit of hits) {
         outliers.push({
@@ -202,6 +192,7 @@ export async function runScoutAgent(options?: { limitPerAccount?: number }): Pro
           platform,
           outlier_score: round2(hit.score),
           views_per_dag: hit.vpd !== null ? Math.round(hit.vpd) : null,
+          theme: null,
           gevonden_via: `trending:${platform}`,
           accountId: null,
         });
@@ -211,12 +202,66 @@ export async function runScoutAgent(options?: { limitPerAccount?: number }): Pro
     }
   }
 
+  // Deel 4 — per thema, over alle platforms. Dit is waar de tool niche-kennis
+  // opbouwt: wat werkt in comedy is iets anders dan wat werkt in financien, en
+  // dat verschilt per platform. Elke vondst wordt aan zijn thema gekoppeld
+  // zodat de retro er aparte gewichten uit kan leren.
+  for (const thema of themes) {
+    for (const zoekterm of thema.zoektermen) {
+      for (const platform of PLATFORMS) {
+        try {
+          const posts =
+            platform === 'shorts'
+              ? await searchYoutubeShorts(zoekterm, 15)
+              : await provider.searchPosts(zoekterm, platform, 20);
+          if (platform !== 'shorts') {
+            await logProviderUsage(provider.name, 'search_posts', 1, provider.costPerCallEur);
+          }
+
+          for (const hit of pakUitschieters(posts)) {
+            outliers.push({
+              ...hit.post,
+              platform,
+              outlier_score: round2(hit.score),
+              views_per_dag: hit.vpd !== null ? Math.round(hit.vpd) : null,
+              theme: thema.slug,
+              gevonden_via: `thema:${thema.slug}/${zoekterm}`,
+              accountId: null,
+            });
+          }
+        } catch (e) {
+          fouten.push({
+            bron: `thema:${thema.slug}/${zoekterm}/${platform}`,
+            error: e instanceof Error ? e.message : String(e),
+          });
+        }
+      }
+    }
+  }
+
   outliers.sort((a, b) => b.outlier_score - a.outlier_score);
   const teDecoderen = dedupeByUrl(outliers).slice(0, 25);
 
   // Decoderen is een verrijking, geen voorwaarde: als de Claude-call faalt
   // (bijvoorbeeld op credits), bewaren we de vondsten alsnog en decoderen we
   // een volgende run. Research-data mag niet verdwijnen omdat het LLM hapert.
+  // Vondsten zonder thema (trending) krijgen er alsnog een, zodat ze in de
+  // juiste niche-kennis terechtkomen in plaats van op een grote hoop.
+  if (themes.length > 0) {
+    const zonderThema = teDecoderen.filter((o) => !o.theme);
+    if (zonderThema.length > 0) {
+      try {
+        const toegewezen = await classificeerThemas(themes, zonderThema);
+        for (const outlier of zonderThema) {
+          const gevonden = toegewezen.get(outlier.post_url);
+          if (gevonden && gevonden !== 'onbekend') outlier.theme = gevonden;
+        }
+      } catch (e) {
+        fouten.push({ bron: 'themaclassificatie', error: e instanceof Error ? e.message : String(e) });
+      }
+    }
+  }
+
   let decoded: ScoutDecoded = { posts: [], kandidaat_heuristieken: [] };
   if (teDecoderen.length > 0) {
     try {
@@ -242,6 +287,7 @@ export async function runScoutAgent(options?: { limitPerAccount?: number }): Pro
         outlier_score: outlier.outlier_score,
         views_per_dag: outlier.views_per_dag,
         gevonden_via: outlier.gevonden_via,
+        theme: outlier.theme,
         caption: outlier.caption,
         decoded: analyse ?? null,
       },
@@ -281,6 +327,32 @@ export async function runScoutAgent(options?: { limitPerAccount?: number }): Pro
   };
 }
 
+const classificatieSchema = z.object({
+  toewijzingen: z.array(z.object({ post_url: z.string(), theme: z.string() })),
+});
+
+/** Wijst per post het best passende thema toe; "onbekend" blijft leeg. */
+async function classificeerThemas(themes: Theme[], posts: Outlier[]): Promise<Map<string, string>> {
+  const { system, user } = buildClassifyPrompt(themes, posts);
+  const result = await structuredCall({
+    system,
+    user,
+    schema: classificatieSchema,
+    toolName: 'lever_themas',
+    toolDescription: 'Wijs per post het best passende thema toe.',
+    maxTokens: 4000,
+    effort: 'low',
+    operation: 'scout_classificatie',
+  });
+
+  const geldig = new Set(themes.map((t) => t.slug));
+  return new Map(
+    result.toewijzingen
+      .filter((t) => geldig.has(t.theme))
+      .map((t) => [t.post_url, t.theme] as const),
+  );
+}
+
 async function decodeer(teDecoderen: Outlier[]): Promise<ScoutDecoded> {
   const vault = await loadVault();
   return structuredCall({
@@ -296,6 +368,7 @@ async function decodeer(teDecoderen: Outlier[]): Promise<ScoutDecoded> {
         likes: o.likes,
         comments: o.comments,
         outlier_score: o.outlier_score,
+        thema: o.theme,
         titel_of_caption: o.caption,
       })),
       null,
@@ -308,6 +381,40 @@ async function decodeer(teDecoderen: Outlier[]): Promise<ScoutDecoded> {
     effort: AGENT_EFFORT,
     operation: 'scout_agent',
   });
+}
+
+const PLATFORMS: Platform[] = ['shorts', 'tiktok', 'reels'];
+
+/**
+ * Binnen een resultatenset is views-per-dag de eerlijke maat; ontbreekt de
+ * posttijd (zoals bij de snelle Shorts-listing, die al op deze week filtert),
+ * dan zijn ruwe views binnen die set alsnog vergelijkbaar.
+ */
+function pakUitschieters(posts: AccountPost[], maxHits = 8) {
+  const bruikbaar = posts.filter((p) => p.views !== null && Boolean(p.post_url));
+
+  // Eén maat voor de hele set. Views-per-dag en ruwe views door elkaar halen
+  // levert een onzinnige mediaan op (een post van vandaag met 5.000 views/dag
+  // naast een post met 200.000 totale views), en daarmee onzinnige scores.
+  const alleMetDatum = bruikbaar.every((p) => viewsPerDag(p) !== null);
+  const scored = bruikbaar.map((p) => {
+    const vpd = viewsPerDag(p);
+    return { post: p, vpd, metriek: (alleMetDatum ? vpd : p.views) as number };
+  });
+
+  const setMediaan = median(scored.map((x) => x.metriek));
+
+  // Een set met te weinig posts, of waarin de mediaan bijna nul is (premières
+  // en verse uploads zonder views), geeft absurde scores: één trailer met 18k
+  // views naast een mediaan van 1 wordt dan een "18000x uitschieter". Zulke
+  // sets zeggen niets, dus die slaan we over.
+  if (!setMediaan || scored.length < MIN_SET_OMVANG || setMediaan < MIN_MEDIAAN) return [];
+
+  return scored
+    .map((x) => ({ ...x, score: Math.min(x.metriek / setMediaan, MAX_OUTLIER_SCORE) }))
+    .filter((x) => x.score >= DISCOVERY_DREMPEL)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, maxHits);
 }
 
 function viewsPerDag(post: AccountPost): number | null {
@@ -335,9 +442,17 @@ function round2(n: number): number {
  * werkt kan toeval of format-specifiek zijn; over meerdere accounts wordt het
  * interessant.
  */
+/** Een regel krijgt een thema als alle onderbouwende posts uit datzelfde thema komen. */
+function themeVanPosts(postUrls: string[], outliers: { post_url: string; theme?: string | null }[]): string | null {
+  const themas = new Set(
+    postUrls.map((url) => outliers.find((o) => o.post_url === url)?.theme).filter((t): t is string => Boolean(t)),
+  );
+  return themas.size === 1 ? [...themas][0] : null;
+}
+
 async function schrijfKandidaten(
   decoded: ScoutDecoded,
-  outliers: { post_url: string; handle: string | null }[],
+  outliers: { post_url: string; handle: string | null; theme?: string | null }[],
 ): Promise<number> {
   const supabase = db();
   const handleVanPost = new Map(outliers.map((o) => [o.post_url, o.handle ?? 'onbekend']));
@@ -359,6 +474,7 @@ async function schrijfKandidaten(
       status: 'candidate',
       evidence_score: kandidaat.post_urls.length * accounts.size,
       platform: kandidaat.platform,
+      theme: themeVanPosts(kandidaat.post_urls, outliers),
     });
     if (!error) geschreven++;
   }

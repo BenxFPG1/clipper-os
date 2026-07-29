@@ -62,6 +62,7 @@ export type BriefInput = {
   doel: string | null;
   platform: string | null;
   duurSeconden: number | null;
+  theme: string | null;
   campaignRules: unknown;
 };
 
@@ -71,12 +72,15 @@ export type BriefInput = {
  * opgebouwde kennis ook geldt voor materiaal dat we zelf maken.
  */
 export async function generateScript(brief: BriefInput): Promise<{ script: Script; vaultSnapshot: unknown }> {
-  const vault = await loadVault();
+  const vault = await loadVault({ platform: brief.platform, theme: brief.theme });
 
-  const { data: finds } = await db()
+  // Vondsten uit hetzelfde thema eerst; die zeggen het meest over deze briefing.
+  let findsQuery = db()
     .from('scout_finds')
-    .select('handle, platform, post_url, outlier_score, caption, decoded')
-    .not('decoded', 'is', null)
+    .select('handle, platform, theme, post_url, outlier_score, caption, decoded')
+    .not('decoded', 'is', null);
+  if (brief.theme) findsQuery = findsQuery.eq('theme', brief.theme);
+  const { data: finds } = await findsQuery
     .order('outlier_score', { ascending: false, nullsFirst: false })
     .limit(10);
 
@@ -117,7 +121,7 @@ export async function runScriptwriterForBrief(briefId: string) {
 
   const { data: brief, error } = await supabase
     .from('briefs')
-    .select('*, campaigns(platform_rules)')
+    .select('*, campaigns(platform_rules, theme)')
     .eq('id', briefId)
     .single();
   if (error) throw error;
@@ -128,6 +132,7 @@ export async function runScriptwriterForBrief(briefId: string) {
     doel: brief.doel,
     platform: brief.platform,
     duurSeconden: brief.duur_seconden,
+    theme: brief.theme ?? (brief.campaigns as { theme?: string | null } | null)?.theme ?? null,
     campaignRules: (brief.campaigns as { platform_rules?: unknown } | null)?.platform_rules ?? {},
   });
 

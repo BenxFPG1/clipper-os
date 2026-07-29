@@ -2,21 +2,30 @@ import { z } from 'zod';
 import { structuredCall } from '../claude';
 import { AGENT_EFFORT } from '../env';
 import { db, one } from '../supabase';
-import { loadVault } from '../vault';
+import { ALL, loadWeights, upsertWeight } from '../vault';
 import { median } from '../tracking/performance';
 
+/** Minimum aantal waarnemingen per kant (eigen of extern) om mee te tellen. */
 export const MIN_N_PER_GROUP = 5;
 export const MAX_WEIGHT_STEP = 0.15;
+/**
+ * Hoe zwaar eigen resultaten wegen tegenover wat we buiten zien. 0.5 = gelijk:
+ * de vault leert net zo hard van werkende content van anderen als van onszelf.
+ */
+export const EIGEN_GEWICHT = 0.5;
 
 const proposalSchema = z.object({
   wijzigingen: z.array(
     z.object({
       entity: z.enum(['structure', 'hook']),
       slug: z.string(),
+      platform: z.string(),
+      theme: z.string(),
       huidig_gewicht: z.number(),
       nieuw_gewicht: z.number(),
       reden: z.string(),
       bewijs_clip_ids: z.array(z.string()),
+      bewijs_post_urls: z.array(z.string()),
     }),
   ),
   samenvatting: z.string(),
@@ -24,69 +33,165 @@ const proposalSchema = z.object({
 
 export type RetroProposal = z.infer<typeof proposalSchema>;
 
-type GroupStats = {
+export type GroupStats = {
   entity: 'structure' | 'hook';
   slug: string;
-  n: number;
-  mediaan_outlier_score: number | null;
+  platform: string;
+  theme: string;
+  eigen_n: number;
+  eigen_mediaan: number | null;
+  extern_n: number;
+  extern_mediaan: number | null;
+  /** Gecombineerde score: 50% eigen, 50% extern (zie EIGEN_GEWICHT). */
+  gecombineerde_score: number | null;
   huidig_gewicht: number;
   clip_ids: string[];
+  post_urls: string[];
 };
 
-const RETRO_SYSTEM = `Je bent de Retro-agent van een clipping-tool. Je krijgt performance-data per structuur- en hook-type en de huidige vault-gewichten. Je stelt gewichtswijzigingen voor.
+const RETRO_SYSTEM = `Je bent de Retro-agent van een clipping-tool. Je krijgt prestatiecijfers per structuur- en hook-type, uitgesplitst naar platform en thema, en de huidige vault-gewichten. Je stelt gewichtswijzigingen voor.
+
+Belangrijk: de cijfers komen uit twee bronnen die even zwaar wegen.
+- eigen_mediaan: hoe onze eigen geposte clips presteerden (outlier-score t.o.v. onze mediaan).
+- extern_mediaan: hoe dezelfde structuur/hook presteerde bij andere accounts die de scout vond.
+De gecombineerde_score is het gewogen gemiddelde van beide. Een score boven 1 is bovengemiddeld, onder 1 ondergemiddeld.
 
 Harde regels:
-- Stel alleen een wijziging voor bij n >= ${MIN_N_PER_GROUP} clips in die groep. Groepen met minder data laat je ongemoeid.
-- De stap per week is maximaal ${MAX_WEIGHT_STEP} omhoog of omlaag.
+- Stel alleen een wijziging voor als eigen_n >= ${MIN_N_PER_GROUP} of extern_n >= ${MIN_N_PER_GROUP}. Groepen met minder data laat je ongemoeid.
+- De stap is maximaal ${MAX_WEIGHT_STEP} omhoog of omlaag per run.
 - Gewichten blijven tussen 0 en 1.
-- Elk voorstel onderbouw je met de clip_ids uit de groep en de gemeten mediaan.
-- Een mediaan outlier_score boven 1 betekent bovengemiddeld, onder 1 ondergemiddeld.
-- Stel niets voor als de data geen duidelijke richting geeft; een lege lijst is een geldig antwoord.`;
+- Elk voorstel geldt voor precies één combinatie van platform en thema; die neem je letterlijk over uit de data.
+- Onderbouw met de clip_ids en post_urls uit de groep.
+- Wat op het ene platform werkt hoeft op het andere niet te werken; behandel elke combinatie los.
+- Steunt een voorstel maar op één bron, zeg dat dan expliciet in de reden.
+- Geen duidelijke richting? Dan stel je niets voor; een lege lijst is een geldig antwoord.`;
 
-/** Verzamelt performance per structuur en hook over clips met minstens 7 dagen data. */
+/**
+ * Verzamelt prestaties per (structuur/hook × platform × thema) uit twee bronnen:
+ * onze eigen geposte clips én de gedecodeerde vondsten van de scout. Beide
+ * tellen even zwaar mee, zodat de vault ook leert van content die wij nooit
+ * gemaakt hebben.
+ */
 export async function collectRetroStats(): Promise<GroupStats[]> {
   const supabase = db();
   const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString();
 
-  const { data, error } = await supabase
-    .from('clips')
-    .select('id, structure_type, hook_type, posted_at, clip_performance(outlier_score)')
-    .eq('status', 'posted')
-    .lte('posted_at', sevenDaysAgo);
-  if (error) throw error;
+  const [eigenRes, externRes, weights] = await Promise.all([
+    supabase
+      .from('clips')
+      .select('id, structure_type, hook_type, platform, theme, posted_at, clip_performance(outlier_score)')
+      .eq('status', 'posted')
+      .lte('posted_at', sevenDaysAgo),
+    supabase.from('scout_finds').select('post_url, platform, theme, outlier_score, decoded').not('decoded', 'is', null),
+    loadWeights(),
+  ]);
+  if (eigenRes.error) throw eigenRes.error;
+  if (externRes.error) throw externRes.error;
 
-  const vault = await loadVault();
-  const structureWeights = new Map(vault.structures.map((s) => [s.slug, s.weight]));
-  const hookWeights = new Map(vault.hooks.map((h) => [h.slug, h.weight]));
-
-  type Bucket = { entity: 'structure' | 'hook'; slug: string; scores: number[]; ids: string[] };
+  type Bucket = {
+    entity: 'structure' | 'hook';
+    slug: string;
+    platform: string;
+    theme: string;
+    eigen: number[];
+    extern: number[];
+    clipIds: string[];
+    postUrls: string[];
+  };
   const buckets = new Map<string, Bucket>();
 
-  for (const clip of data ?? []) {
+  const bucket = (entity: 'structure' | 'hook', slug: string, platform: string, theme: string): Bucket => {
+    const k = `${entity}|${slug}|${platform}|${theme}`;
+    const bestaand = buckets.get(k);
+    if (bestaand) return bestaand;
+    const nieuw: Bucket = { entity, slug, platform, theme, eigen: [], extern: [], clipIds: [], postUrls: [] };
+    buckets.set(k, nieuw);
+    return nieuw;
+  };
+
+  // Eigen clips.
+  for (const clip of eigenRes.data ?? []) {
     const perf = one<{ outlier_score: number | null }>(clip.clip_performance);
-    if (!perf?.outlier_score && perf?.outlier_score !== 0) continue;
+    if (perf?.outlier_score === null || perf?.outlier_score === undefined) continue;
+    const score = Number(perf.outlier_score);
+    const platform = (clip.platform as string) ?? ALL;
+    const theme = (clip.theme as string) ?? ALL;
 
     for (const [entity, slug] of [
       ['structure', clip.structure_type],
       ['hook', clip.hook_type],
     ] as const) {
       if (!slug) continue;
-      const key = `${entity}:${slug}`;
-      const bucket: Bucket = buckets.get(key) ?? { entity, slug, scores: [], ids: [] };
-      bucket.scores.push(Number(perf.outlier_score));
-      bucket.ids.push(clip.id as string);
-      buckets.set(key, bucket);
+      // Elke waarneming telt mee op zijn eigen niveau én op het algemene niveau,
+      // zodat brede terugval-gewichten ook blijven leren.
+      for (const [p, t] of [
+        [platform, theme],
+        [platform, ALL],
+        [ALL, ALL],
+      ] as const) {
+        const b = bucket(entity, slug, p, t);
+        b.eigen.push(score);
+        b.clipIds.push(clip.id as string);
+      }
     }
   }
 
-  return [...buckets.values()].map((b) => ({
-    entity: b.entity,
-    slug: b.slug,
-    n: b.scores.length,
-    mediaan_outlier_score: median(b.scores),
-    huidig_gewicht: (b.entity === 'structure' ? structureWeights.get(b.slug) : hookWeights.get(b.slug)) ?? 0.5,
-    clip_ids: b.ids,
-  }));
+  // Externe vondsten van de scout.
+  for (const find of externRes.data ?? []) {
+    if (find.outlier_score === null) continue;
+    const score = Number(find.outlier_score);
+    const decoded = (find.decoded ?? {}) as { hook_type?: string; structuur?: string; overdraagbaar_naar_ons?: boolean };
+    // Niet-overdraagbare vondsten zeggen niets over ons werk.
+    if (decoded.overdraagbaar_naar_ons === false) continue;
+
+    const platform = (find.platform as string) ?? ALL;
+    const theme = (find.theme as string) ?? ALL;
+
+    for (const [entity, ruwe] of [
+      ['structure', decoded.structuur],
+      ['hook', decoded.hook_type],
+    ] as const) {
+      // De scout mag "nieuw:..." teruggeven voor iets dat nog niet in de vault
+      // staat; dat is een kandidaat, geen gewicht voor een bestaande slug.
+      if (!ruwe || ruwe.startsWith('nieuw:')) continue;
+      for (const [p, t] of [
+        [platform, theme],
+        [platform, ALL],
+        [ALL, ALL],
+      ] as const) {
+        const b = bucket(entity, ruwe, p, t);
+        b.extern.push(score);
+        b.postUrls.push(find.post_url as string);
+      }
+    }
+  }
+
+  return [...buckets.values()].map((b) => {
+    const eigenMediaan = median(b.eigen);
+    const externMediaan = median(b.extern);
+    return {
+      entity: b.entity,
+      slug: b.slug,
+      platform: b.platform,
+      theme: b.theme,
+      eigen_n: b.eigen.length,
+      eigen_mediaan: eigenMediaan,
+      extern_n: b.extern.length,
+      extern_mediaan: externMediaan,
+      gecombineerde_score: combineer(eigenMediaan, externMediaan),
+      huidig_gewicht: weights.resolve(b.entity, b.slug, b.platform, b.theme).weight,
+      clip_ids: [...new Set(b.clipIds)],
+      post_urls: [...new Set(b.postUrls)],
+    };
+  });
+}
+
+/** 50/50 als beide kanten data hebben; anders telt de kant die er wel is. */
+export function combineer(eigen: number | null, extern: number | null): number | null {
+  if (eigen === null && extern === null) return null;
+  if (eigen === null) return extern;
+  if (extern === null) return eigen;
+  return EIGEN_GEWICHT * eigen + (1 - EIGEN_GEWICHT) * extern;
 }
 
 /**
@@ -95,18 +200,18 @@ export async function collectRetroStats(): Promise<GroupStats[]> {
  */
 export async function runRetroAgent(): Promise<{ agentRunId: string; proposal: RetroProposal; stats: GroupStats[] }> {
   const stats = await collectRetroStats();
-  const eligible = stats.filter((s) => s.n >= MIN_N_PER_GROUP);
+  const eligible = stats.filter((s) => s.eigen_n >= MIN_N_PER_GROUP || s.extern_n >= MIN_N_PER_GROUP);
 
   const proposal: RetroProposal =
     eligible.length === 0
       ? {
           wijzigingen: [],
-          samenvatting: `Geen enkele groep haalt de drempel van ${MIN_N_PER_GROUP} clips met 7 dagen data. Nog geen voorstel.`,
+          samenvatting: `Geen enkele groep haalt de drempel van ${MIN_N_PER_GROUP} waarnemingen (eigen clips of externe vondsten). Nog geen voorstel.`,
         }
       : enforceRules(
           await structuredCall({
             system: RETRO_SYSTEM,
-            user: `Performance per groep (alleen groepen die de drempel halen):\n${JSON.stringify(eligible, null, 2)}\n\nAlle gemeten groepen ter context:\n${JSON.stringify(stats, null, 2)}`,
+            user: `Groepen die de drempel halen:\n${JSON.stringify(eligible, null, 2)}\n\nAlle gemeten groepen ter context:\n${JSON.stringify(stats, null, 2)}`,
             schema: proposalSchema,
             toolName: 'lever_vault_voorstel',
             toolDescription: 'Lever de voorgestelde vault-gewichtswijzigingen met bewijs.',
@@ -139,11 +244,11 @@ export async function runRetroAgent(): Promise<{ agentRunId: string; proposal: R
  * onvoldoende data of een te grote stap wordt hier gecorrigeerd of geweigerd.
  */
 function enforceRules(proposal: RetroProposal, eligible: GroupStats[]): RetroProposal {
-  const byKey = new Map(eligible.map((s) => [`${s.entity}:${s.slug}`, s]));
+  const byKey = new Map(eligible.map((s) => [`${s.entity}:${s.slug}:${s.platform}:${s.theme}`, s]));
 
   const wijzigingen = proposal.wijzigingen
     .map((w) => {
-      const stat = byKey.get(`${w.entity}:${w.slug}`);
+      const stat = byKey.get(`${w.entity}:${w.slug}:${w.platform}:${w.theme}`);
       if (!stat) return null;
 
       const current = stat.huidig_gewicht;
@@ -159,6 +264,7 @@ function enforceRules(proposal: RetroProposal, eligible: GroupStats[]): RetroPro
         huidig_gewicht: current,
         nieuw_gewicht: Math.round(clamped * 100) / 100,
         bewijs_clip_ids: stat.clip_ids,
+        bewijs_post_urls: stat.post_urls,
       };
     })
     .filter((w): w is NonNullable<typeof w> => w !== null);
@@ -175,35 +281,41 @@ export async function applyRetroProposal(agentRunId: string, decidedBy: string) 
   if (run.status !== 'pending') throw new Error(`Voorstel is al ${run.status}`);
 
   const proposal = proposalSchema.parse(run.proposal);
+  const stats = ((run.input_summary as { stats?: GroupStats[] })?.stats ?? []) as GroupStats[];
+  const statFor = (w: RetroProposal['wijzigingen'][number]) =>
+    stats.find(
+      (s) => s.entity === w.entity && s.slug === w.slug && s.platform === w.platform && s.theme === w.theme,
+    );
 
   for (const w of proposal.wijzigingen) {
-    const table = w.entity === 'structure' ? 'vault_structures' : 'vault_hooks';
-    const { data: current, error: readError } = await supabase
-      .from(table)
-      .select('weight, version, evidence')
-      .eq('slug', w.slug)
-      .single();
-    if (readError) throw readError;
+    const stat = statFor(w);
 
-    const { error: updateError } = await supabase
-      .from(table)
-      .update({
-        weight: w.nieuw_gewicht,
-        version: current.version + 1,
-        evidence: { clip_ids: w.bewijs_clip_ids, reden: w.reden, agent_run_id: agentRunId },
-        updated_at: new Date().toISOString(),
-      })
-      .eq('slug', w.slug);
-    if (updateError) throw updateError;
+    await upsertWeight({
+      entity: w.entity,
+      entity_key: w.slug,
+      platform: w.platform,
+      theme: w.theme,
+      weight: w.nieuw_gewicht,
+      eigen_n: stat?.eigen_n ?? 0,
+      eigen_mediaan: stat?.eigen_mediaan ?? null,
+      extern_n: stat?.extern_n ?? 0,
+      extern_mediaan: stat?.extern_mediaan ?? null,
+      evidence: {
+        clip_ids: w.bewijs_clip_ids,
+        post_urls: w.bewijs_post_urls,
+        reden: w.reden,
+        agent_run_id: agentRunId,
+      },
+    });
 
     await supabase.from('vault_changelog').insert({
       entity: w.entity,
-      entity_key: w.slug,
+      entity_key: `${w.slug} (${w.platform}/${w.theme})`,
       field: 'weight',
-      old_value: current.weight,
+      old_value: w.huidig_gewicht,
       new_value: w.nieuw_gewicht,
       reason: w.reden,
-      evidence: { clip_ids: w.bewijs_clip_ids },
+      evidence: { clip_ids: w.bewijs_clip_ids, post_urls: w.bewijs_post_urls },
       agent_run_id: agentRunId,
       decided_by: decidedBy,
     });

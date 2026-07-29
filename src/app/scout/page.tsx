@@ -1,6 +1,7 @@
 import { db } from '@/lib/supabase';
 import { AccountsPanel } from './accounts-panel';
 import { QueriesPanel } from './queries-panel';
+import { ThemesPanel } from './themes-panel';
 
 export const dynamic = 'force-dynamic';
 
@@ -14,9 +15,10 @@ type Decoded = {
 
 export default async function ScoutPage() {
   const supabase = db();
-  const [accounts, queries, finds, kandidaten] = await Promise.all([
+  const [accounts, queries, themes, finds, kandidaten] = await Promise.all([
     supabase.from('tracked_accounts').select('*').order('handle'),
     supabase.from('search_queries').select('*').order('created_at'),
+    supabase.from('themes').select('*').order('name'),
     supabase
       .from('scout_finds')
       .select('*')
@@ -34,6 +36,8 @@ export default async function ScoutPage() {
           Kandidaat-regels worden pas actief nadat de retro ze met onze eigen cijfers bevestigt.
         </p>
       </div>
+
+      <ThemesPanel themes={themes.data ?? []} />
 
       <QueriesPanel queries={queries.data ?? []} />
 
@@ -88,6 +92,7 @@ export default async function ScoutPage() {
                   </div>
                   <div className="mt-0.5 text-xs text-neutral-600">
                     @{f.handle}
+                    {f.theme ? ` · thema ${f.theme}` : ''}
                     {f.gevonden_via ? ` · via ${String(f.gevonden_via).replace(':', ' "')}"` : ''}
                   </div>
                   {d.hook_beschrijving && (

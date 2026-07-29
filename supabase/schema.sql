@@ -252,3 +252,45 @@ create table if not exists search_queries (
 );
 alter table scout_finds add column if not exists gevonden_via text;
 alter table scout_finds add column if not exists views_per_dag bigint;
+
+-- ============================================================ uitbreiding v1.2
+-- Kennis per thema en per platform. Wat werkt in comedy werkt niet in
+-- financien, en wat werkt op TikTok werkt niet op Shorts. De vault krijgt
+-- daarom gewichten per (structuur/hook x platform x thema) in plaats van één
+-- globaal gewicht.
+
+create table if not exists themes (
+  slug text primary key,
+  name text not null,
+  description text,
+  zoektermen text[] not null default '{}',   -- waar de scout op zoekt voor dit thema
+  actief boolean not null default true,
+  created_at timestamptz not null default now()
+);
+
+-- Onze eigen accounts, campagnes en clips horen bij een thema.
+alter table tracked_accounts add column if not exists theme text;
+alter table campaigns add column if not exists theme text;
+alter table briefs add column if not exists theme text;
+alter table clips add column if not exists theme text;
+alter table scout_finds add column if not exists theme text;
+alter table search_queries add column if not exists theme text;
+
+-- DE KERN: gewichten per combinatie. 'all' betekent "geldt overal", en dient
+-- als terugval zolang er voor een specifieke combinatie te weinig data is.
+create table if not exists vault_weights (
+  entity text not null check (entity in ('structure', 'hook')),
+  entity_key text not null,
+  platform text not null default 'all',
+  theme text not null default 'all',
+  weight numeric not null default 0.5 check (weight >= 0 and weight <= 1),
+  eigen_n int not null default 0,
+  eigen_mediaan numeric,
+  extern_n int not null default 0,
+  extern_mediaan numeric,
+  evidence jsonb not null default '{}'::jsonb,
+  version int not null default 1,
+  updated_at timestamptz not null default now(),
+  primary key (entity, entity_key, platform, theme)
+);
+create index if not exists vault_weights_lookup_idx on vault_weights (platform, theme);
