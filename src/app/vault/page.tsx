@@ -1,19 +1,30 @@
 import { db } from '@/lib/supabase';
+import { WeightMatrix } from './weight-matrix';
 
 export const dynamic = 'force-dynamic';
 
 export default async function VaultPage() {
   const supabase = db();
-  const [structures, hooks, heuristics, changelog] = await Promise.all([
+  const [structures, hooks, heuristics, changelog, weights, themes] = await Promise.all([
     supabase.from('vault_structures').select('*').order('weight', { ascending: false }),
     supabase.from('vault_hooks').select('*').order('weight', { ascending: false }),
     supabase.from('vault_heuristics').select('*').order('status'),
     supabase.from('vault_changelog').select('*').order('created_at', { ascending: false }).limit(25),
+    supabase.from('vault_weights').select('*'),
+    supabase.from('themes').select('slug, name').order('name'),
   ]);
 
   return (
     <div className="space-y-10">
-      <h1 className="text-2xl font-semibold">Vault</h1>
+      <div>
+        <h1 className="text-2xl font-semibold">Vault</h1>
+        <p className="mt-1 text-sm text-neutral-400">
+          De definities zijn gedeeld; de gewichten verschillen per platform en thema. Waar een combinatie nog te weinig
+          data heeft, valt de tool terug op een breder gewicht.
+        </p>
+      </div>
+
+      <WeightMatrix weights={weights.data ?? []} themes={themes.data ?? []} />
 
       <section>
         <h2 className="mb-3 text-lg font-medium">Structuren</h2>
