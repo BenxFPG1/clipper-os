@@ -22,6 +22,7 @@ export function ThemesPanel({ themes }: { themes: Theme[] }) {
   const [zoektermen, setZoektermen] = useState('');
   const [busy, setBusy] = useState(false);
   const [melding, setMelding] = useState<string | null>(null);
+  const [suggesties, setSuggesties] = useState<Record<string, { term: string; waarom: string }[]>>({});
 
   async function add(e: React.FormEvent) {
     e.preventDefault();
@@ -44,6 +45,43 @@ export function ThemesPanel({ themes }: { themes: Theme[] }) {
     }
     setNaam('');
     setZoektermen('');
+    router.refresh();
+  }
+
+  /** Laat de tool zelf zoektermen voorstellen op basis van wat er in dit thema presteert. */
+  async function suggereer(slug: string) {
+    setBusy(true);
+    setMelding(null);
+    const res = await fetch('/api/themes/suggest', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ slug }),
+    });
+    const json = await res.json();
+    setBusy(false);
+    if (!res.ok) {
+      setMelding(json.error ?? 'Voorstellen mislukt');
+      return;
+    }
+    setSuggesties((s) => ({ ...s, [slug]: json.suggesties }));
+    if (json.suggesties.length === 0) setMelding('Geen nieuwe termen gevonden.');
+  }
+
+  /** Neemt één voorgestelde term over in het thema. */
+  async function neemOver(thema: Theme, term: string) {
+    setBusy(true);
+    await fetch('/api/themes', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        slug: thema.slug,
+        name: thema.name,
+        description: thema.description,
+        zoektermen: [...thema.zoektermen, term],
+      }),
+    });
+    setSuggesties((s) => ({ ...s, [thema.slug]: (s[thema.slug] ?? []).filter((x) => x.term !== term) }));
+    setBusy(false);
     router.refresh();
   }
 
@@ -104,11 +142,40 @@ export function ThemesPanel({ themes }: { themes: Theme[] }) {
                 <span className="block text-xs text-neutral-500">zoekt op: {t.zoektermen.join(' · ')}</span>
               )}
             </span>
-            <button onClick={() => remove(t.slug)} disabled={busy} className="text-xs text-neutral-500 hover:text-red-400">
-              verwijderen
-            </button>
+            <span className="flex shrink-0 gap-3">
+              <button
+                onClick={() => suggereer(t.slug)}
+                disabled={busy}
+                className="text-xs text-neutral-400 hover:text-neutral-100 disabled:opacity-40"
+              >
+                zoektermen voorstellen
+              </button>
+              <button onClick={() => remove(t.slug)} disabled={busy} className="text-xs text-neutral-500 hover:text-red-400">
+                verwijderen
+              </button>
+            </span>
           </li>
         ))}
+        {themes.map((t) =>
+          (suggesties[t.slug] ?? []).length > 0 ? (
+            <li key={`${t.slug}-sug`} className="rounded border border-dashed border-neutral-700 px-3 py-2">
+              <p className="text-xs text-neutral-500">Voorgesteld voor {t.name} — klik om toe te voegen:</p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {(suggesties[t.slug] ?? []).map((sug) => (
+                  <button
+                    key={sug.term}
+                    onClick={() => neemOver(t, sug.term)}
+                    disabled={busy}
+                    title={sug.waarom}
+                    className="rounded-full border border-neutral-700 px-3 py-1 text-xs hover:border-neutral-400 disabled:opacity-40"
+                  >
+                    + {sug.term}
+                  </button>
+                ))}
+              </div>
+            </li>
+          ) : null,
+        )}
         {themes.length === 0 && <li className="text-sm text-neutral-500">Nog geen thema&apos;s.</li>}
       </ul>
     </section>
