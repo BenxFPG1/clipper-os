@@ -2,6 +2,11 @@ import { db } from '../supabase';
 
 export type Entity = 'structure' | 'hook';
 export const ALL = 'all';
+/**
+ * Hoe sterk kennis uit andere thema's meetelt als er voor deze combinatie nog
+ * geen eigen data is. 0 = negeren, 1 = even zwaar als eigen themakennis.
+ */
+export const CROSS_THEMA_DEMPING = 0.5;
 
 export type WeightRow = {
   entity: Entity;
@@ -38,16 +43,23 @@ export class WeightIndex {
     const p = platform ?? ALL;
     const t = theme ?? ALL;
 
-    const kandidaten: [string, string, string][] = [
-      [p, t, 'exact'],
-      [p, ALL, 'platform'],
-      [ALL, t, 'thema'],
-      [ALL, ALL, 'algemeen'],
+    const kandidaten: [string, string, string, number][] = [
+      [p, t, 'exact', 1],
+      [p, ALL, 'platform', 1],
+      [ALL, t, 'thema', 1],
+      // Algemene kennis komt uit alle niches door elkaar. Die gooien we niet
+      // weg — een hook die in financien werkt is een echte meting — maar we
+      // trekken hem richting neutraal, zodat kennis uit een ander vakgebied
+      // je keuzes hooguit bijstuurt en niet bepaalt.
+      [ALL, ALL, 'algemeen (gedempt)', CROSS_THEMA_DEMPING],
     ];
 
-    for (const [pl, th, herkomst] of kandidaten) {
+    for (const [pl, th, herkomst, demping] of kandidaten) {
       const row = this.index.get(key(entity, entityKey, pl, th));
-      if (row) return { weight: Number(row.weight), herkomst, row };
+      if (!row) continue;
+      const ruw = Number(row.weight);
+      const gewicht = demping === 1 ? ruw : 0.5 + (ruw - 0.5) * demping;
+      return { weight: gewicht, herkomst, row };
     }
     return { weight: 0.5, herkomst: 'standaard', row: null };
   }

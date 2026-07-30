@@ -141,8 +141,10 @@ export async function collectRetroStats(): Promise<GroupStats[]> {
     if (find.outlier_score === null) continue;
     const score = Number(find.outlier_score);
     const decoded = (find.decoded ?? {}) as { hook_type?: string; structuur?: string; overdraagbaar_naar_ons?: boolean };
-    // Niet-overdraagbare vondsten zeggen niets over ons werk.
-    if (decoded.overdraagbaar_naar_ons === false) continue;
+    // Bewust géén filter op "overdraagbaar": een hook die in financien werkt is
+    // een echte meting, ook als hij niet direct op ons materiaal past. Relevantie
+    // regelen we via het thema — die kennis telt zwaar mee bij een financien-
+    // campagne en licht bij comedy. Weggooien zou signaal vernietigen.
 
     const platform = (find.platform as string) ?? ALL;
     const theme = (find.theme as string) ?? ALL;
