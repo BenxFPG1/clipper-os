@@ -38,6 +38,8 @@ export interface MetricsProvider {
   searchPosts(query: string, platform: Platform, limit?: number): Promise<AccountPost[]>;
   /** Wat er platformbreed trending is, los van accounts of zoektermen. */
   fetchTrending(platform: Platform, limit?: number): Promise<AccountPost[]>;
+  /** Uitgesproken tekst van een post, met tijdcodes. Null als niet beschikbaar. */
+  fetchTranscript?(postUrl: string, platform: Platform): Promise<string | null>;
 }
 
 export function detectPlatform(postUrl: string): Platform | null {
@@ -46,6 +48,9 @@ export function detectPlatform(postUrl: string): Platform | null {
   if (/youtube\.com|youtu\.be/i.test(postUrl)) return 'shorts';
   return null;
 }
+
+/** Hoeveel pagina's we maximaal ophalen per account; elke pagina kost een credit. */
+const MAX_PAGINAS = 3;
 
 class ScrapeCreatorsProvider implements MetricsProvider {
   readonly name = 'scrapecreators';
@@ -75,15 +80,38 @@ class ScrapeCreatorsProvider implements MetricsProvider {
       shorts: 'https://api.scrapecreators.com/v1/youtube/channel/videos',
     };
 
-    const url = new URL(endpoint[platform]);
-    url.searchParams.set('handle', handle.replace(/^@/, ''));
-    url.searchParams.set('amount', String(limit));
+    // Eén pagina levert er ongeveer tien. Te weinig voor een betrouwbare
+    // mediaan: met drie virale hits tussen zeven gewone posts krijg je scores
+    // van 190x die meer over de steekproef zeggen dan over het account. We
+    // pagineren dus door tot we genoeg posts hebben.
+    const posts: AccountPost[] = [];
+    let cursor: string | null = null;
 
-    const res = await fetch(url, { headers: { 'x-api-key': requireEnv('SCRAPECREATORS_API_KEY') } });
-    if (!res.ok) throw new Error(`ScrapeCreators ${res.status}: ${await res.text()}`);
+    for (let pagina = 0; pagina < MAX_PAGINAS && posts.length < limit; pagina++) {
+      const url = new URL(endpoint[platform]);
+      url.searchParams.set('handle', handle.replace(/^@/, ''));
+      url.searchParams.set('amount', String(limit));
+      if (cursor) url.searchParams.set('max_cursor', cursor);
 
-    const json = (await res.json()) as Record<string, unknown>;
-    return normalizePosts(json, platform, handle);
+      const res = await fetch(url, { headers: { 'x-api-key': requireEnv('SCRAPECREATORS_API_KEY') } });
+      if (!res.ok) {
+        if (pagina === 0) throw new Error(`ScrapeCreators ${res.status}: ${await res.text()}`);
+        break;
+      }
+
+      const json = (await res.json()) as Record<string, unknown>;
+      const batch = normalizePosts(json, platform, handle);
+      if (batch.length === 0) break;
+
+      posts.push(...batch);
+
+      const meer = json.has_more;
+      const volgende = json.max_cursor ?? json.next_cursor;
+      if (!meer || volgende === undefined || volgende === null) break;
+      cursor = String(volgende);
+    }
+
+    return posts.slice(0, limit);
   }
 
   async searchPosts(query: string, platform: Platform, limit = 30): Promise<AccountPost[]> {
@@ -102,6 +130,24 @@ class ScrapeCreatorsProvider implements MetricsProvider {
 
     const json = (await res.json()) as Record<string, unknown>;
     return normalizePosts(json, platform, '');
+  }
+
+  /**
+   * Haalt de uitgesproken tekst op. Dit is wat een vondst van "mooie caption"
+   * naar echt bruikbaar tilt: je ziet welk moment iemand koos en hoe de eerste
+   * seconden klinken.
+   */
+  async fetchTranscript(postUrl: string, platform: Platform): Promise<string | null> {
+    if (platform !== 'tiktok') return null;
+
+    const url = new URL('https://api.scrapecreators.com/v1/tiktok/video/transcript');
+    url.searchParams.set('url', postUrl);
+
+    const res = await fetch(url, { headers: { 'x-api-key': requireEnv('SCRAPECREATORS_API_KEY') } });
+    if (!res.ok) return null;
+
+    const json = (await res.json()) as { transcript?: string };
+    return json.transcript?.trim() || null;
   }
 
   async fetchTrending(platform: Platform, limit = 30): Promise<AccountPost[]> {
