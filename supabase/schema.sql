@@ -294,3 +294,13 @@ create table if not exists vault_weights (
   primary key (entity, entity_key, platform, theme)
 );
 create index if not exists vault_weights_lookup_idx on vault_weights (platform, theme);
+
+-- ============================================================ uitbreiding v1.3
+-- Accounts die de scout zelf ontdekt worden voortaan gevolgd. Een uitschieter
+-- is namelijk alleen betekenisvol t.o.v. de eigen mediaan van dat account, en
+-- die kun je pas berekenen als je het account structureel meet. Dit is hoe
+-- outlier-tools als Sandcastles werken: niet trending-feeds, maar een groeiend
+-- universum van accounts per niche met een eigen basislijn.
+alter table tracked_accounts add column if not exists auto_added boolean not null default false;
+alter table tracked_accounts add column if not exists laatst_gezien timestamptz;
+alter table tracked_accounts add column if not exists ontdekt_via text;

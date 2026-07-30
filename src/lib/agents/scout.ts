@@ -19,6 +19,11 @@ export const MAX_OUTLIER_SCORE = 100;
 
 /** Een kandidaat-heuristiek moet over minstens zoveel verschillende accounts terugkomen. */
 export const MIN_ACCOUNTS_PER_HEURISTIEK = 2;
+/**
+ * Hoeveel externe accounts we maximaal blijven volgen. Elk gevolgd account
+ * kost één credit per scout-run, dus dit is direct een budgetknop.
+ */
+export const MAX_GEVOLGDE_ACCOUNTS = Number(process.env.MAX_TRACKED_ACCOUNTS ?? 40);
 
 const decodedSchema = z.object({
   posts: z.array(
@@ -79,6 +84,7 @@ export async function runScoutAgent(options?: { limitPerAccount?: number }): Pro
   zoektermen: number;
   outliers: number;
   kandidaten: number;
+  nieuweAccounts: number;
 }> {
   const supabase = db();
   const provider = getMetricsProvider();
@@ -304,6 +310,7 @@ export async function runScoutAgent(options?: { limitPerAccount?: number }): Pro
     }
   }
 
+  const nieuweAccounts = await volgOntdekteAccounts(teDecoderen);
   const kandidaten = await schrijfKandidaten(decoded, teDecoderen);
 
   const { data: run, error: runError } = await supabase
@@ -330,7 +337,60 @@ export async function runScoutAgent(options?: { limitPerAccount?: number }): Pro
     zoektermen: queries.length,
     outliers: outliers.length,
     kandidaten,
+    nieuweAccounts,
   };
+}
+
+/**
+ * Neemt ontdekte accounts op in de volglijst. Dit is de kern van hoe
+ * outlier-research werkt: een uitschieter bestaat alleen ten opzichte van de
+ * eigen mediaan van een account, en die kun je pas berekenen als je dat account
+ * structureel meet. Eén losse vondst zegt weinig; hetzelfde account over
+ * dertig posts zegt alles.
+ *
+ * We nemen alleen accounts op met een thema (anders weten we niet in welke
+ * niche hun kennis telt) en stoppen bij MAX_GEVOLGDE_ACCOUNTS, omdat elk
+ * account per run een credit kost.
+ */
+async function volgOntdekteAccounts(outliers: Outlier[]): Promise<number> {
+  const supabase = db();
+
+  const { data: bestaand } = await supabase.from('tracked_accounts').select('handle, platform, our_own');
+  const bekend = new Set((bestaand ?? []).map((a) => `${a.handle.toLowerCase()}|${a.platform}`));
+  const extern = (bestaand ?? []).filter((a) => !a.our_own).length;
+
+  let ruimte = Math.max(0, MAX_GEVOLGDE_ACCOUNTS - extern);
+  if (ruimte === 0) return 0;
+
+  // Beste presteerders eerst, zodat we de ruimte aan de interessantste geven.
+  const kandidaten = [...outliers]
+    .filter((o) => o.handle && o.theme)
+    .sort((a, b) => b.outlier_score - a.outlier_score);
+
+  let toegevoegd = 0;
+  for (const kandidaat of kandidaten) {
+    if (ruimte === 0) break;
+    const handle = kandidaat.handle!.replace(/^@/, '');
+    const sleutel = `${handle.toLowerCase()}|${kandidaat.platform}`;
+    if (bekend.has(sleutel)) continue;
+
+    const { error } = await supabase.from('tracked_accounts').insert({
+      handle,
+      platform: kandidaat.platform,
+      our_own: false,
+      theme: kandidaat.theme,
+      auto_added: true,
+      ontdekt_via: kandidaat.gevonden_via,
+      laatst_gezien: new Date().toISOString(),
+    });
+    if (error) continue;
+
+    bekend.add(sleutel);
+    ruimte--;
+    toegevoegd++;
+  }
+
+  return toegevoegd;
 }
 
 const classificatieSchema = z.object({
