@@ -22,6 +22,15 @@ type Find = {
     structuur?: string;
     waarom_het_werkt?: string;
     overdraagbaar_naar_ons?: boolean;
+    bron_match?: {
+      video_id?: string;
+      video_titel?: string;
+      start_seconds?: number;
+      end_seconds?: number;
+      score?: number;
+      fragment?: string;
+      geen_treffer?: boolean;
+    };
   } | null;
 };
 
@@ -32,6 +41,12 @@ const PRESETS = [
   { naam: 'Uitzonderlijk (5× + 100k)', score: 5, views: 100_000, dagen: 0 },
   { naam: 'Vers (30 dagen)', score: 2, views: 0, dagen: 30 },
 ];
+
+function formatTijd(seconden: number): string {
+  const m = Math.floor(seconden / 60);
+  const s = Math.round(seconden % 60);
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
 
 export function OutlierFeed({ finds, themes }: { finds: Find[]; themes: { slug: string; name: string }[] }) {
   const [platform, setPlatform] = useState('alle');
@@ -169,7 +184,28 @@ export function OutlierFeed({ finds, themes }: { finds: Find[]; themes: { slug: 
 function OutlierKaart({ find, open, onToggle }: { find: Find; open: boolean; onToggle: () => void }) {
   const [busy, setBusy] = useState(false);
   const [melding, setMelding] = useState<string | null>(null);
+  const [bron, setBron] = useState(find.decoded?.bron_match ?? null);
   const d = find.decoded ?? {};
+
+  /** Zoekt uit welk moment van onze bronvideo's deze clip komt. */
+  async function zoekBron() {
+    setBusy(true);
+    setMelding(null);
+    const res = await fetch('/api/outliers/match-source', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ findId: find.id }),
+    });
+    const json = await res.json();
+    setBusy(false);
+    if (!res.ok) {
+      setMelding(json.error ?? 'Zoeken mislukt');
+      return;
+    }
+    const gevonden = json.resultaten?.[0]?.match;
+    setBron(gevonden ?? { geen_treffer: true });
+    if (!gevonden) setMelding('Deze clip komt niet uit een van onze bronvideo\'s.');
+  }
 
   /** Maakt een opdracht van deze vondst, zodat de scriptwriter er een script bij schrijft. */
   async function maakOpdracht() {
@@ -229,6 +265,20 @@ function OutlierKaart({ find, open, onToggle }: { find: Find; open: boolean; onT
             <p className="text-neutral-500">Nog niet gedecodeerd — dat gebeurt bij de volgende scout-run.</p>
           )}
 
+          {bron && !bron.geen_treffer && (
+            <div className="rounded border border-emerald-900/60 bg-emerald-950/30 px-3 py-2">
+              <p className="text-xs uppercase tracking-wide text-emerald-400">Geknipt uit onze bronvideo</p>
+              <p className="mt-1">
+                <span className="font-medium">{bron.video_titel}</span> op{' '}
+                <span className="font-mono">
+                  {formatTijd(bron.start_seconds ?? 0)}–{formatTijd(bron.end_seconds ?? 0)}
+                </span>
+                <span className="ml-2 text-xs text-neutral-500">zekerheid {Math.round((bron.score ?? 0) * 100)}%</span>
+              </p>
+              {bron.fragment && <p className="mt-1 text-xs text-neutral-400">&ldquo;{bron.fragment.slice(0, 200)}…&rdquo;</p>}
+            </div>
+          )}
+
           <div className="flex flex-wrap items-center gap-3">
             <a
               href={find.post_url}
@@ -245,6 +295,15 @@ function OutlierKaart({ find, open, onToggle }: { find: Find; open: boolean; onT
             >
               {busy ? 'Bezig…' : 'Maak hier een script van'}
             </button>
+            {find.platform === 'tiktok' && !bron && (
+              <button
+                onClick={zoekBron}
+                disabled={busy}
+                className="rounded border border-neutral-700 px-3 py-1.5 text-xs hover:border-neutral-500 disabled:opacity-40"
+              >
+                Zoek bronmoment
+              </button>
+            )}
             {find.gevonden_via && <span className="text-xs text-neutral-600">gevonden via {find.gevonden_via}</span>}
           </div>
 

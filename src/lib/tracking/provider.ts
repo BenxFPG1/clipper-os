@@ -164,6 +164,9 @@ class ScrapeCreatorsProvider implements MetricsProvider {
 
     const url = new URL('https://api.scrapecreators.com/v1/tiktok/video/transcript');
     url.searchParams.set('url', postUrl);
+    // Zonder taalparameter vertaalt TikTok de ondertitels naar het Engels, en
+    // dan is vergelijken met een Nederlands brontranscript kansloos.
+    url.searchParams.set('language', optionalEnv('TRANSCRIPT_TAAL', 'nl'));
 
     const res = await fetchMetTimeout(url, { headers: { 'x-api-key': requireEnv('SCRAPECREATORS_API_KEY') } });
     if (!res.ok) return null;
