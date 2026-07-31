@@ -40,10 +40,20 @@ export const MIN_ACCOUNT_MEDIAAN = Number(process.env.MIN_ACCOUNT_MEDIAAN ?? 500
 /** Een kandidaat-heuristiek moet over minstens zoveel verschillende accounts terugkomen. */
 export const MIN_ACCOUNTS_PER_HEURISTIEK = 2;
 /**
- * Hoeveel externe accounts we maximaal blijven volgen. Elk gevolgd account
- * kost één credit per scout-run, dus dit is direct een budgetknop.
+ * Hoeveel accounts we tegelijk een basislijn geven. Dit is geen lijst met
+ * concurrenten die je bijhoudt, maar een technisch hulpmiddel: een uitschieter
+ * bestaat alleen ten opzichte van het normale niveau van een account, en dat
+ * moet je dus meten. De tool vult deze lijst zelf op basis van wat hij
+ * tegenkomt, en ruimt hem ook zelf op.
+ *
+ * Elk account kost een paar credits per run; dit is dus ook de budgetknop.
  */
-export const MAX_GEVOLGDE_ACCOUNTS = Number(process.env.MAX_TRACKED_ACCOUNTS ?? 40);
+export const MAX_GEVOLGDE_ACCOUNTS = Number(process.env.MAX_TRACKED_ACCOUNTS ?? 60);
+/**
+ * Accounts die zo lang geen uitschieter meer opleverden ruimen we op, zodat de
+ * lijst zichzelf ververst in plaats van vol te lopen met eenmalige toevalstreffers.
+ */
+export const OPRUIM_NA_DAGEN = 30;
 
 const decodedSchema = z.object({
   posts: z.array(
@@ -168,7 +178,11 @@ export async function runScoutAgent(options?: { limitPerAccount?: number }): Pro
 
       await supabase
         .from('tracked_accounts')
-        .update({ median_views_7d: Math.round(accountMediaan), updated_at: new Date().toISOString() })
+        .update({
+          median_views_7d: Math.round(accountMediaan),
+          laatst_gezien: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        })
         .eq('id', account.id);
     } catch (e) {
       fouten.push({ bron: `account:@${account.handle}`, error: e instanceof Error ? e.message : String(e) });
@@ -424,7 +438,25 @@ async function volgOntdekteAccounts(outliers: Outlier[]): Promise<number> {
     toegevoegd++;
   }
 
+  await ruimOpgedroogdeAccountsOp();
   return toegevoegd;
+}
+
+/**
+ * Verwijdert automatisch toegevoegde accounts die al een tijd niets opleveren.
+ * Zonder dit loopt de lijst vol met accounts die één keer geluk hadden, en
+ * verspillen we elke run credits aan het meten daarvan.
+ */
+async function ruimOpgedroogdeAccountsOp(): Promise<void> {
+  const supabase = db();
+  const grens = new Date(Date.now() - OPRUIM_NA_DAGEN * 24 * 3600 * 1000).toISOString();
+
+  await supabase
+    .from('tracked_accounts')
+    .delete()
+    .eq('auto_added', true)
+    .eq('our_own', false)
+    .lt('laatst_gezien', grens);
 }
 
 const classificatieSchema = z.object({

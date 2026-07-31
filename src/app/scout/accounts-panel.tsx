@@ -8,6 +8,7 @@ type Account = {
   handle: string;
   platform: string;
   our_own: boolean;
+  auto_added?: boolean;
   median_views_7d: number | null;
 };
 
@@ -59,7 +60,14 @@ export function AccountsPanel({ accounts }: { accounts: Account[] }) {
 
   return (
     <section className="space-y-3 rounded border border-neutral-800 p-4">
-      <h2 className="text-lg font-medium">Accounts die we volgen</h2>
+      <div>
+        <h2 className="text-lg font-medium">Gemeten accounts</h2>
+        <p className="mt-1 text-sm text-neutral-500">
+          Deze lijst vult zichzelf. Een uitschieter bestaat alleen ten opzichte van het normale niveau van een account,
+          dus meet de tool automatisch de accounts die hij tegenkomt. Levert er een een maand niets op, dan valt hij er
+          vanzelf weer af. Je hoeft hier niets te doen — handmatig toevoegen kan, maar hoeft niet.
+        </p>
+      </div>
 
       <form onSubmit={add} className="flex flex-wrap items-end gap-2">
         <label className="text-sm">
@@ -108,6 +116,7 @@ export function AccountsPanel({ accounts }: { accounts: Account[] }) {
             <span>
               @{a.handle} <span className="text-neutral-500">· {a.platform}</span>
               {a.our_own && <span className="ml-2 text-xs text-emerald-300">ons account</span>}
+              {a.auto_added && <span className="ml-2 text-xs text-neutral-600">automatisch gevonden</span>}
               {a.median_views_7d && (
                 <span className="ml-2 text-xs text-neutral-600">
                   mediaan {a.median_views_7d.toLocaleString('nl-NL')}

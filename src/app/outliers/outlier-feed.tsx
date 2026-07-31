@@ -295,7 +295,7 @@ function OutlierKaart({ find, open, onToggle }: { find: Find; open: boolean; onT
             >
               {busy ? 'Bezig…' : 'Maak hier een script van'}
             </button>
-            {find.platform === 'tiktok' && !bron && (
+            {(find.platform === 'tiktok' || find.platform === 'shorts') && !bron && (
               <button
                 onClick={zoekBron}
                 disabled={busy}

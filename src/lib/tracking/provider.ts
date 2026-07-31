@@ -71,6 +71,21 @@ async function fetchMetTimeout(url: string | URL, init?: RequestInit): Promise<R
   }
 }
 
+/**
+ * Ondertitels van een YouTube-Short, via dezelfde gratis route als de ingest.
+ * Geeft platte tekst terug zodat de matcher er niet omheen hoeft.
+ */
+async function fetchShortsTranscript(postUrl: string): Promise<string | null> {
+  try {
+    const { fetchYoutubeCaptions } = await import('../ingest/youtube');
+    const captions = await fetchYoutubeCaptions(postUrl);
+    if (!captions?.segments.length) return null;
+    return captions.segments.map((s) => s.text).join(' ');
+  } catch {
+    return null;
+  }
+}
+
 /** Hoeveel pagina's we maximaal ophalen per account; elke pagina kost een credit. */
 const MAX_PAGINAS = 3;
 
@@ -160,6 +175,9 @@ class ScrapeCreatorsProvider implements MetricsProvider {
    * seconden klinken.
    */
   async fetchTranscript(postUrl: string, platform: Platform): Promise<string | null> {
+    // Shorts hebben geen provider-endpoint nodig: YouTube geeft de ondertitels
+    // gratis via yt-dlp, dezelfde route als onze eigen ingest.
+    if (platform === 'shorts') return fetchShortsTranscript(postUrl);
     if (platform !== 'tiktok') return null;
 
     const url = new URL('https://api.scrapecreators.com/v1/tiktok/video/transcript');
