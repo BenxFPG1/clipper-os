@@ -12,7 +12,8 @@
     "eval": "tsx scripts/run-eval.ts",
     "typecheck": "tsc --noEmit",
     "retro:dryrun": "tsx scripts/retro-dryrun.ts",
-    "job": "tsx scripts/job.ts"
+    "job": "tsx scripts/job.ts",
+    "roughcut": "tsx scripts/roughcut.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.115.0",

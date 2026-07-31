@@ -168,6 +168,22 @@ De webserver hoeft er niet voor te draaien; de taken roepen de code rechtstreeks
 
 Het "zichzelf trainen" heeft je Mac dus maar een paar minuten per dag nodig. De enige stap die echt om jou vraagt is het goedkeuren van retro-voorstellen in de agent-inbox — en dat is bewust zo (sectie 3: de mens keurt goed). Wil je ooit volledige cloud-autonomie zonder Mac: deploy op Vercel met `CLAUDE_BACKEND=api` en de ScrapeCreators-key; dan vervalt alleen de gratis yt-dlp-route.
 
+## Ruwe montage (het knipwerk automatisch)
+
+De tool levert niet alleen het plan maar ook de ruwe montage: elk fragment uit het plan geknipt en achter elkaar gezet, verticaal 1080x1920, klaar om in CapCut te openen.
+
+```bash
+npm run roughcut -- <video-id>            # alle clips uit het nieuwste plan
+npm run roughcut -- <video-id> --clip 3   # alleen clip 3
+npm run roughcut -- --opruimen            # gedownloade bronvideo's weggooien
+```
+
+De bestanden komen in `~/Movies/Clipper OS/`. De bronvideo wordt één keer gedownload en hergebruikt voor alle clips uit dezelfde video; dat is verreweg de traagste stap.
+
+Bewust **ruw**: de tool doet het mechanische werk — de juiste fragmenten in de juiste volgorde, ook als die twintig minuten uit elkaar liggen — en laat alles waar oordeel voor nodig is aan de editor: zooms, ondertitels, muziek, precieze in- en uitpunten. Zo blijft de vakkennis waar hij hoort en vervalt alleen het knip- en plakwerk.
+
+Werkt op je Mac (yt-dlp en ffmpeg), niet op Vercel.
+
 ## Kosten en doorlooptijd
 
 Gemeten op een echte aflevering van 39 minuten (440 transcriptsegmenten):
@@ -200,4 +216,4 @@ Providerkosten worden per call gelogd in `provider_usage`. De tracking-run geeft
 
 ## Scope
 
-Geen video-rendering, geen auto-posting, geen multi-user, geen publieke outlier-database. Ideeën daarbuiten gaan naar `BACKLOG.md`.
+Geen finale video-rendering (wel ruwe montages), geen auto-posting, geen multi-user, geen publieke outlier-database. Ideeën daarbuiten gaan naar `BACKLOG.md`.
