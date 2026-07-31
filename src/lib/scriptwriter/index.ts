@@ -5,11 +5,23 @@ import { db } from '../supabase';
 import { loadVault, renderVaultForPrompt } from '../vault';
 
 export const SCRIPT_SCHEMA_VERSION = '1.0';
-export const SCRIPT_PROMPT_VERSION = 'script-1.0';
+export const SCRIPT_PROMPT_VERSION = 'script-2.0';
 
 export const scriptSchema = z.object({
   concept: z.string(),
   structure_type: z.string(),
+  /**
+   * De verhaallijn is verplicht en komt vóór alles: zonder belofte, oplopende
+   * spanning en een payoff die de belofte inlost is het geen script maar een
+   * opsomming. Het schema dwingt dit af zodat het niet kan wegzakken.
+   */
+  verhaallijn: z.object({
+    belofte: z.string().min(10),
+    open_vraag: z.string().min(10),
+    escalatie: z.array(z.string()).min(2),
+    payoff: z.string().min(10),
+    rode_draad: z.string().min(15),
+  }),
   hook: z.object({
     type: z.string(),
     tekst_overlay: z.string(),
@@ -29,7 +41,10 @@ export const scriptSchema = z.object({
         edit_notitie: z.string(),
       }),
     )
-    .min(3),
+    .min(3)
+    .refine((shots) => shots.some((s) => s.functie === 'payoff'), {
+      message: 'De shotlist moet een payoff bevatten; zonder payoff is er geen verhaal.',
+    }),
   caption: z.object({ tiktok: z.string(), reels: z.string(), shorts: z.string() }),
   hashtags: z.array(z.string()),
   benodigdheden: z.array(z.string()),
@@ -42,19 +57,28 @@ export const scriptSchema = z.object({
 
 export type Script = z.infer<typeof scriptSchema>;
 
-const SCRIPT_SYSTEM = `Je bent scriptschrijver voor short-form video (TikTok, Reels, Shorts). Je krijgt een briefing en je levert een volledig, opneembaar script.
+const SCRIPT_SYSTEM = `Je bent scriptschrijver voor short-form video (TikTok, Reels, Shorts). Je krijgt een briefing en levert een volledig, opneembaar script.
 
-Je schrijft NIET vanuit je eigen smaak maar vanuit de kennis in de meegeleverde vault: die structuren en hooks zijn gewogen op basis van gemeten resultaten van dit team. Een hoger gewicht betekent aantoonbaar beter presteren. Kies de structuur en hook die bij de briefing passen én een hoog gewicht hebben, en leg in "onderbouwing" uit waarom juist die combinatie — met verwijzing naar de gewichten en, als ze meegeleverd zijn, de vondsten van andere accounts.
+HET BELANGRIJKSTE: elk script is een mini-verhaal, geen opsomming. Je bouwt hem in deze volgorde:
+1. Eerst de verhaallijn: welke belofte doet de hook, welke vraag blijft open tot het einde, in welke stappen loopt de spanning op, en hoe lost de payoff de belofte exact in. Vul dit in het veld "verhaallijn" in VOORDAT je de shotlist schrijft.
+2. Dan pas de shotlist, en elk shot moet een taak hebben in dat verhaal: de spanning verhogen of de belofte inlossen. Een shot dat alleen informatie geeft zonder het verhaal vooruit te duwen, schrap je.
 
-Regels voor het script:
+Toets jezelf hierop:
+- Kun je in één zin zeggen wat de kijker aan het einde weet dat hij aan het begin nog niet wist? Zo niet: geen verhaal.
+- Wordt de open vraag pas in de payoff beantwoord? Beantwoord je hem eerder, dan stopt de kijker daar.
+- Is de payoff het letterlijke antwoord op de belofte van de hook? Een payoff over iets anders is een gebroken belofte.
+
+Je schrijft NIET vanuit je eigen smaak maar vanuit de meegeleverde vault: die structuren en hooks zijn gewogen op gemeten resultaten. Kies wat past bij de briefing en een hoog gewicht heeft, en verantwoord dat in "onderbouwing".
+
+Ambachtsregels:
 - Beat 1 is de hook in de eerste 0 tot 1,5 seconde: beweging in beeld, audio start mid-zin, tekst-overlay met de spanning. Geen aanloop, geen begroeting, geen logo.
-- Daarna context (maximaal één regel), escalatie, en een payoff die de belofte van de hook inlost.
-- De shotlist is per shot uitvoerbaar: wat zie je, wat wordt er gezegd, wat staat er in beeld, en wat moet de editor doen.
-- De tijdcodes in seconde_van en seconde_tot zijn posities binnen de nieuwe video en lopen op.
+- Context maximaal één regel, direct na de hook.
+- De shotlist is per shot uitvoerbaar: wat zie je, wat wordt er gezegd, wat staat er in beeld, wat doet de editor.
+- Tijdcodes lopen op binnen de nieuwe video.
 - Captions zijn vragen, geen beschrijvingen.
-- Respecteer de campagneregels als die meegeleverd zijn; zet risico op "check_regels" als iets op het randje zit.
-- Lever 2 tot 3 varianten: een ander instappunt met een andere hook, nooit dezelfde video met andere tekst.
-- In "benodigdheden" zet je wat er nodig is om dit te maken (locatie, props, schermopnames, stockbeelden, voice-over).`;
+- Respecteer de campagneregels; zet risico op "check_regels" bij twijfel.
+- 2 tot 3 varianten: ander instappunt en andere hook, nooit dezelfde video met andere tekst.
+- In "benodigdheden": locatie, props, schermopnames, stockbeelden, voice-over.`;
 
 export type BriefInput = {
   titel: string;

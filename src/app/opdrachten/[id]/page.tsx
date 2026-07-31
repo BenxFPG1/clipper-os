@@ -59,6 +59,22 @@ export default async function BriefDetailPage({ params }: { params: { id: string
             </p>
           </div>
 
+          {script.verhaallijn && (
+            <div className="rounded border border-emerald-900/50 bg-emerald-950/20 p-4">
+              <h2 className="text-sm uppercase tracking-wide text-emerald-400">Verhaallijn</h2>
+              <p className="mt-2 text-sm font-medium">{script.verhaallijn.rode_draad}</p>
+              <dl className="mt-3 space-y-1.5 text-sm">
+                <div><dt className="inline text-neutral-500">Belofte: </dt><dd className="inline">{script.verhaallijn.belofte}</dd></div>
+                <div><dt className="inline text-neutral-500">Open vraag: </dt><dd className="inline">{script.verhaallijn.open_vraag}</dd></div>
+                <div>
+                  <dt className="text-neutral-500">Escalatie:</dt>
+                  <dd><ol className="mt-1 list-inside list-decimal text-neutral-300">{script.verhaallijn.escalatie.map((e, i) => <li key={i}>{e}</li>)}</ol></dd>
+                </div>
+                <div><dt className="inline text-neutral-500">Payoff: </dt><dd className="inline">{script.verhaallijn.payoff}</dd></div>
+              </dl>
+            </div>
+          )}
+
           <div className="rounded border border-neutral-800 p-4">
             <h2 className="text-sm uppercase tracking-wide text-neutral-500">Hook</h2>
             <p className="mt-2 font-medium">{script.hook.tekst_overlay}</p>
