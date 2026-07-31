@@ -47,6 +47,10 @@ export async function maakRuweMontage(opties: {
     await run(resolveBinary('yt-dlp'), [
       ...ytdlpAuthArgs(),
       '--no-warnings',
+      // YouTube geeft datacenter-IP's via de standaardclient geen formaten
+      // ("Requested format is not available", ongeacht de formaatkeuze). De
+      // tv- en ios-profielen krijgen ze wel.
+      '--extractor-args', 'youtube:player_client=default,tv,ios',
       '-f',
       // Met terugval naar wat er wél is: datacenter-IP's krijgen van YouTube
       // vaak een beperktere formatenlijst dan een thuisverbinding.
