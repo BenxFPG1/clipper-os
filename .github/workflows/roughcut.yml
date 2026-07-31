@@ -26,7 +26,14 @@ jobs:
           node-version: 22
           cache: npm
 
-      # ffmpeg staat al op de runner; yt-dlp halen we als kant-en-klare binary.
+      - name: Installeer ffmpeg
+        run: |
+          if which ffmpeg; then ffmpeg -version | head -1
+          else
+            sudo apt-get update -q && sudo apt-get install -y -q ffmpeg
+            which ffmpeg && ffmpeg -version | head -1
+          fi
+
       - name: Installeer yt-dlp
         run: |
           sudo curl -sSL --retry 3 --max-time 120 \
