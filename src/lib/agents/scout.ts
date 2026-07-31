@@ -14,8 +14,28 @@ export const DISCOVERY_DREMPEL = 2;
 /** Onder deze grenzen is een resultatenset te dun om iets uit af te leiden. */
 export const MIN_SET_OMVANG = 5;
 export const MIN_MEDIAAN = 500;
-/** Bovengrens tegen scheve verhoudingen; alles hierboven is toch "enorm". */
-export const MAX_OUTLIER_SCORE = 100;
+/**
+ * Bovengrens tegen deel-door-bijna-nul. Ruim gezet: 8 miljoen views bij een
+ * mediaan van 80.000 is een echte 100x en moet te onderscheiden blijven van 5x.
+ */
+export const MAX_OUTLIER_SCORE = 500;
+/** Zoveel posts hebben we minstens nodig voor een geloofwaardige accountmediaan. */
+export const MIN_POSTS_VOOR_MEDIAAN = 8;
+/**
+ * Binnen hoeveel dagen een post moet vallen om mee te tellen. Een virale hit
+ * van twee jaar geleden afzetten tegen de mediaan van vandaag geeft scores van
+ * 500x die niets zeggen: het account was toen simpelweg groter of had geluk.
+ * Een uitschieter is pas interessant als hij nú boven het eigen niveau uitkomt.
+ */
+export const OUTLIER_VENSTER_DAGEN = Number(process.env.OUTLIER_VENSTER_DAGEN ?? 120);
+/**
+ * Een account moet normaal gesproken dit aantal views halen voordat we het
+ * serieus nemen. Een account met een mediaan van 400 views dat één keer 600.000
+ * haalt is geen 1400x-uitschieter maar een toevalstreffer: er valt niets van te
+ * leren en het verpest de statistiek. Dit is waarom outlier-tools drempels op
+ * views hanteren.
+ */
+export const MIN_ACCOUNT_MEDIAAN = Number(process.env.MIN_ACCOUNT_MEDIAAN ?? 5000);
 
 /** Een kandidaat-heuristiek moet over minstens zoveel verschillende accounts terugkomen. */
 export const MIN_ACCOUNTS_PER_HEURISTIEK = 2;
@@ -117,10 +137,17 @@ export async function runScoutAgent(options?: { limitPerAccount?: number }): Pro
       );
       await logProviderUsage(provider.name, 'fetch_account_posts', 1, provider.costPerCallEur);
 
-      const accountMediaan = median(posts.map((p) => p.views).filter((v): v is number => v !== null));
-      if (!accountMediaan) continue;
+      // Alleen recente posts: zo vergelijken we appels met appels.
+      const recent = posts.filter((p) => binnenVenster(p.posted_at));
+      const accountViews = recent.map((p) => p.views).filter((v): v is number => v !== null);
+      const accountMediaan = median(accountViews);
+      // Met een handvol posts zegt een mediaan niets: één virale hit tussen vijf
+      // gewone posts levert scores op die over de steekproef gaan, niet over het
+      // account zelf.
+      if (!accountMediaan || accountViews.length < MIN_POSTS_VOOR_MEDIAAN) continue;
+      if (accountMediaan < MIN_ACCOUNT_MEDIAAN) continue;
 
-      for (const post of posts) {
+      for (const post of recent) {
         if (post.views === null || !post.post_url) continue;
         // Zelfde plafond als elders: een account met één mega-hit levert anders
         // scores van honderden keer de mediaan, die de retro scheeftrekken.
@@ -296,7 +323,12 @@ export async function runScoutAgent(options?: { limitPerAccount?: number }): Pro
         views: outlier.views,
         likes: outlier.likes,
         comments: outlier.comments,
-        outlier_score: outlier.outlier_score,
+        // Alleen een echte outlier-score als we hem tegen de eigen mediaan van
+        // het account konden afzetten. Bij zoek- en trending-vondsten kennen we
+        // die basislijn nog niet; dat zijn vondsten om accounts te ontdekken,
+        // geen prestatiemeting. Zodra zo'n account gevolgd wordt, krijgt het
+        // wel een echte score.
+        outlier_score: outlier.gevonden_via.startsWith('account:') ? outlier.outlier_score : null,
         views_per_dag: outlier.views_per_dag,
         gevonden_via: outlier.gevonden_via,
         theme: outlier.theme,
@@ -363,8 +395,10 @@ async function volgOntdekteAccounts(outliers: Outlier[]): Promise<number> {
   if (ruimte === 0) return 0;
 
   // Beste presteerders eerst, zodat we de ruimte aan de interessantste geven.
+  // Alleen accounts met genoeg bereik: een account dat normaal 400 views haalt
+  // levert geen bruikbare basislijn en dus geen bruikbare uitschieters.
   const kandidaten = [...outliers]
-    .filter((o) => o.handle && o.theme)
+    .filter((o) => o.handle && o.theme && (o.views ?? 0) >= MIN_ACCOUNT_MEDIAAN)
     .sort((a, b) => b.outlier_score - a.outlier_score);
 
   let toegevoegd = 0;
@@ -486,6 +520,13 @@ function pakUitschieters(posts: AccountPost[], maxHits = 8) {
     .filter((x) => x.score >= DISCOVERY_DREMPEL)
     .sort((a, b) => b.score - a.score)
     .slice(0, maxHits);
+}
+
+/** Valt deze post binnen het vergelijkingsvenster? Zonder datum tellen we hem mee. */
+function binnenVenster(postedAt: string | null): boolean {
+  if (!postedAt) return true;
+  const dagen = (Date.now() - new Date(postedAt).getTime()) / (24 * 3600 * 1000);
+  return dagen <= OUTLIER_VENSTER_DAGEN;
 }
 
 function viewsPerDag(post: AccountPost): number | null {

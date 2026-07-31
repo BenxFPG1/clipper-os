@@ -49,6 +49,28 @@ export function detectPlatform(postUrl: string): Platform | null {
   return null;
 }
 
+/**
+ * Elke provider-call krijgt een harde tijdslimiet. Zonder timeout kan één
+ * hangend verzoek een hele scout-run blokkeren; dat gebeurde in de praktijk en
+ * liet runs urenlang draaien.
+ */
+const REQUEST_TIMEOUT_MS = Number(process.env.SCRAPE_TIMEOUT_MS ?? 45_000);
+
+async function fetchMetTimeout(url: string | URL, init?: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } catch (e) {
+    if (e instanceof Error && e.name === 'AbortError') {
+      throw new Error(`Verzoek duurde langer dan ${REQUEST_TIMEOUT_MS / 1000}s: ${String(url).slice(0, 80)}`);
+    }
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** Hoeveel pagina's we maximaal ophalen per account; elke pagina kost een credit. */
 const MAX_PAGINAS = 3;
 
@@ -66,7 +88,7 @@ class ScrapeCreatorsProvider implements MetricsProvider {
     const url = new URL(endpoint[platform]);
     url.searchParams.set('url', postUrl);
 
-    const res = await fetch(url, { headers: { 'x-api-key': requireEnv('SCRAPECREATORS_API_KEY') } });
+    const res = await fetchMetTimeout(url, { headers: { 'x-api-key': requireEnv('SCRAPECREATORS_API_KEY') } });
     if (!res.ok) throw new Error(`ScrapeCreators ${res.status}: ${await res.text()}`);
 
     const raw = (await res.json()) as Record<string, unknown>;
@@ -93,7 +115,7 @@ class ScrapeCreatorsProvider implements MetricsProvider {
       url.searchParams.set('amount', String(limit));
       if (cursor) url.searchParams.set('max_cursor', cursor);
 
-      const res = await fetch(url, { headers: { 'x-api-key': requireEnv('SCRAPECREATORS_API_KEY') } });
+      const res = await fetchMetTimeout(url, { headers: { 'x-api-key': requireEnv('SCRAPECREATORS_API_KEY') } });
       if (!res.ok) {
         if (pagina === 0) throw new Error(`ScrapeCreators ${res.status}: ${await res.text()}`);
         break;
@@ -125,7 +147,7 @@ class ScrapeCreatorsProvider implements MetricsProvider {
     url.searchParams.set('query', query);
     url.searchParams.set('amount', String(limit));
 
-    const res = await fetch(url, { headers: { 'x-api-key': requireEnv('SCRAPECREATORS_API_KEY') } });
+    const res = await fetchMetTimeout(url, { headers: { 'x-api-key': requireEnv('SCRAPECREATORS_API_KEY') } });
     if (!res.ok) throw new Error(`ScrapeCreators ${res.status}: ${await res.text()}`);
 
     const json = (await res.json()) as Record<string, unknown>;
@@ -143,7 +165,7 @@ class ScrapeCreatorsProvider implements MetricsProvider {
     const url = new URL('https://api.scrapecreators.com/v1/tiktok/video/transcript');
     url.searchParams.set('url', postUrl);
 
-    const res = await fetch(url, { headers: { 'x-api-key': requireEnv('SCRAPECREATORS_API_KEY') } });
+    const res = await fetchMetTimeout(url, { headers: { 'x-api-key': requireEnv('SCRAPECREATORS_API_KEY') } });
     if (!res.ok) return null;
 
     const json = (await res.json()) as { transcript?: string };
@@ -162,7 +184,7 @@ class ScrapeCreatorsProvider implements MetricsProvider {
     const url = new URL(endpoint[platform]);
     url.searchParams.set('amount', String(limit));
 
-    const res = await fetch(url, { headers: { 'x-api-key': requireEnv('SCRAPECREATORS_API_KEY') } });
+    const res = await fetchMetTimeout(url, { headers: { 'x-api-key': requireEnv('SCRAPECREATORS_API_KEY') } });
     if (!res.ok) throw new Error(`ScrapeCreators ${res.status}: ${await res.text()}`);
 
     const json = (await res.json()) as Record<string, unknown>;
@@ -181,7 +203,7 @@ class ApifyProvider implements MetricsProvider {
       shorts: 'streamers~youtube-scraper',
     };
 
-    const res = await fetch(
+    const res = await fetchMetTimeout(
       `https://api.apify.com/v2/acts/${actor[platform]}/run-sync-get-dataset-items?token=${requireEnv('APIFY_TOKEN')}`,
       {
         method: 'POST',
@@ -208,7 +230,7 @@ class ApifyProvider implements MetricsProvider {
         ? { profiles: [clean], resultsPerPage: limit }
         : { username: [clean], resultsLimit: limit };
 
-    const res = await fetch(
+    const res = await fetchMetTimeout(
       `https://api.apify.com/v2/acts/${actor[platform]}/run-sync-get-dataset-items?token=${requireEnv('APIFY_TOKEN')}`,
       { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(input) },
     );
@@ -229,7 +251,7 @@ class ApifyProvider implements MetricsProvider {
         ? { searchQueries: [query], resultsPerPage: limit }
         : { search: query, resultsLimit: limit };
 
-    const res = await fetch(
+    const res = await fetchMetTimeout(
       `https://api.apify.com/v2/acts/${actor[platform]}/run-sync-get-dataset-items?token=${requireEnv('APIFY_TOKEN')}`,
       { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(input) },
     );
