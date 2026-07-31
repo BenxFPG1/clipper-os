@@ -34,6 +34,14 @@ jobs:
             -o /usr/local/bin/yt-dlp
           sudo chmod +x /usr/local/bin/yt-dlp
 
+      # yt-dlp heeft een JS-runtime nodig om YouTube's n-challenge op te
+      # lossen; zonder krijg je "Only images are available for download".
+      - name: Installeer deno (challenge-solver voor yt-dlp)
+        run: |
+          curl -fsSL --retry 3 https://github.com/denoland/deno/releases/latest/download/deno-x86_64-unknown-linux-gnu.zip -o /tmp/deno.zip
+          sudo unzip -oq /tmp/deno.zip -d /usr/local/bin
+          deno --version | head -1
+
       - name: Dependencies
         run: npm ci
 
@@ -43,13 +51,6 @@ jobs:
         run: |
           echo "$YTDLP_COOKIES_B64" | base64 -d > "$RUNNER_TEMP/cookies.txt"
           echo "YTDLP_COOKIES_FILE=$RUNNER_TEMP/cookies.txt" >> "$GITHUB_ENV"
-
-      # Tijdelijke diagnose: wat biedt YouTube deze runner aan?
-      - name: Diagnose formaten
-        run: |
-          ARGS=""
-          [ -n "$YTDLP_COOKIES_FILE" ] && ARGS="--cookies $YTDLP_COOKIES_FILE"
-          yt-dlp $ARGS --extractor-args "youtube:player_client=default,tv,ios"             --list-formats "https://www.youtube.com/watch?v=LQM-iDmDWfQ" 2>&1 | tail -25 || true
 
       - name: Wachtende montages verwerken
         env:
