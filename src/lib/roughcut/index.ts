@@ -48,7 +48,9 @@ export async function maakRuweMontage(opties: {
       ...ytdlpAuthArgs(),
       '--no-warnings',
       '-f',
-      'bestvideo[height<=1080]+bestaudio/best[height<=1080]',
+      // Met terugval naar wat er wél is: datacenter-IP's krijgen van YouTube
+      // vaak een beperktere formatenlijst dan een thuisverbinding.
+      'bv*[height<=1080]+ba/b[height<=1080]/b',
       '--merge-output-format',
       'mp4',
       '-o',

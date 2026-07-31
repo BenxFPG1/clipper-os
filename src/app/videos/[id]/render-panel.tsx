@@ -13,7 +13,7 @@ type Job = {
 };
 
 const STATUS_TEKST: Record<Job['status'], string> = {
-  wachtend: 'in de wachtrij — wordt binnen een kwartier opgepakt',
+  wachtend: 'in de wachtrij',
   bezig: 'bezig met monteren…',
   klaar: 'klaar om te downloaden',
   mislukt: 'mislukt',
@@ -56,7 +56,12 @@ export function RenderPanel({ videoId, aantalClips }: { videoId: string; aantalC
       setMelding(json.error ?? 'Aanvragen mislukt');
       return;
     }
-    setMelding(json.melding ?? 'Opdracht klaargezet. De montage wordt in de cloud gemaakt.');
+    setMelding(
+      json.melding ??
+        (json.direct_gestart
+          ? 'Opdracht klaargezet — de cloud is direct gestart.'
+          : 'Opdracht klaargezet. De montage wordt binnen een kwartier opgepakt.'),
+    );
     laad();
   }
 
