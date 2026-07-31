@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { mkdir, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { resolveBinary } from '../ingest/binaries';
@@ -28,6 +28,8 @@ export async function maakRuweMontage(opties: {
   outputPad: string;
   werkmap: string;
   verticaal?: boolean;
+  /** Maximale bestandsgrootte; groter wordt automatisch gecomprimeerd. */
+  maxBytes?: number;
   onVoortgang?: (bericht: string) => void;
 }): Promise<{ pad: string; duur: number }> {
   const { sourceUrl, shots, outputPad, werkmap } = opties;
@@ -102,6 +104,33 @@ export async function maakRuweMontage(opties: {
     '-c', 'copy',
     outputPad,
   ]);
+
+  // Past het bestand niet binnen de opslaglimiet, dan comprimeren we het naar
+  // een bitrate die wél past. Liever iets minder scherp dan helemaal geen
+  // montage: dit is werkmateriaal voor de editor, geen eindproduct.
+  if (opties.maxBytes) {
+    const { size } = await stat(outputPad);
+    if (size > opties.maxBytes) {
+      log(`${Math.round(size / 1e6)}MB is te groot; opnieuw comprimeren…`);
+      const kleiner = join(werkmap, 'passend.mp4');
+      // 8 bits per byte, en wat ruimte laten voor audio en container.
+      const bitrate = Math.floor(((opties.maxBytes * 8) / Math.max(totaal, 1)) * 0.9);
+
+      await run(resolveBinary('ffmpeg'), [
+        '-y', '-i', outputPad,
+        '-c:v', 'libx264', '-preset', 'medium',
+        '-b:v', `${Math.max(bitrate - 128_000, 400_000)}`,
+        '-maxrate', `${Math.max(bitrate - 128_000, 400_000)}`,
+        '-bufsize', `${Math.max(bitrate, 800_000) * 2}`,
+        '-c:a', 'aac', '-b:a', '128k',
+        kleiner,
+      ]);
+
+      await rm(outputPad, { force: true });
+      await rename(kleiner, outputPad);
+      log(`nu ${Math.round((await stat(outputPad)).size / 1e6)}MB`);
+    }
+  }
 
   // Losse delen weggooien, bronvideo bewaren voor de volgende clip.
   for (const d of delen) await rm(d, { force: true });

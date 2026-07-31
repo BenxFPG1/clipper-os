@@ -105,12 +105,13 @@ async function verwerk(job: Job) {
       shots: clip.shots,
       outputPad: lokaal,
       werkmap: join(werkmap, 'bron'),
+      maxBytes: MAX_BYTES,
       onVoortgang: (m) => console.log(`     ${m}`),
     });
 
     const { size } = await stat(lokaal);
     if (size > MAX_BYTES) {
-      console.log(`     overgeslagen bij uploaden: ${Math.round(size / 1e6)}MB is te groot voor de opslag`);
+      console.log(`     overgeslagen: ${Math.round(size / 1e6)}MB past zelfs na comprimeren niet`);
       continue;
     }
 
