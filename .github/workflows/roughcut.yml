@@ -44,6 +44,13 @@ jobs:
           echo "$YTDLP_COOKIES_B64" | base64 -d > "$RUNNER_TEMP/cookies.txt"
           echo "YTDLP_COOKIES_FILE=$RUNNER_TEMP/cookies.txt" >> "$GITHUB_ENV"
 
+      # Tijdelijke diagnose: wat biedt YouTube deze runner aan?
+      - name: Diagnose formaten
+        run: |
+          ARGS=""
+          [ -n "$YTDLP_COOKIES_FILE" ] && ARGS="--cookies $YTDLP_COOKIES_FILE"
+          yt-dlp $ARGS --extractor-args "youtube:player_client=default,tv,ios"             --list-formats "https://www.youtube.com/watch?v=LQM-iDmDWfQ" 2>&1 | tail -25 || true
+
       - name: Wachtende montages verwerken
         env:
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
