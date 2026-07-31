@@ -3,6 +3,7 @@ import { db } from '@/lib/supabase';
 import { CharacterMap, ClipPlan } from '@/lib/planner/schema';
 import { PlanEditor } from './plan-editor';
 import { GeneratePlanButton } from './generate-plan-button';
+import { RenderPanel } from './render-panel';
 
 export const dynamic = 'force-dynamic';
 
@@ -72,6 +73,10 @@ export default async function VideoDetailPage({ params }: { params: { id: string
             )}
           </div>
         </details>
+      )}
+
+      {latest && (
+        <RenderPanel videoId={params.id} aantalClips={(latest.plan as ClipPlan).clips.length} />
       )}
 
       {latest ? (

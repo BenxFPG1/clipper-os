@@ -1,0 +1,51 @@
+# Ruwe montages maken in de cloud. De live site kan dit niet zelf: video
+# verwerken vraagt ffmpeg en minuten rekentijd, en serverless heeft geen van
+# beide. De site zet een opdracht in render_jobs; deze workflow pakt hem op.
+name: roughcut
+
+on:
+  schedule:
+    - cron: '*/15 * * * *' # kwartiercheck op wachtende opdrachten
+  workflow_dispatch:
+
+concurrency:
+  group: roughcut
+  cancel-in-progress: false
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # ffmpeg staat al op de runner; yt-dlp halen we als kant-en-klare binary.
+      - name: Installeer yt-dlp
+        run: |
+          sudo curl -sSL --retry 3 --max-time 120 \
+            https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux \
+            -o /usr/local/bin/yt-dlp
+          sudo chmod +x /usr/local/bin/yt-dlp
+
+      - name: Dependencies
+        run: npm ci
+
+      # Zonder cookies weigert YouTube het downloaden vanaf datacenter-IP's.
+      - name: YouTube-cookies (optioneel)
+        if: ${{ secrets.YTDLP_COOKIES_B64 != '' }}
+        env:
+          YTDLP_COOKIES_B64: ${{ secrets.YTDLP_COOKIES_B64 }}
+        run: |
+          echo "$YTDLP_COOKIES_B64" | base64 -d > "$RUNNER_TEMP/cookies.txt"
+          echo "YTDLP_COOKIES_FILE=$RUNNER_TEMP/cookies.txt" >> "$GITHUB_ENV"
+
+      - name: Wachtende montages verwerken
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: npx tsx scripts/render-worker.ts

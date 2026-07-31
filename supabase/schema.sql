@@ -304,3 +304,23 @@ create index if not exists vault_weights_lookup_idx on vault_weights (platform, 
 alter table tracked_accounts add column if not exists auto_added boolean not null default false;
 alter table tracked_accounts add column if not exists laatst_gezien timestamptz;
 alter table tracked_accounts add column if not exists ontdekt_via text;
+
+-- ============================================================ uitbreiding v1.4
+-- Renderopdrachten. De live site kan zelf geen video verwerken (geen ffmpeg,
+-- te korte rekentijd), dus zet hij hier een opdracht klaar die in de cloud
+-- wordt opgepakt. Bewust een wachtrij in plaats van een directe aanroep: dan
+-- hoeft de site geen GitHub-token te bewaren.
+create table if not exists render_jobs (
+  id uuid primary key default gen_random_uuid(),
+  video_id uuid references videos(id) on delete cascade,
+  clip_index int,                      -- null = alle clips uit het plan
+  titel text,
+  status text not null default 'wachtend' check (status in ('wachtend', 'bezig', 'klaar', 'mislukt')),
+  bestanden jsonb not null default '[]'::jsonb,   -- [{naam, pad, bytes}]
+  fout text,
+  aangevraagd_door text,
+  created_at timestamptz not null default now(),
+  gestart_at timestamptz,
+  klaar_at timestamptz
+);
+create index if not exists render_jobs_status_idx on render_jobs (status, created_at);
