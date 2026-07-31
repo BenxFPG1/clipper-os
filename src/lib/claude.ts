@@ -145,10 +145,14 @@ async function apiStructuredCall<T extends z.ZodTypeAny>(opts: StructuredOptions
 
 /* ----------------------------------------------------- Claude Code-backend */
 
-/** De CLI kent low/medium/high/max; xhigh bestaat daar niet. */
+/**
+ * De CLI kent low/medium/high/max; xhigh bestaat daar niet. We ronden naar
+ * boven af: het plan en de scripts zijn het inhoudelijke hart en verdienen op
+ * het abonnement de maximale denkdiepte.
+ */
 function cliEffort(effort: Effort | undefined): string {
   const value = effort ?? 'high';
-  return value === 'xhigh' ? 'high' : value;
+  return value === 'xhigh' ? 'max' : value;
 }
 
 async function claudeCodeStructuredCall<T extends z.ZodTypeAny>(opts: StructuredOptions<T>): Promise<z.infer<T>> {

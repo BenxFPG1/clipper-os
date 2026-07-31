@@ -168,6 +168,16 @@ De webserver hoeft er niet voor te draaien; de taken roepen de code rechtstreeks
 
 Het "zichzelf trainen" heeft je Mac dus maar een paar minuten per dag nodig. De enige stap die echt om jou vraagt is het goedkeuren van retro-voorstellen in de agent-inbox — en dat is bewust zo (sectie 3: de mens keurt goed). Wil je ooit volledige cloud-autonomie zonder Mac: deploy op Vercel met `CLAUDE_BACKEND=api` en de ScrapeCreators-key; dan vervalt alleen de gratis yt-dlp-route.
 
+## Premiere/Resolve-project: de cuts op de tijdlijn
+
+De beste route voor kwaliteit en controle: een echt projectbestand in plaats van een gebakken video.
+
+```bash
+npm run project -- <video-id>
+```
+
+Dit downloadt de bron in volle kwaliteit en schrijft een `.xml` met per clip een sequence: alle cuts uit het plan los op de tijdlijn, met de editnotities als clipnamen. Elke knip is nog te verschuiven en de verticale uitsnede gebeurt in de editor met volle bronresolutie. Openen: Premiere → File → Import, of DaVinci Resolve (gratis) → File → Import Timeline. CapCut kent geen open projectformaat; daarvoor is de mp4-route hieronder.
+
 ## Ruwe montage (het knipwerk automatisch)
 
 De tool levert niet alleen het plan maar ook de ruwe montage: elk fragment uit het plan geknipt en achter elkaar gezet, verticaal 1080x1920, klaar om in CapCut te openen.

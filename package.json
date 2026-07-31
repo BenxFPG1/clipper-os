@@ -13,7 +13,8 @@
     "typecheck": "tsc --noEmit",
     "retro:dryrun": "tsx scripts/retro-dryrun.ts",
     "job": "tsx scripts/job.ts",
-    "roughcut": "tsx scripts/roughcut.ts"
+    "roughcut": "tsx scripts/roughcut.ts",
+    "project": "tsx scripts/project.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.115.0",

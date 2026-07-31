@@ -79,9 +79,18 @@ export async function maakRuweMontage(opties: {
     // Opnieuw encoderen in plaats van kopiëren: los kopiëren knipt alleen op
     // keyframes, waardoor je begin een halve seconde mis zit. Bij hooks is dat
     // precies het verschil tussen wel en niet werken.
-    const schaal = opties.verticaal === false
-      ? []
-      : ['-vf', 'scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920'];
+    //
+    // Verticaal: géén harde crop meer. Center-croppen sneed sprekers weg die
+    // niet in het midden stonden. Nu: het volledige beeld gecentreerd, met een
+    // geblurde uitvergroting als achtergrond — niets gaat verloren en de
+    // definitieve uitsnede blijft een keuze van de editor.
+    const schaal =
+      opties.verticaal === false
+        ? []
+        : [
+            '-vf',
+            'split[a][b];[a]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=32:4[bg];[b]scale=1080:-2[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2,format=yuv420p',
+          ];
 
     await run(resolveBinary('ffmpeg'), [
       '-y',
@@ -90,7 +99,10 @@ export async function maakRuweMontage(opties: {
       '-t', String(duur),
       ...schaal,
       '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20',
-      '-c:a', 'aac', '-b:a', '192k',
+      // Uniforme audio en tijdstempels: zonder dit hoor of zie je tikjes en
+      // haperingen op de naden tussen shots.
+      '-c:a', 'aac', '-b:a', '192k', '-ar', '48000', '-ac', '2',
+      '-avoid_negative_ts', 'make_zero',
       '-r', '30',
       deel,
     ]);
