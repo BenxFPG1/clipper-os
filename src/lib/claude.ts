@@ -216,7 +216,31 @@ Lever nu uitsluitend het gecorrigeerde JSON-object.`;
  * ANTHROPIC_API_KEY weg zodat dit gegarandeerd op het abonnement draait en
  * nooit stiekem op API-credits.
  */
-function runClaudeCli(
+async function runClaudeCli(
+  system: string,
+  prompt: string,
+  effort: string,
+): Promise<{ result: string; costUsd: number; tokens: number }> {
+  // Voorbijgaande streamfouten (stalled, overloaded, 5xx) mogen geen hele
+  // plannerrun weggooien: tot twee keer opnieuw proberen met korte pauze.
+  let lastErr: Error | null = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt > 0) await new Promise((r) => setTimeout(r, attempt * 15_000));
+    try {
+      return await runClaudeCliOnce(system, prompt, effort);
+    } catch (err) {
+      lastErr = err as Error;
+      const transient = /stalled|overloaded|rate.?limit|50[0-9]|timed? ?out|ECONNRESET|socket hang up/i.test(
+        lastErr.message,
+      );
+      if (!transient) throw lastErr;
+      console.warn(`[claude-cli] tijdelijke fout (poging ${attempt + 1}/3): ${lastErr.message.slice(0, 160)}`);
+    }
+  }
+  throw lastErr!;
+}
+
+function runClaudeCliOnce(
   system: string,
   prompt: string,
   effort: string,
@@ -269,12 +293,17 @@ function runClaudeCli(
           usage?: { input_tokens?: number; output_tokens?: number };
         };
         const result = json.result ?? '';
-        if (json.is_error || /Failed to authenticate|OAuth access token/i.test(result)) {
+        if (/Failed to authenticate|OAuth access token|not logged in/i.test(result)) {
           return reject(
             new Error(
               `Claude Code CLI is niet (meer) ingelogd. Draai eenmalig \`claude login\` in een losse terminal, of zet CLAUDE_BACKEND=api. Melding: ${result.slice(0, 200)}`,
             ),
           );
+        }
+        if (json.is_error) {
+          // Geen auth-probleem: geef de echte melding door, zodat de
+          // retry-laag tijdelijke fouten (stalled/overloaded) kan herkennen.
+          return reject(new Error(`claude CLI fout: ${result.slice(0, 300)}`));
         }
         if (code !== 0) {
           return reject(new Error(`claude CLI exit ${code}: ${result.slice(0, 300) || stderr.trim().slice(-300)}`));
