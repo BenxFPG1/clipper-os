@@ -3,6 +3,7 @@ import { db } from '@/lib/supabase';
 import type { Script } from '@/lib/scriptwriter';
 import { GenerateScriptButton } from './generate-script-button';
 import { PublishButton } from './publish-button';
+import { FeedbackForm } from './feedback-form';
 
 export const dynamic = 'force-dynamic';
 
@@ -14,7 +15,7 @@ export default async function BriefDetailPage({ params }: { params: { id: string
 
   const { data: scripts } = await supabase
     .from('brief_scripts')
-    .select('id, script, prompt_version, created_at')
+    .select('id, script, prompt_version, feedback, created_at')
     .eq('brief_id', params.id)
     .order('created_at', { ascending: false });
 
@@ -150,6 +151,31 @@ export default async function BriefDetailPage({ params }: { params: { id: string
             <h2 className="text-sm uppercase tracking-wide text-neutral-500">Waarom deze aanpak</h2>
             <p className="mt-2 text-sm text-neutral-300">{script.onderbouwing}</p>
           </div>
+
+          {script.zelfkritiek && (
+            <div className="rounded border border-neutral-800 p-4">
+              <h2 className="text-sm uppercase tracking-wide text-neutral-500">Zelfexaminatie vóór oplevering</h2>
+              <p className="mt-2 text-sm">
+                <span className="text-neutral-500">Zwakste punt van het concept: </span>
+                {script.zelfkritiek.zwakste_punt}
+              </p>
+              {script.zelfkritiek.twijfelachtige_keuzes.length > 0 && (
+                <ul className="mt-2 space-y-1 text-sm text-neutral-300">
+                  {script.zelfkritiek.twijfelachtige_keuzes.map((k, i) => (
+                    <li key={i}>
+                      <span className="text-neutral-500">{k.keuze}: </span>
+                      {k.oordeel}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {script.zelfkritiek.verbeterd.length > 0 && (
+                <p className="mt-2 text-sm text-neutral-400">Verbeterd: {script.zelfkritiek.verbeterd.join(' · ')}</p>
+              )}
+            </div>
+          )}
+
+          <FeedbackForm briefId={brief.id} scriptId={latest!.id} bestaande={(latest as { feedback?: string | null }).feedback ?? null} />
         </section>
       ) : (
         <p className="rounded border border-dashed border-neutral-800 px-4 py-6 text-sm text-neutral-500">

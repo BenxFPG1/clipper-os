@@ -3,9 +3,10 @@ import { structuredCall } from '../claude';
 import { SCRIPT_EFFORT } from '../env';
 import { db } from '../supabase';
 import { loadVault, renderVaultForPrompt } from '../vault';
+import { STORYCRAFT } from '../vault/storycraft';
 
 export const SCRIPT_SCHEMA_VERSION = '1.0';
-export const SCRIPT_PROMPT_VERSION = 'script-2.0';
+export const SCRIPT_PROMPT_VERSION = 'script-3.0';
 
 export const scriptSchema = z.object({
   concept: z.string(),
@@ -53,6 +54,14 @@ export const scriptSchema = z.object({
     .min(2),
   risico: z.enum(['geen', 'check_regels']),
   onderbouwing: z.string(),
+  /** Ingevuld door de examinatie-pass: wat de eerste versie mankeerde en wat er is verbeterd. */
+  zelfkritiek: z
+    .object({
+      zwakste_punt: z.string(),
+      twijfelachtige_keuzes: z.array(z.object({ keuze: z.string(), oordeel: z.string() })),
+      verbeterd: z.array(z.string()),
+    })
+    .optional(),
 });
 
 export type Script = z.infer<typeof scriptSchema>;
@@ -80,6 +89,17 @@ Ambachtsregels:
 - 2 tot 3 varianten: ander instappunt en andere hook, nooit dezelfde video met andere tekst.
 - In "benodigdheden": locatie, props, schermopnames, stockbeelden, voice-over.`;
 
+const EXAMEN_SYSTEM = `Je bent een meedogenloze script-examinator voor short-form video. Je krijgt een conceptscript en je taak is het te verbeteren voordat het naar de editor gaat.
+
+Werkwijze:
+1. Verhoor het concept op zijn keuzes: waarom deze hook, waarom deze volgorde, waarom dit als payoff? Benoem per twijfelachtige keuze of hij standhoudt of niet.
+2. Toets hard op de storycraft-regels: is er één spanningslijn; kun je tussen elke twee shots "maar" of "dus" zetten; escaleert elke stap; lost de payoff de belofte van de hook letterlijk in; staat er niets na de payoff?
+3. Toets op de briefing en campagneregels.
+4. Herschrijf alles wat faalt. Lever het VOLLEDIGE verbeterde script, niet alleen commentaar.
+5. Vul "zelfkritiek" in: het zwakste punt van het concept, de keuzes die je verhoorde met je oordeel, en wat je concreet verbeterd hebt.
+
+Wees niet aardig voor het concept. Een middelmatig script doorlaten kost echte views.`;
+
 export type BriefInput = {
   titel: string;
   briefing: string;
@@ -95,7 +115,10 @@ export type BriefInput = {
  * clip-planner, plus de best presterende vondsten van de Scout-agent, zodat de
  * opgebouwde kennis ook geldt voor materiaal dat we zelf maken.
  */
-export async function generateScript(brief: BriefInput): Promise<{ script: Script; vaultSnapshot: unknown }> {
+export async function generateScript(
+  brief: BriefInput,
+  eerdereFeedback: { script: unknown; feedback: string }[] = [],
+): Promise<{ script: Script; vaultSnapshot: unknown }> {
   const vault = await loadVault({ platform: brief.platform, theme: brief.theme });
 
   // Vondsten uit hetzelfde thema eerst; die zeggen het meest over deze briefing.
@@ -113,7 +136,16 @@ export async function generateScript(brief: BriefInput): Promise<{ script: Scrip
       ? `\n=== WAT BIJ ANDERE ACCOUNTS WERKT (Scout-agent) ===\n${JSON.stringify(finds, null, 2)}`
       : '';
 
-  const script = await structuredCall({
+  // Eerdere versies waar een mens feedback op gaf zijn de waardevolste input
+  // die er is; die gaan integraal mee zodat dezelfde fout niet terugkomt.
+  const feedbackBlok =
+    eerdereFeedback.length > 0
+      ? `\n\n=== FEEDBACK OP EERDERE VERSIES (verwerk dit expliciet) ===\n${eerdereFeedback
+          .map((f, n) => `--- versie ${n + 1} ---\nFeedback: ${f.feedback}\nScript was: ${JSON.stringify(f.script).slice(0, 3000)}`)
+          .join('\n')}`
+      : '';
+
+  const concept = await structuredCall({
     system: SCRIPT_SYSTEM,
     user: `=== BRIEFING ===
 Titel: ${brief.titel}
@@ -127,13 +159,39 @@ ${brief.briefing}
 ${JSON.stringify(brief.campaignRules ?? {}, null, 2)}
 
 === VAULT (onze gemeten kennis) ===
-${renderVaultForPrompt(vault)}${scoutBlok}`,
+${renderVaultForPrompt(vault)}
+
+${STORYCRAFT}${scoutBlok}${feedbackBlok}`,
     schema: scriptSchema,
     toolName: 'lever_script',
     toolDescription: 'Lever het volledige script voor deze briefing.',
     maxTokens: 32000,
     effort: SCRIPT_EFFORT,
     operation: 'scriptwriter',
+  });
+
+  // Examinatie-pass: het concept wordt verhoord op zijn keuzes en herschreven
+  // waar het faalt, vóórdat er iets naar buiten gaat. Twee ronden kosten twee
+  // calls, maar het concept ongezien doorsturen is precies hoe je opsommingen
+  // in plaats van verhalen krijgt.
+  const script = await structuredCall({
+    system: EXAMEN_SYSTEM,
+    user: `=== CONCEPTSCRIPT (te verhoren en verbeteren) ===
+${JSON.stringify(concept, null, 2)}
+
+=== DE BRIEFING WAAR HET AAN MOET VOLDOEN ===
+${brief.briefing}
+
+=== CAMPAGNEREGELS ===
+${JSON.stringify(brief.campaignRules ?? {}, null, 2)}
+
+${STORYCRAFT}${feedbackBlok}`,
+    schema: scriptSchema,
+    toolName: 'lever_verbeterd_script',
+    toolDescription: 'Lever het volledige verbeterde script inclusief zelfkritiek.',
+    maxTokens: 32000,
+    effort: SCRIPT_EFFORT,
+    operation: 'scriptwriter_examen',
   });
 
   return { script, vaultSnapshot: vault };
@@ -150,6 +208,13 @@ export async function runScriptwriterForBrief(briefId: string) {
     .single();
   if (error) throw error;
 
+  const { data: eerdere } = await supabase
+    .from('brief_scripts')
+    .select('script, feedback')
+    .eq('brief_id', briefId)
+    .not('feedback', 'is', null)
+    .order('created_at', { ascending: true });
+
   const { script, vaultSnapshot } = await generateScript({
     titel: brief.titel,
     briefing: brief.briefing,
@@ -158,7 +223,7 @@ export async function runScriptwriterForBrief(briefId: string) {
     duurSeconden: brief.duur_seconden,
     theme: brief.theme ?? (brief.campaigns as { theme?: string | null } | null)?.theme ?? null,
     campaignRules: (brief.campaigns as { platform_rules?: unknown } | null)?.platform_rules ?? {},
-  });
+  }, (eerdere ?? []).map((e) => ({ script: e.script, feedback: e.feedback as string })));
 
   const { data: row, error: insertError } = await supabase
     .from('brief_scripts')

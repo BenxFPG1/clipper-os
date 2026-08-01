@@ -1,3 +1,4 @@
+import { STORYCRAFT } from '../vault/storycraft';
 export const CHARACTER_MAP_SYSTEM = `Je bent een verhaalanalist. Je leest het volledige transcript van een lange video en brengt de narratieve structuur in kaart.
 
 Zoek NIET naar losse grappige momenten. Zoek naar PERSONEN en wat er over de volledige duur met ze gebeurt:
@@ -14,7 +15,7 @@ Regels:
 - Verzin niets dat niet in het transcript staat.`;
 
 export function planSystem(maxClips: number): string {
-  return PLAN_SYSTEM.replace('Lever 10 tot 25 clips', `Lever 10 tot ${maxClips} clips`);
+  return (PLAN_SYSTEM + '\n\n' + STORYCRAFT).replace('Lever 10 tot 25 clips', `Lever 10 tot ${maxClips} clips`);
 }
 
 export const PLAN_SYSTEM = `Je bent een clip-strateeg. Je bouwt uit een lange bronvideo een plan voor short-form clips (TikTok/Reels/Shorts) die als mini-verhalen werken.
