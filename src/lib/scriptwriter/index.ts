@@ -5,6 +5,7 @@ import { db } from '../supabase';
 import { loadVault, renderVaultForPrompt } from '../vault';
 import { STORYCRAFT } from '../vault/storycraft';
 import { STORYSTIJLEN } from '../vault/storystijlen';
+import { ONDERZOEK } from '../vault/onderzoek';
 
 export const SCRIPT_SCHEMA_VERSION = '1.0';
 export const SCRIPT_PROMPT_VERSION = 'script-3.0';
@@ -166,7 +167,7 @@ ${JSON.stringify(brief.campaignRules ?? {}, null, 2)}
 === VAULT (onze gemeten kennis) ===
 ${renderVaultForPrompt(vault)}
 
-${STORYCRAFT}\n\n${STORYSTIJLEN}${scoutBlok}${feedbackBlok}`,
+${STORYCRAFT}\n\n${STORYSTIJLEN}\n\n${ONDERZOEK}${scoutBlok}${feedbackBlok}`,
     schema: scriptSchema,
     toolName: 'lever_script',
     toolDescription: 'Lever het volledige script voor deze briefing.',
@@ -190,7 +191,7 @@ ${brief.briefing}
 === CAMPAGNEREGELS ===
 ${JSON.stringify(brief.campaignRules ?? {}, null, 2)}
 
-${STORYCRAFT}\n\n${STORYSTIJLEN}${feedbackBlok}`,
+${STORYCRAFT}\n\n${STORYSTIJLEN}\n\n${ONDERZOEK}${feedbackBlok}`,
     schema: scriptSchema,
     toolName: 'lever_verbeterd_script',
     toolDescription: 'Lever het volledige verbeterde script inclusief zelfkritiek.',

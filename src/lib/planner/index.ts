@@ -6,6 +6,7 @@ import {
   CHARACTER_MAP_SYSTEM,
   buildCharacterMapUser,
   buildPlanUser,
+  planExamenSystem,
   planSystem,
 } from './prompts';
 import {
@@ -70,7 +71,35 @@ export async function generateClipPlan(
     operation: 'clip_plan',
   });
 
-  return repairPlan(plan, input);
+  // Examinatie-pass: het concept langs storycraft, de stijlbibliotheek en het
+  // onderzoek. Faalt de pass, dan houden we het concept — nooit niets leveren.
+  let examined = plan;
+  try {
+    examined = await structuredCall({
+      system: planExamenSystem(PLAN_MAX_CLIPS),
+      user: `${buildPlanUser({
+        title: input.title,
+        durationSeconds: input.durationSeconds,
+        transcript: renderTranscript(input.transcript),
+        characterMapJson: JSON.stringify(input.characterMap),
+        vaultText: renderVaultForPrompt(input.vault),
+        campaignRulesJson: JSON.stringify(input.campaignRules ?? {}, null, 2),
+      })}
+
+=== CONCEPTPLAN (te examineren en verbeteren) ===
+${JSON.stringify(plan)}`,
+      schema: clipPlanSchema,
+      toolName: 'lever_clip_plan',
+      toolDescription: 'Lever het volledige geëxamineerde en verbeterde clip-plan.',
+      maxTokens: 64000,
+      effort: PLAN_EFFORT,
+      operation: 'clip_plan_examen',
+    });
+  } catch (err) {
+    console.warn('[planner] examinatie-pass mislukt, concept behouden:', (err as Error).message);
+  }
+
+  return repairPlan(examined, input);
 }
 
 /**
