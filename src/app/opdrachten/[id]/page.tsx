@@ -156,6 +156,11 @@ export default async function BriefDetailPage({ params }: { params: { id: string
             <div className="rounded border border-neutral-800 p-4">
               <h2 className="text-sm uppercase tracking-wide text-neutral-500">Zelfexaminatie vóór oplevering</h2>
               <p className="mt-2 text-sm">
+                <span className="text-neutral-500">Getoetst als stijl: </span>
+                <span className="font-medium">{script.zelfkritiek.stijl}</span>
+                <span className="ml-1 text-neutral-400">— {script.zelfkritiek.stijl_oordeel}</span>
+              </p>
+              <p className="mt-2 text-sm">
                 <span className="text-neutral-500">Zwakste punt van het concept: </span>
                 {script.zelfkritiek.zwakste_punt}
               </p>

@@ -4,6 +4,7 @@ import { SCRIPT_EFFORT } from '../env';
 import { db } from '../supabase';
 import { loadVault, renderVaultForPrompt } from '../vault';
 import { STORYCRAFT } from '../vault/storycraft';
+import { STORYSTIJLEN } from '../vault/storystijlen';
 
 export const SCRIPT_SCHEMA_VERSION = '1.0';
 export const SCRIPT_PROMPT_VERSION = 'script-3.0';
@@ -57,6 +58,9 @@ export const scriptSchema = z.object({
   /** Ingevuld door de examinatie-pass: wat de eerste versie mankeerde en wat er is verbeterd. */
   zelfkritiek: z
     .object({
+      /** Tegen welke stijl uit de bibliotheek is getoetst, en past die bij de briefing? */
+      stijl: z.string(),
+      stijl_oordeel: z.string(),
       zwakste_punt: z.string(),
       twijfelachtige_keuzes: z.array(z.object({ keuze: z.string(), oordeel: z.string() })),
       verbeterd: z.array(z.string()),
@@ -89,16 +93,17 @@ Ambachtsregels:
 - 2 tot 3 varianten: ander instappunt en andere hook, nooit dezelfde video met andere tekst.
 - In "benodigdheden": locatie, props, schermopnames, stockbeelden, voice-over.`;
 
-const EXAMEN_SYSTEM = `Je bent een meedogenloze script-examinator voor short-form video. Je krijgt een conceptscript en je taak is het te verbeteren voordat het naar de editor gaat.
+const EXAMEN_SYSTEM = `Je bent script-examinator voor short-form video. Je oordeelt NIET op eigen smaak maar toetst tegen twee vaste kaders die je meekrijgt: de storycraft-regels en de stijlbibliotheek.
 
-Werkwijze:
-1. Verhoor het concept op zijn keuzes: waarom deze hook, waarom deze volgorde, waarom dit als payoff? Benoem per twijfelachtige keuze of hij standhoudt of niet.
-2. Toets hard op de storycraft-regels: is er één spanningslijn; kun je tussen elke twee shots "maar" of "dus" zetten; escaleert elke stap; lost de payoff de belofte van de hook letterlijk in; staat er niets na de payoff?
-3. Toets op de briefing en campagneregels.
-4. Herschrijf alles wat faalt. Lever het VOLLEDIGE verbeterde script, niet alleen commentaar.
-5. Vul "zelfkritiek" in: het zwakste punt van het concept, de keuzes die je verhoorde met je oordeel, en wat je concreet verbeterd hebt.
+Werkwijze, in deze volgorde:
+1. CLASSIFICEER: welke stijl uit de bibliotheek gebruikt dit concept (of probeert het te gebruiken)? Benoem hem bij naam.
+2. STIJLKEUZE: is dit de juiste stijl voor deze briefing en dit materiaal, volgens de stijlkeuze-regels onderaan de bibliotheek? Zo nee: herschrijf naar de stijl die wél past en zeg waarom.
+3. STIJLREGELS: toets het concept tegen de harde regels van de gekozen stijl, inclusief de genoemde valkuil. Elke overtreding herstel je.
+4. STORYCRAFT: toets op de algemene regels — één spanningslijn; "maar/dus" tussen elke twee shots; escalatie per stap; payoff lost de belofte van de hook letterlijk in; niets na de payoff.
+5. BRIEFING EN CAMPAGNEREGELS: klopt het nog met wat er gevraagd is?
+6. Lever het VOLLEDIGE verbeterde script en vul "zelfkritiek" in: de stijl waartegen je toetste, je oordeel over die stijlkeuze, het zwakste punt van het concept, de verhoorde keuzes met oordeel, en wat je verbeterd hebt.
 
-Wees niet aardig voor het concept. Een middelmatig script doorlaten kost echte views.`;
+Elke aanmerking verwijst naar een regel uit de kaders, niet naar een gevoel. Een middelmatig script doorlaten kost echte views.`;
 
 export type BriefInput = {
   titel: string;
@@ -161,7 +166,7 @@ ${JSON.stringify(brief.campaignRules ?? {}, null, 2)}
 === VAULT (onze gemeten kennis) ===
 ${renderVaultForPrompt(vault)}
 
-${STORYCRAFT}${scoutBlok}${feedbackBlok}`,
+${STORYCRAFT}\n\n${STORYSTIJLEN}${scoutBlok}${feedbackBlok}`,
     schema: scriptSchema,
     toolName: 'lever_script',
     toolDescription: 'Lever het volledige script voor deze briefing.',
@@ -185,7 +190,7 @@ ${brief.briefing}
 === CAMPAGNEREGELS ===
 ${JSON.stringify(brief.campaignRules ?? {}, null, 2)}
 
-${STORYCRAFT}${feedbackBlok}`,
+${STORYCRAFT}\n\n${STORYSTIJLEN}${feedbackBlok}`,
     schema: scriptSchema,
     toolName: 'lever_verbeterd_script',
     toolDescription: 'Lever het volledige verbeterde script inclusief zelfkritiek.',
