@@ -373,3 +373,4 @@ alter table videos add column if not exists auto_toegevoegd boolean not null def
 alter table campaigns add column if not exists bron_kanalen text[] not null default '{}';
 update campaigns set bron_kanalen = array[bron_kanaal_url]
   where bron_kanaal_url is not null and cardinality(bron_kanalen) = 0;
+alter table campaigns add column if not exists laatste_kanaal_fouten jsonb not null default '[]'::jsonb;

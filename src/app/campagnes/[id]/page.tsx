@@ -87,6 +87,7 @@ export default async function CampagnePage({ params }: { params: { id: string } 
           ].filter((k, i, l) => k && l.indexOf(k) === i)}
           autoPlan={campagne.auto_plan !== false}
           laatsteCheck={(campagne.laatste_kanaal_check as string | null) ?? null}
+          laatsteFouten={((campagne.laatste_kanaal_fouten as string[] | null) ?? []).map(String)}
         />
         <details className="rounded border border-neutral-800 p-4">
           <summary className="cursor-pointer text-sm text-neutral-500">Zelf een video toevoegen (optioneel)</summary>

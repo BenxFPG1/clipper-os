@@ -15,11 +15,13 @@ export function KanaalForm({
   kanalen,
   autoPlan,
   laatsteCheck,
+  laatsteFouten,
 }: {
   campaignId: string;
   kanalen: string[];
   autoPlan: boolean;
   laatsteCheck: string | null;
+  laatsteFouten: string[];
 }) {
   const router = useRouter();
   const [lijst, setLijst] = useState<string[]>(kanalen.length ? kanalen : ['']);
@@ -102,6 +104,19 @@ export function KanaalForm({
           + nog een bron
         </button>
       </div>
+
+      {laatsteFouten.length > 0 && (
+        <div className="rounded border border-amber-900/60 bg-amber-950/20 p-3">
+          <div className="text-xs uppercase tracking-wide text-amber-400/80">
+            Bij de laatste check ging dit mis
+          </div>
+          <ul className="mt-1 space-y-0.5 text-sm text-neutral-300">
+            {laatsteFouten.map((f, i) => (
+              <li key={i}>{f}</li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       <label className="flex items-center gap-2 text-sm text-neutral-400">
         <input type="checkbox" checked={plan} onChange={(e) => setPlan(e.target.checked)} />

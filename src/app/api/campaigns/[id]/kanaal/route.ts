@@ -41,9 +41,10 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
     return NextResponse.json({
       melding:
         vanCampagne > 0
-          ? `${vanCampagne} nieuwe video('s) opgehaald.`
-          : 'Geen nieuwe uploads gevonden.' + (r.fouten.length ? ` (${r.fouten[0]})` : ''),
+          ? `${vanCampagne} nieuwe video('s) opgehaald.` + (r.fouten.length ? ` ${r.fouten.length} probleem(en) — zie hieronder.` : '')
+          : 'Geen nieuwe uploads gevonden.' + (r.fouten.length ? ` ${r.fouten.length} probleem(en) — zie hieronder.` : ''),
       toegevoegd: r.toegevoegd,
+      fouten: r.fouten,
     });
   } catch (e) {
     const bericht = e instanceof Error ? e.message : String(e);

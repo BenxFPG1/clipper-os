@@ -121,8 +121,8 @@ export async function haalNieuweBronvideos(): Promise<{
         bekend.add(kv.id); // twee bronnen kunnen dezelfde video bevatten
 
         const transcript = await haalTranscript(kv.url);
-        if (!transcript) {
-          fouten.push(`${kv.title}: geen transcript`);
+        if (!('segments' in transcript)) {
+          fouten.push(`${kv.title}: geen transcript — ${transcript.fout?.slice(0, 200)}`);
           continue;
         }
 
@@ -153,9 +153,15 @@ export async function haalNieuweBronvideos(): Promise<{
         }
       }
 
+      // Bewaar wat er misging bij déze campagne, zodat een verkeerde bron of
+      // een mislukt transcript zichtbaar is in de UI en niet alleen in de logs.
+      const eigenFouten = fouten.filter((f) => f.startsWith(campagne.name as string) || f.includes(': geen transcript'));
       await supabase
         .from('campaigns')
-        .update({ laatste_kanaal_check: new Date().toISOString() })
+        .update({
+          laatste_kanaal_check: new Date().toISOString(),
+          laatste_kanaal_fouten: eigenFouten.slice(-10),
+        })
         .eq('id', campagne.id);
     } catch (e) {
       fouten.push(`${campagne.name}: ${e instanceof Error ? e.message : String(e)}`);
@@ -172,6 +178,7 @@ async function haalTranscript(url: string) {
       segments: captions.segments,
       duur: captions.durationSeconds ?? Math.round(transcriptDuration(captions.segments)),
       bron: 'youtube_captions' as const,
+      fout: null,
     };
   }
   try {
@@ -180,9 +187,12 @@ async function haalTranscript(url: string) {
       segments: t.segments,
       duur: t.durationSeconds ?? Math.round(transcriptDuration(t.segments)),
       bron: 'whisper' as const,
+      fout: null,
     };
-  } catch {
-    return null;
+  } catch (e) {
+    // Geen captions én zelf transcriberen lukt niet: de reden is bruikbaar
+    // (meestal een ontbrekende of verkeerde transcriptie-key).
+    return { fout: e instanceof Error ? e.message : String(e) } as const;
   }
 }
 
