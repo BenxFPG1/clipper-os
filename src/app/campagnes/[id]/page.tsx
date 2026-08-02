@@ -45,7 +45,22 @@ export default async function CampagnePage({ params }: { params: { id: string } 
 
   const videos = (videosRes.data ?? []).filter((v) => !v.archived_at);
   const briefs = briefsRes.data ?? [];
-  const regels = (campagne.platform_rules ?? {}) as Regels;
+
+  // Oudere campagnes hebben regels in nét andere vormen (string i.p.v. lijst);
+  // alles naar lijsten dwingen zodat de pagina nooit stukgaat op oude data.
+  const alsLijst = (x: unknown): string[] =>
+    Array.isArray(x) ? x.map(String) : typeof x === 'string' && x.trim() ? [x] : [];
+  const ruw = (campagne.platform_rules ?? {}) as Record<string, unknown>;
+  const regels: Regels = {
+    platforms: alsLijst(ruw.platforms),
+    min_seconds: typeof ruw.min_seconds === 'number' ? ruw.min_seconds : null,
+    max_eur_per_clip: typeof ruw.max_eur_per_clip === 'number' ? ruw.max_eur_per_clip : null,
+    tags: alsLijst(ruw.tags),
+    hashtags: alsLijst(ruw.hashtags),
+    description_line: typeof ruw.description_line === 'string' ? ruw.description_line : null,
+    forbidden: alsLijst(ruw.forbidden),
+    other_rules: alsLijst(ruw.other_rules),
+  };
 
   return (
     <div className="space-y-8">
