@@ -38,7 +38,7 @@ Eisen per concept:
  */
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   const body = (await req.json().catch(() => ({}))) as { aantal?: number };
-  const aantal = Math.max(3, Math.min(body.aantal ?? 6, 10));
+  const aantal = Math.max(3, Math.min(body.aantal ?? 8, 15));
 
   const supabase = db();
   const { data: campagne, error } = await supabase.from('campaigns').select('*').eq('id', params.id).single();

@@ -4,8 +4,9 @@ import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 
 /**
- * Genereert verhaallijnen voor deze opdracht. Standaard drie varianten in
- * verschillende stijlen uit de bibliotheek, zodat er echt iets te kiezen valt.
+ * Genereert verhaallijnen voor deze opdracht. Het aantal is instelbaar; elke
+ * variant wordt gedwongen in een andere stijl uit de bibliotheek (max 11 —
+ * zoveel stijlen zijn er).
  */
 export function GenerateScriptButton({
   briefId,
@@ -18,9 +19,10 @@ export function GenerateScriptButton({
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
+  const [aantal, setAantal] = useState(3);
   const [error, setError] = useState<string | null>(null);
 
-  async function generate(aantal: number) {
+  async function generate() {
     setBusy(true);
     setError(null);
 
@@ -42,19 +44,27 @@ export function GenerateScriptButton({
   return (
     <div className="flex flex-wrap items-center gap-3">
       <button
-        onClick={() => generate(3)}
+        onClick={generate}
         disabled={busy}
         className="rounded bg-neutral-100 px-4 py-2 text-sm font-medium text-neutral-900 disabled:opacity-40"
       >
-        {busy ? 'Bezig (meerdere varianten, kan even duren)…' : '3 verhaallijnen genereren'}
+        {busy
+          ? `Bezig met ${aantal} verhaallijn(en)… (±2-4 min per stuk)`
+          : hasScript
+            ? `${aantal} extra verhaallijn(en) genereren`
+            : `${aantal} verhaallijn(en) genereren`}
       </button>
-      <button
-        onClick={() => generate(1)}
-        disabled={busy}
-        className="rounded border border-neutral-700 px-4 py-2 text-sm disabled:opacity-40"
-      >
-        {hasScript ? '1 extra variant' : '1 verhaallijn'}
-      </button>
+      <label className="flex items-center gap-2 text-sm text-neutral-400">
+        aantal
+        <input
+          type="number"
+          min={1}
+          max={11}
+          value={aantal}
+          onChange={(e) => setAantal(Number(e.target.value))}
+          className="w-16 rounded border border-neutral-700 bg-neutral-900 px-2 py-1"
+        />
+      </label>
       {versies > 0 && <span className="text-xs text-neutral-500">{versies} variant(en) bewaard</span>}
       {error && <p className="w-full text-sm text-red-400">{error}</p>}
     </div>

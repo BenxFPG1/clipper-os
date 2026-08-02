@@ -250,7 +250,9 @@ export async function runScriptwriterForBrief(briefId: string, aantal = 1) {
   const resultaten: { scriptId: string; script: Script }[] = [];
   const gebruikteStijlen: string[] = [];
 
-  for (let i = 0; i < Math.max(1, Math.min(aantal, 5)); i++) {
+  // Cap op 11: zoveel stijlen telt de bibliotheek. Meer varianten dan stijlen
+  // levert gedwongen herhaling op, geen extra keuze.
+  for (let i = 0; i < Math.max(1, Math.min(aantal, 11)); i++) {
     const { script, vaultSnapshot } = await generateScript(input, feedback, {
       vermijdStijlen: gebruikteStijlen,
     });
