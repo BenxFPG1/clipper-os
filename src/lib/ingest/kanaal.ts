@@ -66,13 +66,6 @@ function parseerRegels(uit: string): KanaalVideo[] {
   return videos;
 }
 
-/** Een kanaal-URL zonder tab wijst naar de homepage; /videos geeft de uploads. */
-function normaliseerKanaalUrl(url: string): string {
-  const schoon = url.trim().replace(/\/+$/, '');
-  if (/\/(videos|streams|shorts|playlist)/.test(schoon) || schoon.includes('list=')) return schoon;
-  return `${schoon}/videos`;
-}
-
 /**
  * Haalt nieuwe uploads van de kanalen van alle campagnes binnen, inclusief
  * transcript, en zet er meteen een clip-plan-opdracht op als de campagne dat
@@ -88,14 +81,32 @@ export async function haalNieuweBronvideos(): Promise<{
 
   const { data: campagnes, error } = await supabase
     .from('campaigns')
-    .select('id, name, bron_kanaal_url, auto_plan')
-    .not('bron_kanaal_url', 'is', null)
+    .select('id, name, bron_kanaal_url, bron_kanalen, auto_plan')
     .eq('status', 'active');
   if (error) throw error;
 
   for (const campagne of campagnes ?? []) {
+    // De lijst is leidend; bron_kanaal_url blijft meelopen voor oude rijen.
+    const kanalen = [
+      ...((campagne.bron_kanalen as string[] | null) ?? []),
+      ...(campagne.bron_kanaal_url ? [campagne.bron_kanaal_url as string] : []),
+    ]
+      .map((k) => k.trim())
+      .filter(Boolean);
+    const uniek = [...new Set(kanalen)];
+    if (uniek.length === 0) continue;
+
     try {
-      const kanaalVideos = await haalKanaalVideos(campagne.bron_kanaal_url as string, 10);
+      // Alle bronnen van deze campagne samen; per bron een eigen foutmelding,
+      // zodat één kapot kanaal de rest niet blokkeert.
+      const kanaalVideos: KanaalVideo[] = [];
+      for (const kanaal of uniek) {
+        try {
+          kanaalVideos.push(...(await haalKanaalVideos(kanaal, 10)));
+        } catch (e) {
+          fouten.push(`${campagne.name} / ${kanaal}: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
       if (kanaalVideos.length === 0) continue;
 
       // Wat we al hebben (ook gearchiveerd) slaan we over.
@@ -107,6 +118,7 @@ export async function haalNieuweBronvideos(): Promise<{
 
       for (const kv of kanaalVideos) {
         if (bekend.has(kv.id)) continue;
+        bekend.add(kv.id); // twee bronnen kunnen dezelfde video bevatten
 
         const transcript = await haalTranscript(kv.url);
         if (!transcript) {

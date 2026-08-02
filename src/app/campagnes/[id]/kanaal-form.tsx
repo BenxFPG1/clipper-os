@@ -5,39 +5,54 @@ import { useState } from 'react';
 import { datumTijd } from '@/lib/format';
 
 /**
- * Bronkanaal van de campagne: staat dit ingevuld, dan haalt de dagelijkse
- * cloudrun nieuwe uploads zelf binnen — met transcript en meteen een clip-plan.
- * Handmatig video's toevoegen hoeft dan niet meer.
+ * Bronkanalen van de campagne. Meerdere bronnen kunnen: een hoofdkanaal, een
+ * shorts-kanaal, een tweede programma of een losse playlist. De dagelijkse
+ * cloudrun loopt ze allemaal langs, haalt nieuwe uploads op met transcript en
+ * zet er meteen een clip-plan op.
  */
 export function KanaalForm({
   campaignId,
-  kanaalUrl,
+  kanalen,
   autoPlan,
   laatsteCheck,
 }: {
   campaignId: string;
-  kanaalUrl: string | null;
+  kanalen: string[];
   autoPlan: boolean;
   laatsteCheck: string | null;
 }) {
   const router = useRouter();
-  const [url, setUrl] = useState(kanaalUrl ?? '');
+  const [lijst, setLijst] = useState<string[]>(kanalen.length ? kanalen : ['']);
   const [plan, setPlan] = useState(autoPlan);
   const [busy, setBusy] = useState(false);
   const [melding, setMelding] = useState<string | null>(null);
+
+  function wijzig(i: number, waarde: string) {
+    setLijst((l) => l.map((k, n) => (n === i ? waarde : k)));
+  }
 
   async function opslaan(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
     setMelding(null);
+    const schoon = lijst.map((k) => k.trim()).filter(Boolean);
     const res = await fetch(`/api/campaigns/${campaignId}/kanaal`, {
       method: 'PATCH',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ bron_kanaal_url: url.trim() || null, auto_plan: plan }),
+      body: JSON.stringify({ bron_kanalen: schoon, auto_plan: plan }),
     });
     const json = await res.json().catch(() => ({}));
     setBusy(false);
-    setMelding(res.ok ? 'Opgeslagen. De dagelijkse run haalt nieuwe uploads voortaan zelf op.' : (json.error ?? 'Opslaan mislukt'));
+    if (!res.ok) {
+      setMelding(json.error ?? 'Opslaan mislukt');
+      return;
+    }
+    setLijst(schoon.length ? schoon : ['']);
+    setMelding(
+      schoon.length
+        ? `${schoon.length} bron(nen) opgeslagen. De dagelijkse run haalt nieuwe uploads voortaan zelf op.`
+        : 'Bronnen leeggemaakt.',
+    );
     router.refresh();
   }
 
@@ -54,19 +69,45 @@ export function KanaalForm({
   return (
     <form onSubmit={opslaan} className="space-y-3 rounded border border-neutral-800 p-4">
       <div className="flex items-baseline justify-between">
-        <h2 className="text-sm uppercase tracking-wide text-neutral-500">Bronkanaal (automatisch ophalen)</h2>
+        <h2 className="text-sm uppercase tracking-wide text-neutral-500">Bronnen (automatisch ophalen)</h2>
         {laatsteCheck && <span className="text-xs text-neutral-500">laatst gecheckt {datumTijd(laatsteCheck)}</span>}
       </div>
-      <input
-        value={url}
-        onChange={(e) => setUrl(e.target.value)}
-        placeholder="https://www.youtube.com/@kanaalnaam"
-        className="w-full rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm"
-      />
+
+      <div className="space-y-2">
+        {lijst.map((kanaal, i) => (
+          <div key={i} className="flex items-center gap-2">
+            <input
+              value={kanaal}
+              onChange={(e) => wijzig(i, e.target.value)}
+              placeholder="https://www.youtube.com/@kanaalnaam (of een playlist-URL)"
+              className="w-full rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm"
+            />
+            {lijst.length > 1 && (
+              <button
+                type="button"
+                onClick={() => setLijst((l) => l.filter((_, n) => n !== i))}
+                className="shrink-0 rounded border border-neutral-700 px-2 py-1 text-xs text-neutral-400 hover:text-neutral-200"
+                title="Bron verwijderen"
+              >
+                ×
+              </button>
+            )}
+          </div>
+        ))}
+        <button
+          type="button"
+          onClick={() => setLijst((l) => [...l, ''])}
+          className="text-sm text-neutral-400 hover:text-neutral-200"
+        >
+          + nog een bron
+        </button>
+      </div>
+
       <label className="flex items-center gap-2 text-sm text-neutral-400">
         <input type="checkbox" checked={plan} onChange={(e) => setPlan(e.target.checked)} />
         Meteen een clip-plan maken voor elke nieuwe video
       </label>
+
       <div className="flex flex-wrap items-center gap-3">
         <button
           type="submit"
@@ -75,7 +116,7 @@ export function KanaalForm({
         >
           {busy ? 'Bezig…' : 'Opslaan'}
         </button>
-        {kanaalUrl && (
+        {kanalen.length > 0 && (
           <button
             type="button"
             onClick={nuOphalen}

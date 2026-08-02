@@ -365,3 +365,11 @@ alter table campaigns add column if not exists laatste_kanaal_check timestamptz;
 
 -- Herkomst van een video: handmatig of automatisch opgehaald.
 alter table videos add column if not exists auto_toegevoegd boolean not null default false;
+
+-- === v1.7: meerdere bronkanalen per campagne ===
+-- Een campagne heeft vaak meer dan één bron (hoofdkanaal, shorts-kanaal, een
+-- tweede programma). bron_kanaal_url blijft bestaan voor oude rijen; de lijst
+-- is leidend en de kanaalcheck loopt ze allemaal langs.
+alter table campaigns add column if not exists bron_kanalen text[] not null default '{}';
+update campaigns set bron_kanalen = array[bron_kanaal_url]
+  where bron_kanaal_url is not null and cardinality(bron_kanalen) = 0;

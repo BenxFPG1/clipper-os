@@ -81,7 +81,10 @@ export default async function CampagnePage({ params }: { params: { id: string } 
         </div>
         <KanaalForm
           campaignId={campagne.id}
-          kanaalUrl={(campagne.bron_kanaal_url as string | null) ?? null}
+          kanalen={[
+            ...((campagne.bron_kanalen as string[] | null) ?? []),
+            ...(campagne.bron_kanaal_url ? [campagne.bron_kanaal_url as string] : []),
+          ].filter((k, i, l) => k && l.indexOf(k) === i)}
           autoPlan={campagne.auto_plan !== false}
           laatsteCheck={(campagne.laatste_kanaal_check as string | null) ?? null}
         />

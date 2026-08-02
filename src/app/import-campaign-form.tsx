@@ -38,8 +38,8 @@ export function ImportCampaignForm() {
     setOpen(false);
     setMelding(
       json.onduidelijk?.length
-        ? `Campagne "${json.campaign.name}" aangemaakt${json.bronKanaal ? ` met bronkanaal ${json.bronKanaal}` : ''}. Nog controleren: ${json.onduidelijk.join('; ')}`
-        : `Campagne "${json.campaign.name}" aangemaakt${json.bronKanaal ? ` met bronkanaal ${json.bronKanaal}` : ''}.`,
+        ? `Campagne "${json.campaign.name}" aangemaakt${json.bronKanalen?.length ? ` met ${json.bronKanalen.length} bron(nen)` : ''}. Nog controleren: ${json.onduidelijk.join('; ')}`
+        : `Campagne "${json.campaign.name}" aangemaakt${json.bronKanalen?.length ? ` met ${json.bronKanalen.length} bron(nen)` : ''}.`,
     );
     // Direct door naar de werkplek van de nieuwe campagne.
     router.push(`/campagnes/${json.campaign.id}`);

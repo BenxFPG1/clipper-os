@@ -7,10 +7,22 @@ export const maxDuration = 300;
 
 /** Bronkanaal en auto-plan instellen voor deze campagne. */
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
-  const body = (await req.json()) as { bron_kanaal_url?: string | null; auto_plan?: boolean };
+  const body = (await req.json()) as {
+    bron_kanalen?: string[];
+    bron_kanaal_url?: string | null;
+    auto_plan?: boolean;
+  };
 
   const update: Record<string, unknown> = {};
-  if ('bron_kanaal_url' in body) update.bron_kanaal_url = body.bron_kanaal_url || null;
+  if (Array.isArray(body.bron_kanalen)) {
+    const schoon = [...new Set(body.bron_kanalen.map((k) => String(k).trim()).filter(Boolean))];
+    update.bron_kanalen = schoon;
+    // De losse kolom leegmaken zodat de lijst de enige waarheid is.
+    update.bron_kanaal_url = null;
+  }
+  if ('bron_kanaal_url' in body && !Array.isArray(body.bron_kanalen)) {
+    update.bron_kanaal_url = body.bron_kanaal_url || null;
+  }
   if (typeof body.auto_plan === 'boolean') update.auto_plan = body.auto_plan;
 
   const { error } = await db().from('campaigns').update(update).eq('id', params.id);
