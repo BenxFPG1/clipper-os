@@ -8,13 +8,18 @@ import type { Script } from '@/lib/scriptwriter';
  * zelfgemaakte video mee in dezelfde tracking en dus in dezelfde retro als een
  * geknipte clip — anders leert het systeem maar van de helft van het werk.
  */
-export async function POST(_req: Request, { params }: { params: { id: string } }) {
+export async function POST(req: Request, { params }: { params: { id: string } }) {
   const supabase = db();
 
-  const { data: scriptRow, error } = await supabase
+  // Zonder scriptId pakken we de nieuwste variant; mét scriptId de gekozen.
+  const body = (await req.json().catch(() => ({}))) as { scriptId?: string };
+
+  let query = supabase
     .from('brief_scripts')
     .select('id, script, briefs(titel)')
-    .eq('brief_id', params.id)
+    .eq('brief_id', params.id);
+  if (body.scriptId) query = query.eq('id', body.scriptId);
+  const { data: scriptRow, error } = await query
     .order('created_at', { ascending: false })
     .limit(1)
     .maybeSingle();

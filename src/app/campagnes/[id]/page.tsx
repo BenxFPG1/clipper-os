@@ -5,6 +5,7 @@ import { datumTijd } from '@/lib/format';
 import { AddVideoForm } from '@/app/videos/add-video-form';
 import { NewBriefForm } from '@/app/opdrachten/new-brief-form';
 import { NameEditor } from './name-editor';
+import { BatchKnoppen } from './batch-knoppen';
 
 export const dynamic = 'force-dynamic';
 
@@ -111,9 +112,22 @@ export default async function CampagnePage({ params }: { params: { id: string } 
       <section className="space-y-3">
         <div className="flex items-baseline justify-between">
           <h2 className="text-lg font-medium">Opdrachten ({briefs.length})</h2>
-          <span className="text-xs text-neutral-500">briefing insturen → script met examen terug</span>
+          <span className="text-xs text-neutral-500">
+            concepten laten bedenken → verhaallijnen genereren → beste kiezen
+          </span>
         </div>
-        <NewBriefForm campaigns={[{ id: campagne.id, name: campagne.name }]} />
+        <BatchKnoppen
+          campaignId={campagne.id}
+          briefsZonderScript={briefs
+            .filter((b) => ((b.brief_scripts as { id: string }[] | null)?.length ?? 0) === 0)
+            .map((b) => ({ id: b.id, titel: b.titel }))}
+        />
+        <details className="rounded border border-neutral-800 p-4">
+          <summary className="cursor-pointer text-sm text-neutral-500">Zelf een opdracht insturen (optioneel)</summary>
+          <div className="mt-3">
+            <NewBriefForm campaigns={[{ id: campagne.id, name: campagne.name }]} />
+          </div>
+        </details>
         <ul className="space-y-2">
           {briefs.map((b) => (
             <li key={b.id} className="flex items-start justify-between gap-3 rounded border border-neutral-800 px-4 py-3">

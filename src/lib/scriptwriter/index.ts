@@ -124,6 +124,7 @@ export type BriefInput = {
 export async function generateScript(
   brief: BriefInput,
   eerdereFeedback: { script: unknown; feedback: string }[] = [],
+  opties: { vermijdStijlen?: string[] } = {},
 ): Promise<{ script: Script; vaultSnapshot: unknown }> {
   const vault = await loadVault({ platform: brief.platform, theme: brief.theme });
 
@@ -144,6 +145,15 @@ export async function generateScript(
 
   // Eerdere versies waar een mens feedback op gaf zijn de waardevolste input
   // die er is; die gaan integraal mee zodat dezelfde fout niet terugkomt.
+  // Bij meerdere varianten per opdracht dwingen we stijldiversiteit af:
+  // dezelfde stijl twee keer is geen tweede verhaallijn maar een herhaling.
+  const stijlBlok =
+    (opties.vermijdStijlen?.length ?? 0) > 0
+      ? `\n\n=== STIJLEIS VOOR DEZE VARIANT ===\nDeze stijlen zijn al gebruikt in eerdere varianten van deze opdracht: ${opties.vermijdStijlen!.join(
+          ', ',
+        )}. Kies bewust een ANDERE stijl uit de bibliotheek die past bij de briefing, en bouw de verhaallijn vanuit die stijl op.`
+      : '';
+
   const feedbackBlok =
     eerdereFeedback.length > 0
       ? `\n\n=== FEEDBACK OP EERDERE VERSIES (verwerk dit expliciet) ===\n${eerdereFeedback
@@ -167,7 +177,7 @@ ${JSON.stringify(brief.campaignRules ?? {}, null, 2)}
 === VAULT (onze gemeten kennis) ===
 ${renderVaultForPrompt(vault)}
 
-${STORYCRAFT}\n\n${STORYSTIJLEN}\n\n${ONDERZOEK}${scoutBlok}${feedbackBlok}`,
+${STORYCRAFT}\n\n${STORYSTIJLEN}\n\n${ONDERZOEK}${scoutBlok}${feedbackBlok}${stijlBlok}`,
     schema: scriptSchema,
     toolName: 'lever_script',
     toolDescription: 'Lever het volledige script voor deze briefing.',
@@ -191,7 +201,7 @@ ${brief.briefing}
 === CAMPAGNEREGELS ===
 ${JSON.stringify(brief.campaignRules ?? {}, null, 2)}
 
-${STORYCRAFT}\n\n${STORYSTIJLEN}\n\n${ONDERZOEK}${feedbackBlok}`,
+${STORYCRAFT}\n\n${STORYSTIJLEN}\n\n${ONDERZOEK}${feedbackBlok}${stijlBlok}`,
     schema: scriptSchema,
     toolName: 'lever_verbeterd_script',
     toolDescription: 'Lever het volledige verbeterde script inclusief zelfkritiek.',
@@ -203,8 +213,13 @@ ${STORYCRAFT}\n\n${STORYSTIJLEN}\n\n${ONDERZOEK}${feedbackBlok}`,
   return { script, vaultSnapshot: vault };
 }
 
-/** Genereert een script voor een opgeslagen briefing en bewaart het als nieuwe versie. */
-export async function runScriptwriterForBrief(briefId: string) {
+/**
+ * Genereert één of meer scriptvarianten voor een opgeslagen briefing en bewaart
+ * elke variant als eigen versie. Elke volgende variant moet een andere stijl
+ * uit de bibliotheek gebruiken, zodat je echt verschillende verhaallijnen
+ * krijgt om uit te kiezen in plaats van drie keer hetzelfde idee.
+ */
+export async function runScriptwriterForBrief(briefId: string, aantal = 1) {
   const supabase = db();
 
   const { data: brief, error } = await supabase
@@ -221,7 +236,7 @@ export async function runScriptwriterForBrief(briefId: string) {
     .not('feedback', 'is', null)
     .order('created_at', { ascending: true });
 
-  const { script, vaultSnapshot } = await generateScript({
+  const input = {
     titel: brief.titel,
     briefing: brief.briefing,
     doel: brief.doel,
@@ -229,20 +244,34 @@ export async function runScriptwriterForBrief(briefId: string) {
     duurSeconden: brief.duur_seconden,
     theme: brief.theme ?? (brief.campaigns as { theme?: string | null } | null)?.theme ?? null,
     campaignRules: (brief.campaigns as { platform_rules?: unknown } | null)?.platform_rules ?? {},
-  }, (eerdere ?? []).map((e) => ({ script: e.script, feedback: e.feedback as string })));
+  };
+  const feedback = (eerdere ?? []).map((e) => ({ script: e.script, feedback: e.feedback as string }));
 
-  const { data: row, error: insertError } = await supabase
-    .from('brief_scripts')
-    .insert({
-      brief_id: briefId,
-      prompt_version: SCRIPT_PROMPT_VERSION,
-      schema_version: SCRIPT_SCHEMA_VERSION,
-      vault_snapshot: vaultSnapshot,
-      script,
-    })
-    .select()
-    .single();
-  if (insertError) throw insertError;
+  const resultaten: { scriptId: string; script: Script }[] = [];
+  const gebruikteStijlen: string[] = [];
 
-  return { scriptId: row.id, script };
+  for (let i = 0; i < Math.max(1, Math.min(aantal, 5)); i++) {
+    const { script, vaultSnapshot } = await generateScript(input, feedback, {
+      vermijdStijlen: gebruikteStijlen,
+    });
+
+    const stijl = script.zelfkritiek?.stijl;
+    if (stijl) gebruikteStijlen.push(stijl);
+
+    const { data: row, error: insertError } = await supabase
+      .from('brief_scripts')
+      .insert({
+        brief_id: briefId,
+        prompt_version: SCRIPT_PROMPT_VERSION,
+        schema_version: SCRIPT_SCHEMA_VERSION,
+        vault_snapshot: vaultSnapshot,
+        script,
+      })
+      .select()
+      .single();
+    if (insertError) throw insertError;
+    resultaten.push({ scriptId: row.id, script });
+  }
+
+  return { scriptId: resultaten[0].scriptId, script: resultaten[0].script, varianten: resultaten };
 }

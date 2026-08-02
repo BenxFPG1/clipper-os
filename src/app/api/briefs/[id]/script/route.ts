@@ -4,9 +4,10 @@ import { SchemaValidationError } from '@/lib/claude';
 
 export const maxDuration = 300;
 
-export async function POST(_req: Request, { params }: { params: { id: string } }) {
+export async function POST(req: Request, { params }: { params: { id: string } }) {
   try {
-    const result = await runScriptwriterForBrief(params.id);
+    const body = (await req.json().catch(() => ({}))) as { aantal?: number };
+    const result = await runScriptwriterForBrief(params.id, body.aantal ?? 1);
     return NextResponse.json(result);
   } catch (e) {
     if (e instanceof SchemaValidationError) {

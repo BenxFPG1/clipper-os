@@ -14,7 +14,16 @@ export type PublishedClip = {
  * getrackt wordt en meetelt in de wekelijkse retro. Zodra dat gebeurd is, kun je
  * hier meteen de post-URL kwijt — hetzelfde als bij een geknipte clip.
  */
-export function PublishButton({ briefId, clip }: { briefId: string; clip: PublishedClip | null }) {
+export function PublishButton({
+  briefId,
+  clip,
+  scriptId,
+}: {
+  briefId: string;
+  clip: PublishedClip | null;
+  /** Specifieke variant om te publiceren; zonder pakt de server de nieuwste. */
+  scriptId?: string;
+}) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [melding, setMelding] = useState<string | null>(null);
@@ -23,7 +32,11 @@ export function PublishButton({ briefId, clip }: { briefId: string; clip: Publis
   async function publish() {
     setBusy(true);
     setMelding(null);
-    const res = await fetch(`/api/briefs/${briefId}/publish`, { method: 'POST' });
+    const res = await fetch(`/api/briefs/${briefId}/publish`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(scriptId ? { scriptId } : {}),
+    });
     const json = await res.json();
     setBusy(false);
     setMelding(res.ok ? (json.waarschuwing ?? null) : (json.error ?? 'Publiceren mislukt'));
