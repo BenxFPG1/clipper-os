@@ -26,6 +26,9 @@ function effortFromEnv(name: string, fallback: Effort): Effort {
 
 export const CHARMAP_EFFORT = effortFromEnv('CHARMAP_EFFORT', 'high');
 export const PLAN_EFFORT = effortFromEnv('PLAN_EFFORT', 'xhigh');
+// De examenpass toetst een bestaand plan tegen vaste kaders; dat vraagt minder
+// denkwerk dan het plan bedenken, en scheelt de helft van de wachttijd.
+export const PLAN_EXAMEN_EFFORT = effortFromEnv('PLAN_EXAMEN_EFFORT', 'high');
 export const SCRIPT_EFFORT = effortFromEnv('SCRIPT_EFFORT', 'xhigh');
 export const AGENT_EFFORT = effortFromEnv('AGENT_EFFORT', 'high');
 

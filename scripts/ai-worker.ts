@@ -11,6 +11,9 @@ import { bedenkConcepten } from '../src/lib/concepten';
  *
  *   npx tsx scripts/ai-worker.ts
  */
+/** Hoeveel opdrachten tegelijk. Twee is een veilige balans met de sessielimiet. */
+const GELIJKTIJDIG = Number(process.env.AI_JOBS_GELIJKTIJDIG ?? 2);
+
 async function main() {
   const supabase = db();
 
@@ -41,10 +44,15 @@ async function main() {
     return;
   }
 
-  console.log(`${jobs.length} opdracht(en) te doen.`);
+  console.log(`${jobs.length} opdracht(en) te doen, ${GELIJKTIJDIG} tegelijk.`);
 
-  for (const job of jobs) {
-    console.log(`\n[${job.soort}] ${job.doel_id}`);
+  // Meerdere opdrachten tegelijk: het wachten zit in de Claude-calls, niet in
+  // rekenkracht hier. Bij een sessielimiet zetten we de vlag en stopt alles.
+  let limietGeraakt = false;
+
+  const verwerk = async (job: (typeof jobs)[number]) => {
+    if (limietGeraakt) return;
+    console.log(`[${job.soort}] ${job.doel_id}`);
     await supabase
       .from('ai_jobs')
       .update({ status: 'bezig', gestart_at: new Date().toISOString() })
@@ -95,6 +103,7 @@ async function main() {
           .eq('id', job.id);
         console.log(`  limiet bereikt (poging ${pogingen}) — terug in de wachtrij, run stopt hier.`);
         console.log(`  ${fout.slice(0, 160)}`);
+        limietGeraakt = true;
         return;
       }
 
@@ -104,6 +113,11 @@ async function main() {
         .eq('id', job.id);
       console.error('  mislukt:', fout.slice(0, 300));
     }
+  };
+
+  // In groepjes: zo blijft de logging leesbaar en stopt een limiet snel.
+  for (let i = 0; i < jobs.length && !limietGeraakt; i += GELIJKTIJDIG) {
+    await Promise.all(jobs.slice(i, i + GELIJKTIJDIG).map(verwerk));
   }
 }
 

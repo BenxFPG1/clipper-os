@@ -1,5 +1,5 @@
 import { structuredCall } from '../claude';
-import { CHARMAP_EFFORT, PLAN_EFFORT, PLAN_MAX_CLIPS } from '../env';
+import { CHARMAP_EFFORT, PLAN_EFFORT, PLAN_EXAMEN_EFFORT, PLAN_MAX_CLIPS } from '../env';
 import { TranscriptSegment, renderTranscript, transcriptDuration } from '../ingest/transcript';
 import { VaultSnapshot, renderVaultForPrompt } from '../vault';
 import {
@@ -75,16 +75,23 @@ export async function generateClipPlan(
   // onderzoek. Faalt de pass, dan houden we het concept — nooit niets leveren.
   let examined = plan;
   try {
+    // Bewust zonder het volledige transcript: de examinator toetst het plan
+    // tegen de kaders en heeft daarvoor de character map (met tijdcodes van de
+    // sleutelmomenten) en het plan zelf nodig. Het hele transcript meesturen
+    // verdubbelt de wachttijd zonder het oordeel te verbeteren.
     examined = await structuredCall({
       system: planExamenSystem(PLAN_MAX_CLIPS),
-      user: `${buildPlanUser({
-        title: input.title,
-        durationSeconds: input.durationSeconds,
-        transcript: renderTranscript(input.transcript),
-        characterMapJson: JSON.stringify(input.characterMap),
-        vaultText: renderVaultForPrompt(input.vault),
-        campaignRulesJson: JSON.stringify(input.campaignRules ?? {}, null, 2),
-      })}
+      user: `Video: ${input.title}
+Duur: ${input.durationSeconds ? `${input.durationSeconds} seconden` : 'onbekend'}
+
+=== CAMPAGNEREGELS ===
+${JSON.stringify(input.campaignRules ?? {}, null, 2)}
+
+=== VAULT ===
+${renderVaultForPrompt(input.vault)}
+
+=== CHARACTER MAP (de narratieve analyse van de hele video, met tijdcodes) ===
+${JSON.stringify(input.characterMap)}
 
 === CONCEPTPLAN (te examineren en verbeteren) ===
 ${JSON.stringify(plan)}`,
@@ -92,7 +99,7 @@ ${JSON.stringify(plan)}`,
       toolName: 'lever_clip_plan',
       toolDescription: 'Lever het volledige geëxamineerde en verbeterde clip-plan.',
       maxTokens: 64000,
-      effort: PLAN_EFFORT,
+      effort: PLAN_EXAMEN_EFFORT,
       operation: 'clip_plan_examen',
     });
   } catch (err) {
