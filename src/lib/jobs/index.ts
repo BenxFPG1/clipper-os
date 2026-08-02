@@ -13,8 +13,28 @@ export async function queueAiJob(
   soort: AiJobSoort,
   doelId: string,
   parameters: Record<string, unknown> = {},
-): Promise<{ jobId: string; directGestart: boolean }> {
-  const { data, error } = await db()
+): Promise<{ jobId: string; directGestart: boolean; alInWachtrij?: boolean }> {
+  const supabase = db();
+
+  // Staat dezelfde opdracht al klaar? Dan die gebruiken. Twee keer hetzelfde
+  // plan laten maken kost dubbel van je sessielimiet en levert niets extra's.
+  const { data: bestaand } = await supabase
+    .from('ai_jobs')
+    .select('id')
+    .eq('soort', soort)
+    .eq('doel_id', doelId)
+    .in('status', ['wachtend', 'bezig'])
+    .limit(1)
+    .maybeSingle();
+  if (bestaand) {
+    return {
+      jobId: bestaand.id as string,
+      directGestart: await startCloudRun('ai-jobs.yml'),
+      alInWachtrij: true,
+    };
+  }
+
+  const { data, error } = await supabase
     .from('ai_jobs')
     .insert({ soort, doel_id: doelId, parameters })
     .select('id')

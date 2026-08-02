@@ -14,6 +14,12 @@ export type LopendeTaak = {
   wat: string;
   status: string;
   sinds: string | null;
+  /** Seconden dat deze opdracht al bezig is (null als hij nog wacht). */
+  bezigSeconden: number | null;
+  /** Verwachte duur op basis van eerdere opdrachten van dezelfde soort. */
+  schattingSeconden: number | null;
+  /** Plek in de rij voor wachtende opdrachten (1 = als eerstvolgende). */
+  wachtrijPlek: number | null;
 };
 
 export type WerkStatus = {
@@ -49,9 +55,43 @@ export async function laadWerkStatus(): Promise<WerkStatus> {
     supabase.from('briefs').select('id, titel, campaign_id'),
     supabase.from('brief_scripts').select('id, brief_id'),
     supabase.from('clips').select('id, status, post_url, clip_performance(views_7d)'),
-    supabase.from('ai_jobs').select('soort, doel_id, status, created_at').in('status', ['wachtend', 'bezig']),
-    supabase.from('render_jobs').select('titel, status, created_at').in('status', ['wachtend', 'bezig']),
+    supabase
+      .from('ai_jobs')
+      .select('soort, doel_id, status, created_at, gestart_at')
+      .in('status', ['wachtend', 'bezig'])
+      .order('created_at'),
+    supabase
+      .from('render_jobs')
+      .select('titel, status, created_at, gestart_at')
+      .in('status', ['wachtend', 'bezig'])
+      .order('created_at'),
   ]);
+
+  // Verwachte duur uit wat we gemeten hebben: het middelste van de laatste
+  // geslaagde opdrachten per soort. Zonder metingen doen we geen uitspraak.
+  const { data: afgerond } = await supabase
+    .from('ai_jobs')
+    .select('soort, gestart_at, klaar_at')
+    .eq('status', 'klaar')
+    .not('gestart_at', 'is', null)
+    .order('klaar_at', { ascending: false })
+    .limit(40);
+
+  const durenPerSoort = new Map<string, number[]>();
+  for (const j of afgerond ?? []) {
+    const duur = (new Date(j.klaar_at as string).getTime() - new Date(j.gestart_at as string).getTime()) / 1000;
+    if (duur <= 0 || duur > 4 * 3600) continue;
+    const lijst = durenPerSoort.get(j.soort as string) ?? [];
+    lijst.push(duur);
+    durenPerSoort.set(j.soort as string, lijst);
+  }
+  const schatting = (soort: string): number | null => {
+    const lijst = durenPerSoort.get(soort);
+    if (!lijst?.length) return null;
+    const gesorteerd = [...lijst].sort((a, b) => a - b);
+    return Math.round(gesorteerd[Math.floor(gesorteerd.length / 2)]);
+  };
+  const nu = Date.now();
 
   const videoLijst = videos.data ?? [];
   const videosMetPlan = new Set((plannen.data ?? []).map((p) => p.video_id as string));
@@ -66,19 +106,33 @@ export async function laadWerkStatus(): Promise<WerkStatus> {
     return Array.isArray(perf) ? perf.length > 0 : true;
   });
 
+  let plek = 0;
   const lopend: LopendeTaak[] = [
-    ...(aiJobs.data ?? []).map((j) => ({
-      soort:
-        j.soort === 'clip_plan' ? 'Clip-plan' : j.soort === 'scripts' ? 'Verhaallijnen' : 'Concepten',
-      wat: naamVoor(j.soort as string, j.doel_id as string, videoLijst, briefLijst, campagnes.data ?? []),
-      status: j.status as string,
-      sinds: (j.created_at as string) ?? null,
-    })),
+    ...(aiJobs.data ?? []).map((j) => {
+      const bezig = j.status === 'bezig' && j.gestart_at;
+      if (j.status === 'wachtend') plek += 1;
+      return {
+        soort:
+          j.soort === 'clip_plan' ? 'Clip-plan' : j.soort === 'scripts' ? 'Verhaallijnen' : 'Concepten',
+        wat: naamVoor(j.soort as string, j.doel_id as string, videoLijst, briefLijst, campagnes.data ?? []),
+        status: j.status as string,
+        sinds: (j.created_at as string) ?? null,
+        bezigSeconden: bezig ? Math.round((nu - new Date(j.gestart_at as string).getTime()) / 1000) : null,
+        schattingSeconden: schatting(j.soort as string),
+        wachtrijPlek: j.status === 'wachtend' ? plek : null,
+      };
+    }),
     ...(renderJobs.data ?? []).map((r) => ({
       soort: 'Montage',
       wat: (r.titel as string) ?? 'alle clips uit het plan',
       status: r.status as string,
       sinds: (r.created_at as string) ?? null,
+      bezigSeconden:
+        r.status === 'bezig' && r.gestart_at
+          ? Math.round((nu - new Date(r.gestart_at as string).getTime()) / 1000)
+          : null,
+      schattingSeconden: null,
+      wachtrijPlek: null,
     })),
   ];
 

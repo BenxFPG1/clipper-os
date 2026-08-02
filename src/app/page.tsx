@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import { db, one } from '@/lib/supabase';
 import { laadWerkStatus, type StapStatus } from '@/lib/status';
-import { datumTijd } from '@/lib/format';
+import { NuBezig } from './nu-bezig';
 
 export const dynamic = 'force-dynamic';
 
@@ -86,32 +86,7 @@ export default async function DashboardPage() {
 
       <section>
         <h2 className="mb-3 text-lg font-medium">Nu bezig</h2>
-        {werk.lopend.length === 0 ? (
-          <Empty>Niets in de wachtrij. Alles wat draaide is klaar.</Empty>
-        ) : (
-          <ul className="space-y-2">
-            {werk.lopend.map((t, i) => (
-              <li key={i} className="flex items-center justify-between rounded border border-neutral-800 px-4 py-2.5">
-                <span className="min-w-0">
-                  <span className="font-medium">{t.soort}</span>
-                  <span className="ml-2 text-sm text-neutral-400">{t.wat}</span>
-                </span>
-                <span className="shrink-0 text-sm">
-                  <span
-                    className={
-                      t.status === 'bezig'
-                        ? 'rounded bg-emerald-900/50 px-2 py-0.5 text-xs text-emerald-200'
-                        : 'rounded bg-neutral-800 px-2 py-0.5 text-xs text-neutral-300'
-                    }
-                  >
-                    {t.status}
-                  </span>
-                  <span className="ml-2 text-xs text-neutral-500">{datumTijd(t.sinds)}</span>
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
+        <NuBezig taken={werk.lopend} />
       </section>
 
       <section>

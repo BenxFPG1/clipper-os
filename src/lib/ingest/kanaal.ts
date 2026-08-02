@@ -197,7 +197,17 @@ export async function haalNieuweBronvideos(): Promise<{
 
         // Meteen een plan laten maken; de worker draait toch al.
         if (campagne.auto_plan !== false) {
-          await supabase.from('ai_jobs').insert({ soort: 'clip_plan', doel_id: rij.id, parameters: {} });
+          const { data: staatAl } = await supabase
+            .from('ai_jobs')
+            .select('id')
+            .eq('soort', 'clip_plan')
+            .eq('doel_id', rij.id)
+            .in('status', ['wachtend', 'bezig'])
+            .limit(1)
+            .maybeSingle();
+          if (!staatAl) {
+            await supabase.from('ai_jobs').insert({ soort: 'clip_plan', doel_id: rij.id, parameters: {} });
+          }
         }
       }
 
