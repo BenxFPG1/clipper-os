@@ -6,6 +6,7 @@ import { AddVideoForm } from '@/app/videos/add-video-form';
 import { NewBriefForm } from '@/app/opdrachten/new-brief-form';
 import { NameEditor } from './name-editor';
 import { BatchKnoppen } from './batch-knoppen';
+import { KanaalForm } from './kanaal-form';
 
 export const dynamic = 'force-dynamic';
 
@@ -76,9 +77,20 @@ export default async function CampagnePage({ params }: { params: { id: string } 
       <section className="space-y-3">
         <div className="flex items-baseline justify-between">
           <h2 className="text-lg font-medium">Bronvideo&apos;s ({videos.length})</h2>
-          <span className="text-xs text-neutral-500">video toevoegen → plan genereren → project downloaden</span>
+          <span className="text-xs text-neutral-500">automatisch ophalen → plan → project downloaden</span>
         </div>
-        <AddVideoForm campaigns={[{ id: campagne.id, name: campagne.name }]} />
+        <KanaalForm
+          campaignId={campagne.id}
+          kanaalUrl={(campagne.bron_kanaal_url as string | null) ?? null}
+          autoPlan={campagne.auto_plan !== false}
+          laatsteCheck={(campagne.laatste_kanaal_check as string | null) ?? null}
+        />
+        <details className="rounded border border-neutral-800 p-4">
+          <summary className="cursor-pointer text-sm text-neutral-500">Zelf een video toevoegen (optioneel)</summary>
+          <div className="mt-3">
+            <AddVideoForm campaigns={[{ id: campagne.id, name: campagne.name }]} />
+          </div>
+        </details>
         <ul className="space-y-2">
           {videos.map((v) => {
             const heeftPlan = (v.clip_plans as { id: string }[] | null)?.length ?? 0;

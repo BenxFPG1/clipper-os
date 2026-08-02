@@ -337,3 +337,31 @@ alter table videos add column if not exists archived_at timestamptz;
 alter table videos add column if not exists fps real;
 alter table videos add column if not exists breedte int;
 alter table videos add column if not exists hoogte int;
+
+-- === v1.6: denkopdrachten in de cloud + automatische videobron ===
+
+-- De live site heeft geen Claude-CLI (en bewust geen API-key). Alles wat
+-- denkwerk vraagt — clip-plannen, scripts, concepten — komt daarom in deze
+-- wachtrij; GitHub Actions pakt hem op met de abonnements-token.
+create table if not exists ai_jobs (
+  id uuid primary key default gen_random_uuid(),
+  soort text not null check (soort in ('clip_plan', 'scripts', 'concepten')),
+  doel_id uuid not null,                        -- video_id, brief_id of campaign_id
+  parameters jsonb not null default '{}'::jsonb, -- bv. {"aantal": 3}
+  status text not null default 'wachtend' check (status in ('wachtend', 'bezig', 'klaar', 'mislukt')),
+  resultaat jsonb,
+  fout text,
+  created_at timestamptz not null default now(),
+  gestart_at timestamptz,
+  klaar_at timestamptz
+);
+create index if not exists ai_jobs_status_idx on ai_jobs (status, created_at);
+
+-- Automatisch nieuwe bronvideo's ophalen: zet de kanaal-URL op de campagne en
+-- de dagelijkse run haalt nieuwe uploads zelf binnen (met transcript en plan).
+alter table campaigns add column if not exists bron_kanaal_url text;
+alter table campaigns add column if not exists auto_plan boolean not null default true;
+alter table campaigns add column if not exists laatste_kanaal_check timestamptz;
+
+-- Herkomst van een video: handmatig of automatisch opgehaald.
+alter table videos add column if not exists auto_toegevoegd boolean not null default false;

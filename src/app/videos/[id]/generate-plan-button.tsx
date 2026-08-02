@@ -15,6 +15,7 @@ export function GeneratePlanButton({
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [melding, setMelding] = useState<string | null>(null);
   const [reuse, setReuse] = useState(hasCharacterMap);
 
   async function generate() {
@@ -33,6 +34,7 @@ export function GeneratePlanButton({
       setError(json.error ?? 'Genereren mislukt');
       return;
     }
+    if (json.inWachtrij) setMelding(json.melding);
     router.refresh();
   }
 
@@ -53,6 +55,7 @@ export function GeneratePlanButton({
         </label>
       )}
 
+      {melding && <p className="w-full text-sm text-neutral-400">{melding}</p>}
       {error && <p className="w-full text-sm text-red-400">{error}</p>}
     </div>
   );

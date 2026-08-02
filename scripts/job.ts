@@ -66,8 +66,16 @@ async function main() {
       );
       break;
     }
+    case 'kanaal': {
+      const { haalNieuweBronvideos } = await import('../src/lib/ingest/kanaal');
+      const r = await metRetry(() => haalNieuweBronvideos());
+      console.log(`${stamp} kanaal: ${r.toegevoegd.length} nieuwe bronvideo('s) opgehaald`);
+      for (const v of r.toegevoegd) console.log(`  + ${v.campagne}: ${v.titel}`);
+      for (const f of r.fouten.slice(0, 5)) console.log(`  fout: ${f.slice(0, 160)}`);
+      break;
+    }
     default:
-      console.error('Gebruik: npx tsx scripts/job.ts <tracking|scout|retro>');
+      console.error('Gebruik: npx tsx scripts/job.ts <tracking|scout|retro|kanaal>');
       process.exit(1);
   }
 }

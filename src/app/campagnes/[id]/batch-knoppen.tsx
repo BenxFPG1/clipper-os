@@ -36,7 +36,7 @@ export function BatchKnoppen({
       setMelding(json.error ?? 'Concepten bedenken mislukt');
       return;
     }
-    setMelding(`${json.briefs.length} concepten toegevoegd.`);
+    setMelding(json.inWachtrij ? json.melding : `${json.briefs.length} concepten toegevoegd.`);
     router.refresh();
   }
 
@@ -55,6 +55,14 @@ export function BatchKnoppen({
         setBusy(null);
         setMelding(`Gestopt bij "${brief.titel}": ${json.error ?? 'genereren mislukt'} (${klaar} gelukt)`);
         router.refresh();
+        return;
+      }
+      const json = await res.json().catch(() => ({}));
+      if (json.inWachtrij) {
+        setBusy(null);
+        setMelding(
+          `De cloud schrijft de verhaallijnen (${briefsZonderScript.length} opdrachten in de wachtrij). Ververs deze pagina over een paar minuten.`,
+        );
         return;
       }
       klaar += 1;

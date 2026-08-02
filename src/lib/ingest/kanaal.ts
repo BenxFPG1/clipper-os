@@ -1,0 +1,195 @@
+import { spawn } from 'node:child_process';
+import { resolveBinary } from './binaries';
+import { fetchYoutubeCaptions, ytdlpAuthArgs } from './youtube';
+import { transcribeYoutube } from './whisper';
+import { transcriptDuration } from './transcript';
+import { db } from '../supabase';
+
+export type KanaalVideo = { id: string; title: string; url: string };
+
+/**
+ * Leest de laatste uploads van een YouTube-kanaal (of playlist) uit met
+ * yt-dlp's flat-playlist: geen downloads, alleen de lijst. Zo hoeft niemand
+ * handmatig video's toe te voegen.
+ */
+export async function haalKanaalVideos(kanaalUrl: string, maxItems = 10): Promise<KanaalVideo[]> {
+  // Niet elk kanaal heeft dezelfde tabs: sommige publiceren alleen streams of
+  // shorts, en dan geeft /videos een harde fout. We proberen op volgorde en
+  // nemen de eerste tab die iets oplevert.
+  let laatsteFout: Error | null = null;
+  for (const url of kandidaatUrls(kanaalUrl)) {
+    try {
+      const uit = await run(resolveBinary('yt-dlp'), [
+        ...ytdlpAuthArgs(),
+        '--no-warnings',
+        '--extractor-args',
+        'youtubetab:skip=authcheck',
+        '--flat-playlist',
+        '--dump-json',
+        '--playlist-end',
+        String(maxItems),
+        url,
+      ]);
+      const videos = parseerRegels(uit);
+      if (videos.length > 0) return videos;
+    } catch (e) {
+      laatsteFout = e as Error;
+    }
+  }
+  if (laatsteFout) throw laatsteFout;
+  return [];
+}
+
+/** Kanaal-URL zonder tab wijst naar de homepage; probeer de tabs op volgorde. */
+function kandidaatUrls(kanaalUrl: string): string[] {
+  const schoon = kanaalUrl.trim().replace(/\/+$/, '');
+  if (/\/(videos|streams|shorts|playlist)/.test(schoon) || schoon.includes('list=')) return [schoon];
+  return [`${schoon}/videos`, `${schoon}/streams`, `${schoon}/shorts`, schoon];
+}
+
+function parseerRegels(uit: string): KanaalVideo[] {
+  const videos: KanaalVideo[] = [];
+  for (const regel of uit.split('\n')) {
+    if (!regel.trim()) continue;
+    try {
+      const j = JSON.parse(regel) as { id?: string; title?: string; url?: string };
+      if (!j.id) continue;
+      videos.push({
+        id: j.id,
+        title: j.title ?? 'Naamloze video',
+        url: `https://www.youtube.com/watch?v=${j.id}`,
+      });
+    } catch {
+      // Losse regel onparseerbaar: overslaan, de rest telt.
+    }
+  }
+  return videos;
+}
+
+/** Een kanaal-URL zonder tab wijst naar de homepage; /videos geeft de uploads. */
+function normaliseerKanaalUrl(url: string): string {
+  const schoon = url.trim().replace(/\/+$/, '');
+  if (/\/(videos|streams|shorts|playlist)/.test(schoon) || schoon.includes('list=')) return schoon;
+  return `${schoon}/videos`;
+}
+
+/**
+ * Haalt nieuwe uploads van de kanalen van alle campagnes binnen, inclusief
+ * transcript, en zet er meteen een clip-plan-opdracht op als de campagne dat
+ * aan heeft staan.
+ */
+export async function haalNieuweBronvideos(): Promise<{
+  toegevoegd: { videoId: string; titel: string; campagne: string }[];
+  fouten: string[];
+}> {
+  const supabase = db();
+  const toegevoegd: { videoId: string; titel: string; campagne: string }[] = [];
+  const fouten: string[] = [];
+
+  const { data: campagnes, error } = await supabase
+    .from('campaigns')
+    .select('id, name, bron_kanaal_url, auto_plan')
+    .not('bron_kanaal_url', 'is', null)
+    .eq('status', 'active');
+  if (error) throw error;
+
+  for (const campagne of campagnes ?? []) {
+    try {
+      const kanaalVideos = await haalKanaalVideos(campagne.bron_kanaal_url as string, 10);
+      if (kanaalVideos.length === 0) continue;
+
+      // Wat we al hebben (ook gearchiveerd) slaan we over.
+      const { data: bestaand } = await supabase
+        .from('videos')
+        .select('source_url')
+        .eq('campaign_id', campagne.id);
+      const bekend = new Set((bestaand ?? []).map((v) => videoIdUit(v.source_url as string | null)).filter(Boolean));
+
+      for (const kv of kanaalVideos) {
+        if (bekend.has(kv.id)) continue;
+
+        const transcript = await haalTranscript(kv.url);
+        if (!transcript) {
+          fouten.push(`${kv.title}: geen transcript`);
+          continue;
+        }
+
+        const { data: rij, error: insertError } = await supabase
+          .from('videos')
+          .insert({
+            campaign_id: campagne.id,
+            title: kv.title,
+            source_url: kv.url,
+            duration_seconds: transcript.duur,
+            transcript: transcript.segments,
+            transcript_raw: JSON.stringify(transcript.segments),
+            transcript_source: transcript.bron,
+            auto_toegevoegd: true,
+          })
+          .select('id')
+          .single();
+        if (insertError) {
+          fouten.push(`${kv.title}: ${insertError.message}`);
+          continue;
+        }
+
+        toegevoegd.push({ videoId: rij.id as string, titel: kv.title, campagne: campagne.name as string });
+
+        // Meteen een plan laten maken; de worker draait toch al.
+        if (campagne.auto_plan !== false) {
+          await supabase.from('ai_jobs').insert({ soort: 'clip_plan', doel_id: rij.id, parameters: {} });
+        }
+      }
+
+      await supabase
+        .from('campaigns')
+        .update({ laatste_kanaal_check: new Date().toISOString() })
+        .eq('id', campagne.id);
+    } catch (e) {
+      fouten.push(`${campagne.name}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  return { toegevoegd, fouten };
+}
+
+async function haalTranscript(url: string) {
+  const captions = await fetchYoutubeCaptions(url).catch(() => null);
+  if (captions) {
+    return {
+      segments: captions.segments,
+      duur: captions.durationSeconds ?? Math.round(transcriptDuration(captions.segments)),
+      bron: 'youtube_captions' as const,
+    };
+  }
+  try {
+    const t = await transcribeYoutube(url);
+    return {
+      segments: t.segments,
+      duur: t.durationSeconds ?? Math.round(transcriptDuration(t.segments)),
+      bron: 'whisper' as const,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function videoIdUit(url: string | null): string | null {
+  if (!url) return null;
+  const m = url.match(/[?&]v=([\w-]{6,})/) ?? url.match(/youtu\.be\/([\w-]{6,})/);
+  return m?.[1] ?? null;
+}
+
+function run(command: string, args: string[]): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args);
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (d) => (stdout += d));
+    child.stderr.on('data', (d) => (stderr += d));
+    child.on('error', reject);
+    child.on('close', (code) =>
+      code === 0 ? resolve(stdout) : reject(new Error(`${command} exit ${code}: ${stderr.trim().slice(-300)}`)),
+    );
+  });
+}

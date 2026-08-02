@@ -21,6 +21,7 @@ export function GenerateScriptButton({
   const [busy, setBusy] = useState(false);
   const [aantal, setAantal] = useState(3);
   const [error, setError] = useState<string | null>(null);
+  const [melding, setMelding] = useState<string | null>(null);
 
   async function generate() {
     setBusy(true);
@@ -38,6 +39,7 @@ export function GenerateScriptButton({
       setError(json.error ?? 'Genereren mislukt');
       return;
     }
+    if (json.inWachtrij) setMelding(json.melding);
     router.refresh();
   }
 
@@ -66,6 +68,7 @@ export function GenerateScriptButton({
         />
       </label>
       {versies > 0 && <span className="text-xs text-neutral-500">{versies} variant(en) bewaard</span>}
+      {melding && <p className="w-full text-sm text-neutral-400">{melding}</p>}
       {error && <p className="w-full text-sm text-red-400">{error}</p>}
     </div>
   );
