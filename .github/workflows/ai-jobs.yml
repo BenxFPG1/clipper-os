@@ -25,6 +25,8 @@ jobs:
       CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       CLAUDE_BACKEND: claude-code
       CLAUDE_MODEL: claude-opus-5
+      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+      WHISPER_LOKAAL_MODEL: small
       SCRAPECREATORS_API_KEY: ${{ secrets.SCRAPECREATORS_API_KEY }}
     steps:
       - uses: actions/checkout@v4
@@ -49,6 +51,15 @@ jobs:
           curl -fsSL --retry 3 https://github.com/denoland/deno/releases/latest/download/deno-x86_64-unknown-linux-gnu.zip -o /tmp/deno.zip
           sudo unzip -oq /tmp/deno.zip -d /usr/local/bin
           deno --version | head -1
+
+      - name: Installeer ffmpeg (audio voor transcriptie)
+        run: |
+          if which ffmpeg; then ffmpeg -version | head -1
+          else sudo apt-get update -q && sudo apt-get install -y -q ffmpeg; fi
+
+      # Transcriberen zonder API-key: faster-whisper draait lokaal op de runner.
+      - name: Installeer faster-whisper
+        run: pip3 install --quiet faster-whisper
 
       - name: Dependencies
         run: npm ci

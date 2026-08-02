@@ -1,8 +1,8 @@
 import { spawn } from 'node:child_process';
-import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { optionalEnv, requireEnv } from '../env';
+import { optionalEnv } from '../env';
 import { resolveBinary } from './binaries';
 import { TranscriptSegment, closeOpenEnds } from './transcript';
 import { ytdlpAuthArgs } from './youtube';
@@ -145,8 +145,135 @@ async function splitIfNeeded(audioPath: string, workdir: string, durationSeconds
   return chunks;
 }
 
+/**
+ * Transcribeert één audiobestand. Groq is het snelst maar vraagt een geldige
+ * key (die begint met gsk_); staat die er niet, of faalt hij, dan draaien we
+ * Whisper lokaal via faster-whisper. Dat is trager maar heeft geen key nodig
+ * en werkt zowel op de Mac als op de GitHub-runner.
+ */
 async function transcribeFile(path: string): Promise<TranscriptSegment[]> {
-  const apiKey = requireEnv('GROQ_API_KEY');
+  const apiKey = optionalEnv('GROQ_API_KEY');
+  const bruikbareGroqKey = Boolean(apiKey && apiKey.startsWith('gsk_'));
+
+  if (bruikbareGroqKey) {
+    try {
+      return await transcribeViaGroq(path, apiKey!);
+    } catch (e) {
+      console.warn(`[whisper] Groq faalde (${(e as Error).message.slice(0, 120)}), lokaal proberen`);
+    }
+  }
+  return transcribeLokaal(path);
+}
+
+/**
+ * Transcriberen zonder API-key. Twee wegen, in deze volgorde:
+ * 1. whisper.cpp (`whisper-cli`) — native binary, snel op Apple Silicon.
+ *    Installeren: brew install whisper-cpp
+ * 2. faster-whisper via Python — wat de Linux-runner gebruikt.
+ *    Installeren: pip3 install faster-whisper
+ * Modelgrootte via WHISPER_LOKAAL_MODEL (standaard 'small').
+ */
+async function transcribeLokaal(path: string): Promise<TranscriptSegment[]> {
+  try {
+    return await transcribeViaWhisperCpp(path);
+  } catch (e) {
+    const bericht = (e as Error).message;
+    // Ontbreekt de binary, dan is Python de volgende poging; faalt hij op iets
+    // anders, dan is die melding het meest bruikbaar voor de gebruiker.
+    if (!/ENOENT|niet geïnstalleerd|not found/i.test(bericht)) throw e;
+  }
+  return transcribeViaFasterWhisper(path);
+}
+
+/** whisper.cpp levert JSON met tijdcodes in milliseconden. */
+async function transcribeViaWhisperCpp(path: string): Promise<TranscriptSegment[]> {
+  const model = optionalEnv('WHISPER_LOKAAL_MODEL', 'small');
+  const taal = optionalEnv('WHISPER_LANGUAGE', 'nl');
+  const uitBasis = `${path}.wcpp`;
+
+  // whisper.cpp wil 16 kHz mono WAV.
+  const wav = `${path}.wav`;
+  await run('ffmpeg', ['-y', '-i', path, '-vn', '-ac', '1', '-ar', '16000', wav]);
+
+  await run('whisper-cli', [
+    '-m', await modelPad(model),
+    '-l', taal,
+    '-oj',
+    '-of', uitBasis,
+    '-nt',
+    wav,
+  ]);
+
+  const json = JSON.parse(await readFile(`${uitBasis}.json`, 'utf8')) as {
+    transcription?: { offsets?: { from: number; to: number }; text: string }[];
+  };
+  const rijen = json.transcription ?? [];
+  if (rijen.length === 0) throw new Error('whisper.cpp gaf geen segmenten terug.');
+
+  return rijen.map((r) => ({
+    start_seconds: (r.offsets?.from ?? 0) / 1000,
+    end_seconds: (r.offsets?.to ?? 0) / 1000,
+    text: r.text.trim(),
+  }));
+}
+
+/**
+ * whisper.cpp heeft een modelbestand nodig. Ontbreekt het, dan halen we het
+ * één keer op; anders faalt elke eerste run op een verse machine.
+ */
+async function modelPad(model: string): Promise<string> {
+  const eigen = optionalEnv('WHISPER_MODEL_PAD');
+  if (eigen) return eigen;
+
+  const map = join(process.env.HOME ?? tmpdir(), '.cache', 'whisper-cpp');
+  const pad = join(map, `ggml-${model}.bin`);
+  try {
+    await stat(pad);
+    return pad;
+  } catch {
+    await mkdir(map, { recursive: true });
+    const res = await fetch(
+      `https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-${model}.bin`,
+    );
+    if (!res.ok) throw new Error(`Whisper-model ${model} downloaden mislukt (${res.status}).`);
+    await writeFile(pad, Buffer.from(await res.arrayBuffer()));
+    return pad;
+  }
+}
+
+async function transcribeViaFasterWhisper(path: string): Promise<TranscriptSegment[]> {
+  const model = optionalEnv('WHISPER_LOKAAL_MODEL', 'small');
+  const taal = optionalEnv('WHISPER_LANGUAGE', 'nl');
+
+  const script = `
+import json, sys
+try:
+    from faster_whisper import WhisperModel
+except ImportError:
+    sys.stderr.write("faster-whisper ontbreekt. Installeer met: pip3 install faster-whisper")
+    sys.exit(3)
+model = WhisperModel(${JSON.stringify(model)}, device="cpu", compute_type="int8")
+segments, _ = model.transcribe(sys.argv[1], language=${JSON.stringify(taal)}, vad_filter=True)
+print(json.dumps([{"start": s.start, "end": s.end, "text": s.text} for s in segments]))
+`;
+
+  const uit = await run('python3', ['-c', script, path]);
+  const rijen = JSON.parse(uit.trim().split('\n').pop() ?? '[]') as {
+    start: number;
+    end: number;
+    text: string;
+  }[];
+  if (rijen.length === 0) {
+    throw new Error('Lokale Whisper gaf geen segmenten terug.');
+  }
+  return rijen.map((s) => ({
+    start_seconds: s.start,
+    end_seconds: s.end,
+    text: s.text.trim(),
+  }));
+}
+
+async function transcribeViaGroq(path: string, apiKey: string): Promise<TranscriptSegment[]> {
   const buffer = await readFile(path);
 
   const form = new FormData();
@@ -161,7 +288,7 @@ async function transcribeFile(path: string): Promise<TranscriptSegment[]> {
     headers: { Authorization: `Bearer ${apiKey}` },
     body: form,
   });
-  if (!res.ok) throw new Error(`Groq Whisper ${res.status}: ${await res.text()}`);
+  if (!res.ok) throw new Error(`Groq Whisper ${res.status}: ${(await res.text()).slice(0, 200)}`);
 
   const json = (await res.json()) as {
     segments?: { start: number; end: number; text: string }[];
@@ -196,8 +323,11 @@ async function probeDuration(path: string): Promise<number | null> {
 }
 
 async function assertBinary(binary: string): Promise<void> {
+  // ffmpeg en ffprobe kennen alleen "-version"; yt-dlp wil "--version". Met de
+  // verkeerde vlag faalt de check ook als de tool gewoon geïnstalleerd staat.
+  const vlag = binary.startsWith('ff') ? '-version' : '--version';
   try {
-    await run(binary, ['--version']);
+    await run(binary, [vlag]);
   } catch {
     throw new MissingBinaryError(binary);
   }
