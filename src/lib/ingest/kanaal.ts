@@ -71,6 +71,13 @@ function parseerRegels(uit: string): KanaalVideo[] {
  * transcript, en zet er meteen een clip-plan-opdracht op als de campagne dat
  * aan heeft staan.
  */
+/**
+ * Zelf transcriberen kost ongeveer een halve minuut per minuut video. Met een
+ * grens per run blijft één cloudrun binnen zijn tijdslimiet; wat overblijft
+ * komt de volgende run vanzelf aan de beurt.
+ */
+const MAX_NIEUWE_PER_RUN = Number(process.env.MAX_NIEUWE_VIDEOS_PER_RUN ?? 3);
+
 export async function haalNieuweBronvideos(): Promise<{
   toegevoegd: { videoId: string; titel: string; campagne: string }[];
   fouten: string[];
@@ -117,6 +124,12 @@ export async function haalNieuweBronvideos(): Promise<{
       const bekend = new Set((bestaand ?? []).map((v) => videoIdUit(v.source_url as string | null)).filter(Boolean));
 
       for (const kv of kanaalVideos) {
+        if (toegevoegd.length >= MAX_NIEUWE_PER_RUN) {
+          fouten.push(
+            `${campagne.name}: grens van ${MAX_NIEUWE_PER_RUN} nieuwe video's per run bereikt — de rest komt bij de volgende run.`,
+          );
+          break;
+        }
         if (bekend.has(kv.id)) continue;
         bekend.add(kv.id); // twee bronnen kunnen dezelfde video bevatten
 
