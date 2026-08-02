@@ -1,6 +1,7 @@
 import { notFound } from 'next/navigation';
 import { db } from '@/lib/supabase';
 import type { Script } from '@/lib/scriptwriter';
+import { datumTijd } from '@/lib/format';
 import { GenerateScriptButton } from './generate-script-button';
 import { PublishButton } from './publish-button';
 import { FeedbackForm } from './feedback-form';
@@ -33,7 +34,7 @@ export default async function BriefDetailPage({ params }: { params: { id: string
         <p className="text-sm text-neutral-400">
           {brief.platform ?? 'platform onbepaald'} ·{' '}
           {brief.duur_seconden ? `${brief.duur_seconden}s` : 'duur onbepaald'} ·{' '}
-          {brief.doel ?? 'geen doel opgegeven'}
+          {brief.doel ?? 'geen doel opgegeven'} · aangemaakt {datumTijd(brief.created_at)}
         </p>
       </div>
 
@@ -48,6 +49,10 @@ export default async function BriefDetailPage({ params }: { params: { id: string
 
       {script ? (
         <section className="space-y-5">
+          <p className="text-sm text-neutral-500">
+            Nieuwste script gegenereerd op {datumTijd(latest!.created_at)} ({latest!.prompt_version})
+            {(scripts?.length ?? 0) > 1 ? ` · ${scripts!.length} versies` : ''}
+          </p>
           <div className="rounded border border-neutral-800 p-4">
             <h2 className="text-lg font-medium">Concept</h2>
             <p className="mt-1 text-sm">{script.concept}</p>

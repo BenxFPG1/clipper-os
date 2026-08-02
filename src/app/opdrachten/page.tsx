@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { db } from '@/lib/supabase';
+import { datumTijd } from '@/lib/format';
 import { NewBriefForm } from './new-brief-form';
 
 export const dynamic = 'force-dynamic';
@@ -29,7 +30,7 @@ export default async function OpdrachtenPage() {
               {b.titel}
             </Link>
             <div className="text-sm text-neutral-400">
-              {b.platform ?? 'platform onbepaald'} · {b.doel ?? 'geen doel opgegeven'} · {b.status}
+              {b.platform ?? 'platform onbepaald'} · {b.doel ?? 'geen doel opgegeven'} · {b.status} · {datumTijd(b.created_at)}
             </div>
           </li>
         ))}

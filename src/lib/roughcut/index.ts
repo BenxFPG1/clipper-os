@@ -13,6 +13,26 @@ export type Shot = {
   edit_notitie?: string;
 };
 
+export type BronEigenschappen = { fps: number; breedte: number; hoogte: number };
+
+/** Meet framerate en afmetingen van een bronbestand met ffprobe. */
+export async function probeBron(pad: string): Promise<BronEigenschappen> {
+  const uit = await run(resolveBinary('ffprobe'), [
+    '-v', 'error',
+    '-select_streams', 'v:0',
+    '-show_entries', 'stream=width,height,r_frame_rate',
+    '-of', 'json',
+    pad,
+  ]);
+  const stream = (JSON.parse(uit).streams ?? [])[0] as {
+    width: number;
+    height: number;
+    r_frame_rate: string;
+  };
+  const [t, n] = stream.r_frame_rate.split('/').map(Number);
+  return { fps: n ? t / n : 25, breedte: stream.width, hoogte: stream.height };
+}
+
 /**
  * Maakt een ruwe montage: de shots uit het plan achter elkaar geplakt, in
  * verticaal formaat, klaar om in CapCut te openen.
@@ -31,7 +51,7 @@ export async function maakRuweMontage(opties: {
   /** Maximale bestandsgrootte; groter wordt automatisch gecomprimeerd. */
   maxBytes?: number;
   onVoortgang?: (bericht: string) => void;
-}): Promise<{ pad: string; duur: number }> {
+}): Promise<{ pad: string; duur: number; bron: BronEigenschappen | null }> {
   const { sourceUrl, shots, outputPad, werkmap } = opties;
   const log = opties.onVoortgang ?? (() => {});
 
@@ -63,6 +83,15 @@ export async function maakRuweMontage(opties: {
     ]);
   } else {
     log('Bronvideo staat al klaar.');
+  }
+
+  // Eigenschappen van de bron meten; de aanroeper bewaart ze in de database
+  // zodat het Premiere-projectbestand framerate-correct gegenereerd kan worden.
+  let bronInfo: BronEigenschappen | null = null;
+  try {
+    bronInfo = await probeBron(bronBestand);
+  } catch {
+    // Niet fataal: de montage zelf heeft de meting niet nodig.
   }
 
   const gesorteerd = [...shots].sort((a, b) => a.volgorde - b.volgorde);
@@ -154,7 +183,7 @@ export async function maakRuweMontage(opties: {
   for (const d of delen) await rm(d, { force: true });
   await rm(lijst, { force: true });
 
-  return { pad: outputPad, duur: Math.round(totaal) };
+  return { pad: outputPad, duur: Math.round(totaal), bron: bronInfo };
 }
 
 /** Ruimt gedownloade bronvideo's op; die zijn groot en makkelijk opnieuw op te halen. */

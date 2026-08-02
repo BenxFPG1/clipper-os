@@ -30,7 +30,11 @@ export function bouwPremiereXml(projectNaam: string, bron: BronInfo, clips: Clip
   const ntsc = Math.abs(bron.fps - tb) > 0.01 ? 'TRUE' : 'FALSE';
   const naarFrames = (seconden: number) => Math.round(seconden * bron.fps);
 
-  const pathurl = `file://localhost${encodeURI(bron.pad).replace(/#/g, '%23')}`;
+  // Bij een relatief pad (download via de site) laten we het pad kaal: Premiere
+  // vindt het bestand dan naast de .xml, of vraagt eenmalig om te relinken.
+  const pathurl = bron.pad.startsWith('/')
+    ? `file://localhost${encodeURI(bron.pad).replace(/#/g, '%23')}`
+    : encodeURI(bron.pad).replace(/#/g, '%23');
 
   let eersteFileRef = true;
   const fileNode = (indent: string): string => {

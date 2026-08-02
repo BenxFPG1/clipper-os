@@ -86,6 +86,16 @@ async function main() {
   const [t, n] = stream.r_frame_rate.split('/').map(Number);
   const fps = n ? t / n : 25;
 
+  // Meting bewaren zodat de site het projectbestand voortaan met de juiste
+  // framerate kan genereren zonder de bron te hoeven downloaden.
+  await supabase
+    .from('videos')
+    .update({ fps, breedte: stream.width, hoogte: stream.height })
+    .eq('id', videoId)
+    .then(({ error: e }) => {
+      if (e) console.log(`Broneigenschappen niet bewaard: ${e.message}`);
+    });
+
   const xml = bouwPremiereXml(
     veiligeTitel,
     { pad: bronPad, fps, breedte: stream.width, hoogte: stream.height },

@@ -1,9 +1,11 @@
 import { notFound } from 'next/navigation';
 import { db } from '@/lib/supabase';
+import { datumTijd } from '@/lib/format';
 import { CharacterMap, ClipPlan } from '@/lib/planner/schema';
 import { PlanEditor } from './plan-editor';
 import { GeneratePlanButton } from './generate-plan-button';
 import { RenderPanel } from './render-panel';
+import { ArchiveButton } from '../archive-button';
 
 export const dynamic = 'force-dynamic';
 
@@ -28,15 +30,38 @@ export default async function VideoDetailPage({ params }: { params: { id: string
 
   return (
     <div className="space-y-8">
-      <div>
-        <h1 className="text-2xl font-semibold">{video.title}</h1>
-        <p className="text-sm text-neutral-400">
-          {video.duration_seconds ? `${Math.round(video.duration_seconds / 60)} min` : 'duur onbekend'} ·{' '}
-          {video.transcript_source} · {(video.transcript as unknown[])?.length ?? 0} segmenten
-        </p>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold">{video.title}</h1>
+          <p className="text-sm text-neutral-400">
+            {video.duration_seconds ? `${Math.round(video.duration_seconds / 60)} min` : 'duur onbekend'} ·{' '}
+            {video.transcript_source} · {(video.transcript as unknown[])?.length ?? 0} segmenten · toegevoegd{' '}
+            {datumTijd(video.created_at)}
+            {video.archived_at ? ` · gearchiveerd ${datumTijd(video.archived_at)}` : ''}
+          </p>
+        </div>
+        <ArchiveButton videoId={video.id} gearchiveerd={Boolean(video.archived_at)} naArchiveren="/videos" />
       </div>
 
       <GeneratePlanButton videoId={video.id} hasPlan={Boolean(latest)} hasCharacterMap={Boolean(characterMap)} />
+
+      {latest && (
+        <div className="flex flex-wrap items-center gap-3 rounded border border-neutral-800 p-4 text-sm">
+          <a
+            href={`/api/videos/${video.id}/project`}
+            className="rounded border border-neutral-700 px-3 py-1.5 hover:bg-neutral-900"
+            download
+          >
+            Download Premiere-project (.xml)
+          </a>
+          <span className="text-neutral-500">
+            Per clip een sequence met de cuts los op de tijdlijn. Zet de bron als <code>bron.mp4</code> naast de
+            .xml (volle kwaliteit: <code>npm run project -- {video.id}</code>), of relink in Premiere.
+            {!video.fps &&
+              ' Framerate is nog niet gemeten — draai eerst een montage of npm run project voor framerate-correcte cuts.'}
+          </span>
+        </div>
+      )}
 
       {characterMap && (
         <details className="rounded border border-neutral-800 p-4">
@@ -77,6 +102,13 @@ export default async function VideoDetailPage({ params }: { params: { id: string
 
       {latest && (
         <RenderPanel videoId={params.id} aantalClips={(latest.plan as ClipPlan).clips.length} />
+      )}
+
+      {latest && (
+        <p className="text-sm text-neutral-500">
+          Nieuwste plan gegenereerd op {datumTijd(latest.created_at)} ({latest.prompt_version})
+          {plans && plans.length > 1 ? ` · ${plans.length} versies` : ''}
+        </p>
       )}
 
       {latest ? (

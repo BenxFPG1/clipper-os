@@ -23,6 +23,61 @@ const campagneSchema = z.object({
   onduidelijk: z.array(z.string()),
 });
 
+/**
+ * Parser zonder AI voor als er geen Claude-backend beschikbaar is (Vercel).
+ * Pakt alleen wat met hoge zekerheid uit de tekst te halen is; de rest gaat
+ * naar "onduidelijk" voor menselijke controle.
+ */
+function heuristischeParse(tekst: string): z.infer<typeof campagneSchema> {
+  const regels = tekst.split('\n').map((r) => r.trim()).filter(Boolean);
+  const onduidelijk: string[] = ['Automatisch geparsed zonder AI — controleer alle regels hieronder.'];
+
+  const naam = regels[0]?.slice(0, 120) ?? 'Nieuwe campagne';
+
+  const getal = (m: RegExpMatchArray | null): number | null =>
+    m ? Number(m[1].replace(/\./g, '').replace(',', '.')) : null;
+
+  const cpm = getal(
+    tekst.match(/(?:€|\$|EUR|USD)?\s*([\d.,]+)\s*(?:€|\$)?\s*(?:per\s*1[.,]?000|\/\s*1[.,]?000|CPM)/i) ??
+      tekst.match(/CPM\D{0,10}([\d.,]+)/i),
+  );
+  const budget = getal(tekst.match(/budget\D{0,15}([\d.,]+)/i));
+  const minSeconden = getal(tekst.match(/min(?:imaal|imum)?\D{0,20}?(\d+)\s*sec/i));
+  const maxPerClip = getal(tekst.match(/max(?:imaal|imum)?\D{0,20}?(?:€|\$)\s*([\d.,]+)\s*(?:per\s*(?:clip|video|post))/i));
+
+  const platforms: string[] = [];
+  if (/tiktok/i.test(tekst)) platforms.push('tiktok');
+  if (/instagram|reels/i.test(tekst)) platforms.push('instagram');
+  if (/shorts|youtube/i.test(tekst)) platforms.push('youtube');
+
+  const hashtags = [...new Set(tekst.match(/#[\p{L}\p{N}_]+/gu) ?? [])];
+  const verboden = regels.filter((r) => /verboden|niet toegestaan|not allowed|prohibited|geen\s/i.test(r));
+
+  for (const r of regels.slice(1)) {
+    const alGedekt =
+      verboden.includes(r) || /(€|\$|CPM|budget|per\s*1[.,]?000|#)/i.test(r) || r.length < 8;
+    if (!alGedekt) onduidelijk.push(r.slice(0, 200));
+  }
+
+  return {
+    name: naam,
+    cpm_eur: cpm,
+    budget_eur: budget,
+    platform_rules: {
+      platforms,
+      min_seconds: minSeconden,
+      payout_from_views: null,
+      max_eur_per_clip: maxPerClip,
+      tags: [],
+      hashtags,
+      description_line: null,
+      forbidden: verboden.map((r) => r.slice(0, 200)),
+      other_rules: [],
+    },
+    onduidelijk: onduidelijk.slice(0, 40),
+  };
+}
+
 const IMPORT_SYSTEM = `Je zet de tekst van een clipping-campagne (bijvoorbeeld van ClipArmy of Whop) om naar gestructureerde campagneregels. Neem alleen over wat er letterlijk staat; verzin geen regels. CPM en bedragen in euro's. Wat je niet zeker weet zet je in "onduidelijk" zodat een mens het kan controleren.`;
 
 /**
@@ -41,16 +96,28 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const parsed = await structuredCall({
-      system: IMPORT_SYSTEM,
-      user: body.tekst.trim().slice(0, 20000),
-      schema: campagneSchema,
-      toolName: 'lever_campagne',
-      toolDescription: 'Lever de gestructureerde campagne.',
-      maxTokens: 4000,
-      effort: 'medium',
-      operation: 'campaign_import',
-    });
+    let parsed: z.infer<typeof campagneSchema>;
+    try {
+      parsed = await structuredCall({
+        system: IMPORT_SYSTEM,
+        user: body.tekst.trim().slice(0, 20000),
+        schema: campagneSchema,
+        toolName: 'lever_campagne',
+        toolDescription: 'Lever de gestructureerde campagne.',
+        maxTokens: 4000,
+        effort: 'medium',
+        operation: 'campaign_import',
+      });
+    } catch (e) {
+      // Op Vercel is er geen Claude CLI en (bewust) geen API-key. Dan parsen
+      // we de tekst zelf; alles wat de heuristiek niet zeker weet komt in
+      // "onduidelijk" zodat een mens het controleert.
+      const geenClaude = /Ontbrekende env var|CLI niet gevonden|niet \(meer\) ingelogd/i.test(
+        e instanceof Error ? e.message : String(e),
+      );
+      if (!geenClaude) throw e;
+      parsed = heuristischeParse(body.tekst.trim());
+    }
 
     const { data, error } = await db()
       .from('campaigns')

@@ -95,12 +95,13 @@ async function verwerk(job: Job) {
   const werkmap = await mkdtemp(join(tmpdir(), 'clipper-render-'));
   const bestanden: { naam: string; pad: string; bytes: number }[] = [];
 
+  let bronBewaard = false;
   for (const { clip, nummer } of teDoen) {
     const naam = `${String(nummer).padStart(2, '0')}-${veilig(clip.titel_intern)}.mp4`;
     const lokaal = join(werkmap, naam);
 
     console.log(`  clip ${nummer}: ${clip.titel_intern}`);
-    await maakRuweMontage({
+    const montage = await maakRuweMontage({
       sourceUrl: video.source_url,
       shots: clip.shots,
       outputPad: lokaal,
@@ -108,6 +109,23 @@ async function verwerk(job: Job) {
       maxBytes: MAX_BYTES,
       onVoortgang: (m) => console.log(`     ${m}`),
     });
+
+    // Gemeten broneigenschappen bewaren: daarmee genereert de site het
+    // Premiere-projectbestand met de juiste framerate.
+    if (!bronBewaard && montage.bron) {
+      bronBewaard = true;
+      await supabase
+        .from('videos')
+        .update({
+          fps: montage.bron.fps,
+          breedte: montage.bron.breedte,
+          hoogte: montage.bron.hoogte,
+        })
+        .eq('id', job.video_id)
+        .then(({ error: e }) => {
+          if (e) console.log(`     broneigenschappen niet bewaard: ${e.message}`);
+        });
+    }
 
     const { size } = await stat(lokaal);
     if (size > MAX_BYTES) {

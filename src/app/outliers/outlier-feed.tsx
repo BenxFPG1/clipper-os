@@ -233,7 +233,10 @@ function OutlierKaart({ find, open, onToggle }: { find: Find; open: boolean; onT
           <span className="mt-0.5 block text-xs text-neutral-500">
             @{find.handle} · {find.platform}
             {find.theme ? ` · ${find.theme}` : ''}
-            {find.posted_at ? ` · ${new Date(find.posted_at).toLocaleDateString('nl-NL')}` : ''}
+            {find.posted_at ? ` · gepost ${new Date(find.posted_at).toLocaleDateString('nl-NL')}` : ''}
+            {(find as { created_at?: string }).created_at
+              ? ` · gevonden ${new Date((find as { created_at?: string }).created_at!).toLocaleDateString('nl-NL')}`
+              : ''}
           </span>
         </span>
         <span className="shrink-0 text-right text-sm">

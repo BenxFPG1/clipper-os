@@ -324,3 +324,16 @@ create table if not exists render_jobs (
   klaar_at timestamptz
 );
 create index if not exists render_jobs_status_idx on render_jobs (status, created_at);
+
+-- === v1.5: archiveren + broneigenschappen ===
+
+-- Video's verdwijnen nooit hard: archiveren zet een tijdstempel en de UI
+-- filtert erop. Terugzetten is de kolom weer leegmaken.
+alter table videos add column if not exists archived_at timestamptz;
+
+-- Echte eigenschappen van het bronbestand (gevuld zodra een montage of
+-- projectexport de bron heeft geprobed). Nodig om het Premiere-projectbestand
+-- framerate-correct te genereren zonder de bron op de server te hoeven hebben.
+alter table videos add column if not exists fps real;
+alter table videos add column if not exists breedte int;
+alter table videos add column if not exists hoogte int;
