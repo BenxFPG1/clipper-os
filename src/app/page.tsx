@@ -1,5 +1,7 @@
 import Link from 'next/link';
 import { db, one } from '@/lib/supabase';
+import { laadWerkStatus, type StapStatus } from '@/lib/status';
+import { datumTijd } from '@/lib/format';
 
 export const dynamic = 'force-dynamic';
 
@@ -55,7 +57,11 @@ async function loadDashboard() {
 import { ImportCampaignForm } from './import-campaign-form';
 
 export default async function DashboardPage() {
-  const { campaigns, perStatus, totalViews, topClip, videosPer, briefsPer } = await loadDashboard();
+  const [{ campaigns, perStatus, totalViews, topClip, videosPer, briefsPer }, werk] = await Promise.all([
+    loadDashboard(),
+    laadWerkStatus(),
+  ]);
+  const perCampagneStatus = new Map(werk.perCampagne.map((c) => [c.id, c]));
 
   return (
     <div className="space-y-8">
@@ -66,6 +72,47 @@ export default async function DashboardPage() {
         <Stat label="Gepost" value={String(perStatus.posted ?? 0)} />
         <Stat label="Nog te editen" value={String((perStatus.planned ?? 0) + (perStatus.edited ?? 0))} />
       </div>
+
+      <section>
+        <h2 className="mb-3 text-lg font-medium">Waar staat het werk</h2>
+        <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-5">
+          <Stap label="Plannen" hint="video's zonder clip-plan" stap={werk.stappen.plannen} />
+          <Stap label="Scripts" hint="opdrachten zonder verhaallijn" stap={werk.stappen.scripts} />
+          <Stap label="Monteren" hint="clips nog te knippen" stap={werk.stappen.montages} />
+          <Stap label="Posten" hint="geknipt, nog niet online" stap={werk.stappen.posten} />
+          <Stap label="Meten" hint="online, nog geen cijfers" stap={werk.stappen.meten} />
+        </div>
+      </section>
+
+      <section>
+        <h2 className="mb-3 text-lg font-medium">Nu bezig</h2>
+        {werk.lopend.length === 0 ? (
+          <Empty>Niets in de wachtrij. Alles wat draaide is klaar.</Empty>
+        ) : (
+          <ul className="space-y-2">
+            {werk.lopend.map((t, i) => (
+              <li key={i} className="flex items-center justify-between rounded border border-neutral-800 px-4 py-2.5">
+                <span className="min-w-0">
+                  <span className="font-medium">{t.soort}</span>
+                  <span className="ml-2 text-sm text-neutral-400">{t.wat}</span>
+                </span>
+                <span className="shrink-0 text-sm">
+                  <span
+                    className={
+                      t.status === 'bezig'
+                        ? 'rounded bg-emerald-900/50 px-2 py-0.5 text-xs text-emerald-200'
+                        : 'rounded bg-neutral-800 px-2 py-0.5 text-xs text-neutral-300'
+                    }
+                  >
+                    {t.status}
+                  </span>
+                  <span className="ml-2 text-xs text-neutral-500">{datumTijd(t.sinds)}</span>
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
 
       <section>
         <h2 className="mb-3 text-lg font-medium">Actieve campagnes</h2>
@@ -83,6 +130,21 @@ export default async function DashboardPage() {
                     <span className="font-medium">{c.name}</span>
                     <span className="mt-0.5 block text-sm text-neutral-400">
                       {videosPer.get(c.id) ?? 0} video&apos;s · {briefsPer.get(c.id) ?? 0} opdrachten
+                    </span>
+                    <span className="mt-1 block text-xs">
+                      {(() => {
+                        const st = perCampagneStatus.get(c.id);
+                        if (!st) return null;
+                        const teDoen: string[] = [];
+                        if (st.videosZonderPlan > 0) teDoen.push(`${st.videosZonderPlan}× plan maken`);
+                        if (st.opdrachtenZonderScript > 0)
+                          teDoen.push(`${st.opdrachtenZonderScript}× script schrijven`);
+                        return teDoen.length > 0 ? (
+                          <span className="text-amber-300/80">Te doen: {teDoen.join(' · ')}</span>
+                        ) : (
+                          <span className="text-emerald-300/80">Alles verwerkt</span>
+                        );
+                      })()}
                     </span>
                   </span>
                   <span className="text-sm text-neutral-400">CPM €{Number(c.cpm_eur).toFixed(2)} →</span>
@@ -112,6 +174,27 @@ export default async function DashboardPage() {
         Naar video&apos;s
       </Link>
     </div>
+  );
+}
+
+/** Eén stap in de keten: hoeveel er nog open staat, en waar je het doet. */
+function Stap({ label, hint, stap }: { label: string; hint: string; stap: StapStatus }) {
+  const klaar = stap.open === 0;
+  return (
+    <Link
+      href={stap.href}
+      className={`rounded border px-4 py-3 transition-colors ${
+        klaar ? 'border-neutral-800 hover:border-neutral-600' : 'border-amber-900/60 hover:border-amber-700'
+      }`}
+    >
+      <div className="text-xs uppercase tracking-wide text-neutral-500">{label}</div>
+      <div className={`mt-1 text-xl font-semibold ${klaar ? 'text-neutral-500' : 'text-amber-300'}`}>
+        {klaar ? '✓' : stap.open}
+      </div>
+      <div className="text-xs text-neutral-500">
+        {klaar ? 'niets open' : hint} · {stap.af} af
+      </div>
+    </Link>
   );
 }
 
