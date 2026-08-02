@@ -13,7 +13,7 @@ const campagneSchema = z.object({
   bron_kanalen: z
     .array(z.string())
     .describe(
-      'Alle URLs van kanalen/playlists waar het bronmateriaal vandaan komt (YouTube-kanaal, playlist, of handle). Campagnes noemen er vaak meerdere: hoofdkanaal, shorts-kanaal, tweede programma. Lege lijst als er geen staat.',
+      'Alle URLs van het bronmateriaal. LET OP: noemt de campagne concrete video-URLs (youtu.be/... of watch?v=...), zet dan ALLEEN die video-URLs erin — dat is het bronmateriaal. Alleen als er geen losse video genoemd wordt en de campagne over een heel kanaal gaat, zet je de kanaal- of playlist-URL erin.',
     ),
   platform_rules: z.object({
     platforms: z.array(z.string()),
@@ -51,17 +51,24 @@ function heuristischeParse(tekst: string): z.infer<typeof campagneSchema> {
   const minSeconden = getal(tekst.match(/min(?:imaal|imum)?\D{0,20}?(\d+)\s*sec/i));
   const maxPerClip = getal(tekst.match(/max(?:imaal|imum)?\D{0,20}?(?:€|\$)\s*([\d.,]+)\s*(?:per\s*(?:clip|video|post))/i));
 
+  // Losse video-URLs zijn het bronmateriaal en hebben voorrang: pakt hij hier
+  // het kanaal, dan komen er afleveringen binnen die niet bij de campagne horen.
+  const videoUrls = [
+    ...(tekst.match(/https?:\/\/(?:www\.)?youtube\.com\/watch\?v=[\w-]+/gi) ?? []),
+    ...(tekst.match(/https?:\/\/youtu\.be\/[\w-]+/gi) ?? []),
+  ];
+
   // Bronnen: alle YouTube-kanaal- en playlist-URLs, anders losse @handles.
-  const kanaalUrls = [
+  const kanaalUrls = videoUrls.length ? [] : [
     ...(tekst.match(/https?:\/\/(?:www\.)?youtube\.com\/(?:channel\/[\w-]+|@[\w.-]+|c\/[\w.-]+)/gi) ?? []),
     ...(tekst.match(/https?:\/\/(?:www\.)?youtube\.com\/playlist\?list=[\w-]+/gi) ?? []),
   ];
-  const handles = kanaalUrls.length
+  const handles = videoUrls.length || kanaalUrls.length
     ? []
     : (tekst.match(/(?:^|\s)@([\w.-]{3,30})(?=\s|$)/g) ?? []).map(
         (h) => `https://www.youtube.com/@${h.trim().slice(1)}`,
       );
-  const bronKanalen = [...new Set([...kanaalUrls, ...handles])];
+  const bronKanalen = [...new Set([...videoUrls, ...kanaalUrls, ...handles])];
   if (bronKanalen.length > 0) {
     onduidelijk.push(`Bron(nen) gevonden: ${bronKanalen.join(', ')} — controleer of dit klopt.`);
   }
@@ -102,7 +109,7 @@ function heuristischeParse(tekst: string): z.infer<typeof campagneSchema> {
 
 const IMPORT_SYSTEM = `Je zet de tekst van een clipping-campagne (bijvoorbeeld van ClipArmy of Whop) om naar gestructureerde campagneregels. Neem alleen over wat er letterlijk staat; verzin geen regels. CPM en bedragen in euro's. Wat je niet zeker weet zet je in "onduidelijk" zodat een mens het kan controleren.
 
-Let extra op het BRONMATERIAAL: campagnes noemen bijna altijd waar de te knippen video's vandaan komen (een YouTube-kanaal, een playlist, een handle als @naam). Zet ELKE genoemde bron in bron_kanalen — daarmee haalt de tool nieuwe uploads zelf op. Noemt de campagne meerdere kanalen of playlists, dan komen ze er allemaal in. Een losse handle maak je tot een volledige URL (https://www.youtube.com/@naam).`;
+Let extra op het BRONMATERIAAL: campagnes noemen bijna altijd waar de te knippen video's vandaan komen (een YouTube-kanaal, een playlist, een handle als @naam). Noemt de campagne concrete video-URLs, dan zijn DIE het bronmateriaal en zet je alleen die in bron_kanalen — niet het kanaal eromheen, want dan komen er afleveringen binnen die niet bij de campagne horen. Gaat de campagne wél over doorlopende uploads van een kanaal, zet dan de kanaal-URL erin (een losse handle maak je tot https://www.youtube.com/@naam).`;
 
 /**
  * Campagne-import: plak de tekst van een campagnepagina en er wordt een

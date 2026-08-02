@@ -14,6 +14,20 @@ import { bedenkConcepten } from '../src/lib/concepten';
 async function main() {
   const supabase = db();
 
+  // Een run kan onderweg afgebroken worden (annulering, tijdslimiet). De
+  // opdracht blijft dan op 'bezig' staan en zou nooit meer opgepakt worden.
+  // Alles wat langer dan een uur 'bezig' is, mag opnieuw.
+  const grens = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+  const { data: vastgelopen } = await supabase
+    .from('ai_jobs')
+    .update({ status: 'wachtend', gestart_at: null })
+    .eq('status', 'bezig')
+    .lt('gestart_at', grens)
+    .select('id');
+  if (vastgelopen?.length) {
+    console.log(`${vastgelopen.length} vastgelopen opdracht(en) teruggezet in de wachtrij.`);
+  }
+
   const { data: jobs, error } = await supabase
     .from('ai_jobs')
     .select('*')

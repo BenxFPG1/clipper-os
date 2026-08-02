@@ -10,6 +10,8 @@ on:
     - cron: '0 6 * * *' # dagelijkse kanaalcheck op nieuwe uploads
   workflow_dispatch:
 
+# Eén run tegelijk. Een tweede run wacht netjes; annuleren zou een opdracht
+# halverwege afbreken en op 'bezig' laten staan.
 concurrency:
   group: ai-jobs
   cancel-in-progress: false

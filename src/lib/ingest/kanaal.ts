@@ -13,6 +13,20 @@ export type KanaalVideo = { id: string; title: string; url: string };
  * handmatig video's toe te voegen.
  */
 export async function haalKanaalVideos(kanaalUrl: string, maxItems = 10): Promise<KanaalVideo[]> {
+  // Een losse video-URL is zélf het bronmateriaal. Niet het kanaal erachter
+  // afstruinen: campagnes gaan vaak over precies één aflevering.
+  const videoId = losseVideoId(kanaalUrl);
+  if (videoId) {
+    const uit = await run(resolveBinary('yt-dlp'), [
+      ...ytdlpAuthArgs(),
+      '--no-warnings',
+      '--skip-download',
+      '--dump-json',
+      kanaalUrl.trim(),
+    ]);
+    return parseerRegels(uit);
+  }
+
   // Niet elk kanaal heeft dezelfde tabs: sommige publiceren alleen streams of
   // shorts, en dan geeft /videos een harde fout. We proberen op volgorde en
   // nemen de eerste tab die iets oplevert.
@@ -38,6 +52,12 @@ export async function haalKanaalVideos(kanaalUrl: string, maxItems = 10): Promis
   }
   if (laatsteFout) throw laatsteFout;
   return [];
+}
+
+/** Herkent een losse video-URL (watch?v=… of youtu.be/…). */
+function losseVideoId(url: string): string | null {
+  const m = url.match(/[?&]v=([\w-]{6,})/) ?? url.match(/youtu\.be\/([\w-]{6,})/);
+  return m?.[1] ?? null;
 }
 
 /** Kanaal-URL zonder tab wijst naar de homepage; probeer de tabs op volgorde. */
@@ -88,11 +108,17 @@ export async function haalNieuweBronvideos(): Promise<{
 
   const { data: campagnes, error } = await supabase
     .from('campaigns')
-    .select('id, name, bron_kanaal_url, bron_kanalen, auto_plan')
+    .select('id, name, bron_kanaal_url, bron_kanalen, auto_plan, platform_rules')
     .eq('status', 'active');
   if (error) throw error;
 
   for (const campagne of campagnes ?? []) {
+    // Zegt de campagne dat alleen het aangeleverde bronmateriaal gebruikt mag
+    // worden, dan halen we nooit het hele kanaal binnen — alleen losse video's
+    // die expliciet als bron zijn opgegeven.
+    const alleenBronvideo = Boolean(
+      (campagne.platform_rules as { alleen_bronvideo?: boolean } | null)?.alleen_bronvideo,
+    );
     // De lijst is leidend; bron_kanaal_url blijft meelopen voor oude rijen.
     const kanalen = [
       ...((campagne.bron_kanalen as string[] | null) ?? []),
@@ -100,7 +126,16 @@ export async function haalNieuweBronvideos(): Promise<{
     ]
       .map((k) => k.trim())
       .filter(Boolean);
-    const uniek = [...new Set(kanalen)];
+    let uniek = [...new Set(kanalen)];
+    if (alleenBronvideo) {
+      const alleenVideos = uniek.filter((k) => losseVideoId(k));
+      if (alleenVideos.length !== uniek.length) {
+        fouten.push(
+          `${campagne.name}: campagne staat alleen het aangeleverde bronmateriaal toe — kanaalbronnen overgeslagen.`,
+        );
+      }
+      uniek = alleenVideos;
+    }
     if (uniek.length === 0) continue;
 
     try {
