@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { SchemaValidationError, structuredCall } from '@/lib/claude';
 import { db } from '@/lib/supabase';
+import { startCloudRun } from '@/lib/jobs';
 
 export const maxDuration = 120;
 
@@ -9,6 +10,12 @@ const campagneSchema = z.object({
   name: z.string(),
   cpm_eur: z.number().nullable(),
   budget_eur: z.number().nullable(),
+  bron_kanaal_url: z
+    .string()
+    .nullable()
+    .describe(
+      'De URL van het kanaal/account waar het bronmateriaal vandaan komt (YouTube-kanaal, playlist of drive-map die in de campagnetekst genoemd wordt). Null als er geen staat.',
+    ),
   platform_rules: z.object({
     platforms: z.array(z.string()),
     min_seconds: z.number().nullable(),
@@ -45,6 +52,18 @@ function heuristischeParse(tekst: string): z.infer<typeof campagneSchema> {
   const minSeconden = getal(tekst.match(/min(?:imaal|imum)?\D{0,20}?(\d+)\s*sec/i));
   const maxPerClip = getal(tekst.match(/max(?:imaal|imum)?\D{0,20}?(?:€|\$)\s*([\d.,]+)\s*(?:per\s*(?:clip|video|post))/i));
 
+  // Bronkanaal: een YouTube-kanaal-URL of losse @handle in de tekst.
+  const kanaalMatch =
+    tekst.match(/https?:\/\/(?:www\.)?youtube\.com\/(?:channel\/[\w-]+|@[\w.-]+|c\/[\w.-]+)/i) ??
+    tekst.match(/https?:\/\/(?:www\.)?youtube\.com\/playlist\?list=[\w-]+/i);
+  const handleMatch = !kanaalMatch ? tekst.match(/(?:^|\s)@([\w.-]{3,30})(?:\s|$)/) : null;
+  const bronKanaal = kanaalMatch
+    ? kanaalMatch[0]
+    : handleMatch
+      ? `https://www.youtube.com/@${handleMatch[1]}`
+      : null;
+  if (bronKanaal) onduidelijk.push(`Bronkanaal gevonden: ${bronKanaal} — controleer of dit klopt.`);
+
   const platforms: string[] = [];
   if (/tiktok/i.test(tekst)) platforms.push('tiktok');
   if (/instagram|reels/i.test(tekst)) platforms.push('instagram');
@@ -63,6 +82,7 @@ function heuristischeParse(tekst: string): z.infer<typeof campagneSchema> {
     name: naam,
     cpm_eur: cpm,
     budget_eur: budget,
+    bron_kanaal_url: bronKanaal,
     platform_rules: {
       platforms,
       min_seconds: minSeconden,
@@ -78,7 +98,9 @@ function heuristischeParse(tekst: string): z.infer<typeof campagneSchema> {
   };
 }
 
-const IMPORT_SYSTEM = `Je zet de tekst van een clipping-campagne (bijvoorbeeld van ClipArmy of Whop) om naar gestructureerde campagneregels. Neem alleen over wat er letterlijk staat; verzin geen regels. CPM en bedragen in euro's. Wat je niet zeker weet zet je in "onduidelijk" zodat een mens het kan controleren.`;
+const IMPORT_SYSTEM = `Je zet de tekst van een clipping-campagne (bijvoorbeeld van ClipArmy of Whop) om naar gestructureerde campagneregels. Neem alleen over wat er letterlijk staat; verzin geen regels. CPM en bedragen in euro's. Wat je niet zeker weet zet je in "onduidelijk" zodat een mens het kan controleren.
+
+Let extra op het BRONMATERIAAL: campagnes noemen bijna altijd waar de te knippen video's vandaan komen (een YouTube-kanaal, een playlist, een handle als @naam). Zet die URL in bron_kanaal_url — daarmee haalt de tool nieuwe uploads zelf op. Een losse handle maak je tot een volledige URL (https://www.youtube.com/@naam).`;
 
 /**
  * Campagne-import: plak de tekst van een campagnepagina en er wordt een
@@ -126,13 +148,23 @@ export async function POST(req: NextRequest) {
         cpm_eur: parsed.cpm_eur ?? 0.5,
         budget_eur: parsed.budget_eur,
         platform_rules: parsed.platform_rules,
+        bron_kanaal_url: parsed.bron_kanaal_url,
         status: 'active',
       })
       .select()
       .single();
     if (error) throw error;
 
-    return NextResponse.json({ campaign: data, onduidelijk: parsed.onduidelijk });
+    // Staat er een bronkanaal in? Dan meteen de eerste uploads laten ophalen
+    // in de cloud; daar staat yt-dlp en draait de plan-worker toch al.
+    const kanaalGestart = parsed.bron_kanaal_url ? await startCloudRun('ai-jobs.yml') : false;
+
+    return NextResponse.json({
+      campaign: data,
+      onduidelijk: parsed.onduidelijk,
+      bronKanaal: parsed.bron_kanaal_url,
+      kanaalGestart,
+    });
   } catch (e) {
     if (e instanceof SchemaValidationError) {
       return NextResponse.json({ error: e.message }, { status: 502 });
