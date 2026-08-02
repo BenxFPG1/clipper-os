@@ -201,6 +201,11 @@ async function transcribeViaWhisperCpp(path: string): Promise<TranscriptSegment[
     '-oj',
     '-of', uitBasis,
     '-nt',
+    // Zonder deze twee levert whisper.cpp blokken van 30 seconden; daar kun je
+    // geen clip op knippen. Kort afbreken op woordgrenzen geeft segmenten van
+    // een paar seconden, vergelijkbaar met YouTube-captions.
+    '-ml', '70',
+    '-sow',
     wav,
   ]);
 
