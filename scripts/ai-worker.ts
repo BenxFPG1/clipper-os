@@ -62,6 +62,28 @@ async function main() {
       console.log('  klaar:', JSON.stringify(resultaat));
     } catch (e) {
       const fout = e instanceof Error ? e.message : String(e);
+
+      // Een sessie- of ratelimiet is tijdelijk: de opdracht terug in de
+      // wachtrij en stoppen met deze run. Doorgaan zou de rest van de
+      // wachtrij op dezelfde limiet laten stuklopen en als 'mislukt'
+      // wegschrijven, terwijl er niets mis is met het werk zelf.
+      const limiet = /session limit|usage limit|rate.?limit|quota|resets? \d/i.test(fout);
+      if (limiet) {
+        const pogingen = ((job.pogingen as number | null) ?? 0) + 1;
+        await supabase
+          .from('ai_jobs')
+          .update({
+            status: pogingen >= 20 ? 'mislukt' : 'wachtend',
+            pogingen,
+            fout: fout.slice(0, 500),
+            gestart_at: null,
+          })
+          .eq('id', job.id);
+        console.log(`  limiet bereikt (poging ${pogingen}) — terug in de wachtrij, run stopt hier.`);
+        console.log(`  ${fout.slice(0, 160)}`);
+        return;
+      }
+
       await supabase
         .from('ai_jobs')
         .update({ status: 'mislukt', fout: fout.slice(0, 2000), klaar_at: new Date().toISOString() })
