@@ -9,13 +9,14 @@ type CampaignSummary = {
   cpm_eur: number;
   status: string;
   platform_rules: { max_eur_per_clip?: number } | null;
+  created_at: string;
 };
 
 async function loadDashboard() {
   const supabase = db();
 
-  const [campaigns, clips, topClip] = await Promise.all([
-    supabase.from('campaigns').select('id, name, cpm_eur, status, platform_rules').eq('status', 'active'),
+  const [campaigns, clips, topClip, videoTellingen, briefTellingen] = await Promise.all([
+    supabase.from('campaigns').select('id, name, cpm_eur, status, platform_rules, created_at').eq('status', 'active'),
     supabase.from('clips').select('id, status, titel_intern, clip_performance(views_7d, outlier_score)'),
     supabase
       .from('clip_performance')
@@ -23,7 +24,19 @@ async function loadDashboard() {
       .order('outlier_score', { ascending: false, nullsFirst: false })
       .limit(1)
       .maybeSingle(),
+    supabase.from('videos').select('campaign_id').is('archived_at', null),
+    supabase.from('briefs').select('campaign_id'),
   ]);
+
+  const perCampagne = (rijen: { campaign_id: string | null }[] | null) => {
+    const map = new Map<string, number>();
+    for (const r of rijen ?? []) {
+      if (r.campaign_id) map.set(r.campaign_id, (map.get(r.campaign_id) ?? 0) + 1);
+    }
+    return map;
+  };
+  const videosPer = perCampagne(videoTellingen.data);
+  const briefsPer = perCampagne(briefTellingen.data);
 
   const perStatus = { planned: 0, edited: 0, posted: 0, rejected: 0 } as Record<string, number>;
   let totalViews = 0;
@@ -36,13 +49,13 @@ async function loadDashboard() {
   // Omzet berekenen we bewust niet: dat staat al op het dashboard van ClipArmy.
   const campaignList = (campaigns.data ?? []) as CampaignSummary[];
 
-  return { campaigns: campaignList, perStatus, totalViews, topClip: topClip.data };
+  return { campaigns: campaignList, perStatus, totalViews, topClip: topClip.data, videosPer, briefsPer };
 }
 
 import { ImportCampaignForm } from './import-campaign-form';
 
 export default async function DashboardPage() {
-  const { campaigns, perStatus, totalViews, topClip } = await loadDashboard();
+  const { campaigns, perStatus, totalViews, topClip, videosPer, briefsPer } = await loadDashboard();
 
   return (
     <div className="space-y-8">
@@ -64,11 +77,16 @@ export default async function DashboardPage() {
         ) : (
           <ul className="space-y-2">
             {campaigns.map((c) => (
-              <li key={c.id} className="rounded border border-neutral-800 px-4 py-3">
-                <div className="flex items-center justify-between">
-                  <span>{c.name}</span>
-                  <span className="text-sm text-neutral-400">CPM €{Number(c.cpm_eur).toFixed(2)}</span>
-                </div>
+              <li key={c.id} className="rounded border border-neutral-800 transition-colors hover:border-neutral-600">
+                <Link href={`/campagnes/${c.id}`} className="flex items-center justify-between px-4 py-3">
+                  <span>
+                    <span className="font-medium">{c.name}</span>
+                    <span className="mt-0.5 block text-sm text-neutral-400">
+                      {videosPer.get(c.id) ?? 0} video&apos;s · {briefsPer.get(c.id) ?? 0} opdrachten
+                    </span>
+                  </span>
+                  <span className="text-sm text-neutral-400">CPM €{Number(c.cpm_eur).toFixed(2)} →</span>
+                </Link>
               </li>
             ))}
           </ul>

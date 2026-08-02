@@ -41,6 +41,8 @@ export function ImportCampaignForm() {
         ? `Campagne "${json.campaign.name}" aangemaakt. Nog controleren: ${json.onduidelijk.join('; ')}`
         : `Campagne "${json.campaign.name}" aangemaakt.`,
     );
+    // Direct door naar de werkplek van de nieuwe campagne.
+    router.push(`/campagnes/${json.campaign.id}`);
     router.refresh();
   }
 
