@@ -38,6 +38,25 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
   try {
     const r = await haalNieuweBronvideos();
     const vanCampagne = r.toegevoegd.length;
+
+    // Op de live site bestaat yt-dlp niet. Die fout wordt per bron opgevangen,
+    // dus we kwamen hier met "0 opgehaald, 4 problemen" in plaats van uit te
+    // wijken naar de cloud. Zien we alleen dat soort fouten, dan is dit geen
+    // inhoudelijk probleem maar een omgeving zonder de juiste tools.
+    const alleenGeenTools =
+      vanCampagne === 0 &&
+      r.fouten.length > 0 &&
+      r.fouten.every((f) => /yt-dlp|ENOENT|spawn|not found|niet gevonden/i.test(f));
+    if (alleenGeenTools) {
+      const gestart = await startCloudRun('ai-jobs.yml');
+      return NextResponse.json({
+        inWachtrij: true,
+        melding: gestart
+          ? 'Ophalen gestart in de cloud (de site kan zelf geen video downloaden); over een paar minuten staan ze hier.'
+          : 'Ophalen staat klaar voor de volgende cloudrun.',
+      });
+    }
+
     return NextResponse.json({
       melding:
         vanCampagne > 0
