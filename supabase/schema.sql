@@ -375,3 +375,8 @@ update campaigns set bron_kanalen = array[bron_kanaal_url]
   where bron_kanaal_url is not null and cardinality(bron_kanalen) = 0;
 alter table campaigns add column if not exists laatste_kanaal_fouten jsonb not null default '[]'::jsonb;
 alter table ai_jobs add column if not exists pogingen int not null default 0;
+
+-- Voortgang van een montage: 'clip 7/15' i.p.v. een stille 'bezig'.
+alter table render_jobs add column if not exists voortgang text;
+alter table render_jobs add column if not exists gedaan int not null default 0;
+alter table render_jobs add column if not exists totaal int;

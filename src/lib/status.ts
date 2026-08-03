@@ -73,7 +73,7 @@ export async function laadWerkStatus(): Promise<WerkStatus> {
       .order('created_at'),
     supabase
       .from('render_jobs')
-      .select('titel, status, created_at, gestart_at')
+      .select('titel, status, created_at, gestart_at, voortgang, gedaan, totaal')
       .in('status', ['wachtend', 'bezig'])
       .order('created_at'),
   ]);
@@ -160,7 +160,12 @@ export async function laadWerkStatus(): Promise<WerkStatus> {
     }),
     ...(renderJobs.data ?? []).map((r) => ({
       soort: 'Montage',
-      wat: (r.titel as string) ?? 'alle clips uit het plan',
+      wat:
+        r.status === 'bezig' && r.totaal
+          ? `clip ${Math.min(((r.gedaan as number) ?? 0) + 1, r.totaal as number)}/${r.totaal}${
+              r.voortgang ? ` — ${(r.voortgang as string).slice(0, 50)}` : ''
+            }`
+          : ((r.titel as string) ?? 'alle clips uit het plan'),
       status: r.status as string,
       sinds: (r.created_at as string) ?? null,
       bezigSeconden:

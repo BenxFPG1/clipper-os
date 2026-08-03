@@ -10,6 +10,9 @@ type Job = {
   fout: string | null;
   created_at: string;
   downloads: Download[];
+  voortgang: string | null;
+  gedaan: number;
+  totaal: number | null;
 };
 
 const STATUS_TEKST: Record<Job['status'], string> = {
@@ -122,9 +125,23 @@ export function RenderPanel({ videoId, aantalClips }: { videoId: string; aantalC
                         : 'text-neutral-400'
                   }`}
                 >
-                  {STATUS_TEKST[job.status]}
+                  {job.status === 'bezig' && job.totaal
+                    ? `clip ${Math.min(job.gedaan + 1, job.totaal)}/${job.totaal}`
+                    : STATUS_TEKST[job.status]}
                 </span>
               </div>
+
+              {job.status === 'bezig' && (
+                <>
+                  <div className="mt-2 h-1 overflow-hidden rounded bg-neutral-800">
+                    <div
+                      className="h-full bg-emerald-600 transition-all"
+                      style={{ width: `${job.totaal ? Math.round((job.gedaan / job.totaal) * 100) : 5}%` }}
+                    />
+                  </div>
+                  {job.voortgang && <p className="mt-1 text-xs text-neutral-500">{job.voortgang}</p>}
+                </>
+              )}
 
               {job.fout && <p className="mt-1 text-xs text-red-400">{job.fout}</p>}
 

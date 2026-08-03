@@ -22,6 +22,17 @@ const MAX_BYTES = 50 * 1024 * 1024;
 async function main() {
   const supabase = db();
 
+  // Een afgebroken run laat de opdracht op 'bezig' staan; die zou nooit meer
+  // opgepakt worden. Alles wat langer dan twee uur bezig is, mag opnieuw.
+  const grens = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+  const { data: vastgelopen } = await supabase
+    .from('render_jobs')
+    .update({ status: 'wachtend', gestart_at: null })
+    .eq('status', 'bezig')
+    .lt('gestart_at', grens)
+    .select('id');
+  if (vastgelopen?.length) console.log(`${vastgelopen.length} vastgelopen montage(s) teruggezet.`);
+
   const { data: jobs, error } = await supabase
     .from('render_jobs')
     .select('*, videos(title, source_url)')
@@ -100,8 +111,18 @@ async function verwerk(job: Job) {
   const bronmap = join(tmpdir(), 'clipper-bron', job.video_id);
   const bestanden: { naam: string; pad: string; bytes: number }[] = [];
 
+  await supabase
+    .from('render_jobs')
+    .update({ totaal: teDoen.length, gedaan: 0, voortgang: 'bronvideo ophalen…' })
+    .eq('id', job.id);
+
   let bronBewaard = false;
+  let gedaan = 0;
   for (const { clip, nummer } of teDoen) {
+    await supabase
+      .from('render_jobs')
+      .update({ voortgang: `clip ${nummer}: ${clip.titel_intern.slice(0, 60)}`, gedaan })
+      .eq('id', job.id);
     const naam = `${String(nummer).padStart(2, '0')}-${veilig(clip.titel_intern)}.mp4`;
     const lokaal = join(werkmap, naam);
 
@@ -145,6 +166,8 @@ async function verwerk(job: Job) {
     if (uploadError) throw new Error(`Uploaden mislukt: ${uploadError.message}`);
 
     bestanden.push({ naam, pad, bytes: size });
+    gedaan += 1;
+    await supabase.from('render_jobs').update({ gedaan }).eq('id', job.id);
     console.log(`     geüpload (${Math.round(size / 1e6)}MB)`);
   }
 

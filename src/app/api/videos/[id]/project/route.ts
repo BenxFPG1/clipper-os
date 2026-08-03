@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/supabase';
 import { bouwPremiereXml } from '@/lib/roughcut/fcpxml';
 import { Shot } from '@/lib/roughcut';
+import { maakVarianten } from '@/lib/roughcut/varianten';
 
 /**
  * Downloadt het Premiere/Resolve-projectbestand (FCP7 XML) voor het nieuwste
@@ -13,7 +14,10 @@ import { Shot } from '@/lib/roughcut';
  * Zonder gemeten framerate gebruiken we 25 fps en melden dat in de bestandsnaam,
  * want een verkeerde framerate schuift alle cuts op.
  */
-export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
+  // Varianten staan standaard aan: ze kosten geen enkele AI-call en leveren
+  // per clip drie tot vier publiceerbare versies in plaats van één.
+  const metVarianten = req.nextUrl.searchParams.get('varianten') !== '0';
   const supabase = db();
 
   const { data: video, error } = await supabase
@@ -46,6 +50,24 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
   const veiligeTitel =
     video.title.replace(/[^\p{L}\p{N} _-]/gu, '').slice(0, 60).trim() || 'video';
 
+  // Per clip eerst de hoofdmontage, daarna de mechanische varianten. Zo staan
+  // ze in Premiere netjes bij elkaar: 01, 01b, 01c, dan 02, enzovoort.
+  const sequences: { nummer: number; titel: string; shots: Shot[]; label: string }[] = [];
+  const letters = 'bcdefgh';
+  for (const [i, c] of clips.entries()) {
+    const nr = String(i + 1).padStart(2, '0');
+    sequences.push({ nummer: i + 1, titel: c.titel_intern, shots: c.shots, label: `${nr} - ${c.titel_intern}` });
+    if (!metVarianten) continue;
+    for (const [v, variant] of maakVarianten(c.shots).entries()) {
+      sequences.push({
+        nummer: i + 1,
+        titel: c.titel_intern,
+        shots: variant.shots,
+        label: `${nr}${letters[v] ?? 'x'} - ${c.titel_intern} — ${variant.naam}`,
+      });
+    }
+  }
+
   const xml = bouwPremiereXml(
     veiligeTitel,
     {
@@ -54,7 +76,7 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
       breedte: (video.breedte as number | null) ?? 1920,
       hoogte: (video.hoogte as number | null) ?? 1080,
     },
-    clips.map((c, i) => ({ nummer: i + 1, titel: c.titel_intern, shots: c.shots })),
+    sequences,
   );
 
   const bestandsnaam = fpsGemeten

@@ -4,6 +4,8 @@ export type ClipVoorProject = {
   nummer: number;
   titel: string;
   shots: Shot[];
+  /** Volledige naam in Premiere; zonder dit wordt "01 - titel" gebruikt. */
+  label?: string;
 };
 
 export type BronInfo = {
@@ -52,7 +54,10 @@ ${indent}</file>`;
   };
 
   const sequences = clips
-    .map((clip) => {
+    .map((clip, seqIndex) => {
+      // Ids op basis van de plek in de lijst: twee varianten van dezelfde clip
+      // hebben hetzelfde nummer, en dubbele ids weigert Premiere.
+      const sid = seqIndex + 1;
       const shots = [...clip.shots].sort((a, b) => a.volgorde - b.volgorde).filter((s) => s.end > s.start);
       let cursor = 0;
       const video: string[] = [];
@@ -68,7 +73,7 @@ ${indent}</file>`;
 
         const naam = xml(`${String(i + 1).padStart(2, '0')} ${shot.functie}${shot.edit_notitie ? ` — ${shot.edit_notitie.slice(0, 60)}` : ''}`);
 
-        video.push(`          <clipitem id="c${clip.nummer}-v${i}">
+        video.push(`          <clipitem id="c${sid}-v${i}">
             <name>${naam}</name>
             <enabled>TRUE</enabled>
             <rate><timebase>${tb}</timebase><ntsc>${ntsc}</ntsc></rate>
@@ -78,7 +83,7 @@ ${fileNode('            ')}
             <sourcetrack><mediatype>video</mediatype><trackindex>1</trackindex></sourcetrack>
           </clipitem>`);
 
-        audio.push(`          <clipitem id="c${clip.nummer}-a${i}">
+        audio.push(`          <clipitem id="c${sid}-a${i}">
             <name>${naam}</name>
             <enabled>TRUE</enabled>
             <rate><timebase>${tb}</timebase><ntsc>${ntsc}</ntsc></rate>
@@ -92,8 +97,8 @@ ${fileNode('            ')}
       // De cuts staan op V2, met V1 leeg eronder. Zo houd je de onderste laag
       // vrij voor je eigen werk (b-roll, achtergrond, ondertitels) en kun je de
       // knippen erboven verschuiven zonder dat je iets anders raakt.
-      return `    <sequence id="seq-${clip.nummer}">
-      <name>${xml(`${String(clip.nummer).padStart(2, '0')} - ${clip.titel}`)}</name>
+      return `    <sequence id="seq-${sid}">
+      <name>${xml(clip.label ?? `${String(clip.nummer).padStart(2, '0')} - ${clip.titel}`)}</name>
       <duration>${cursor}</duration>
       <rate><timebase>${tb}</timebase><ntsc>${ntsc}</ntsc></rate>
       <media>
