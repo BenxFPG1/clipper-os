@@ -390,3 +390,6 @@ create unique index if not exists videos_bron_uniek
 -- Gemeten spraakpauzes per video: hiermee schuiven knippunten naar echte
 -- stiltes in plaats van midden in een woord.
 alter table videos add column if not exists stiltes jsonb;
+
+-- Hartslag van de montage-worker: blijft die uit, dan is de run afgebroken.
+alter table render_jobs add column if not exists hartslag timestamptz default now();

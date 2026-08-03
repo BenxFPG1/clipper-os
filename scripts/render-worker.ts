@@ -24,14 +24,15 @@ const MAX_BYTES = 50 * 1024 * 1024;
 async function main() {
   const supabase = db();
 
-  // Een afgebroken run laat de opdracht op 'bezig' staan; die zou nooit meer
-  // opgepakt worden. Alles wat langer dan twee uur bezig is, mag opnieuw.
-  const grens = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+  // Een afgebroken run (annulering, runner weg) laat de opdracht op 'bezig'
+  // staan. De worker werkt per clip een hartslag bij; blijft die twintig
+  // minuten uit, dan draait er niets meer en mag de opdracht opnieuw.
+  const grens = new Date(Date.now() - 20 * 60 * 1000).toISOString();
   const { data: vastgelopen } = await supabase
     .from('render_jobs')
     .update({ status: 'wachtend', gestart_at: null })
     .eq('status', 'bezig')
-    .lt('gestart_at', grens)
+    .lt('hartslag', grens)
     .select('id');
   if (vastgelopen?.length) console.log(`${vastgelopen.length} vastgelopen montage(s) teruggezet.`);
 
@@ -52,7 +53,7 @@ async function main() {
     console.log(`\nOpdracht ${job.id} — ${job.titel ?? 'zonder titel'}`);
     await supabase
       .from('render_jobs')
-      .update({ status: 'bezig', gestart_at: new Date().toISOString() })
+      .update({ status: 'bezig', gestart_at: new Date().toISOString(), hartslag: new Date().toISOString() })
       .eq('id', job.id);
 
     try {
@@ -111,13 +112,21 @@ async function verwerk(job: Job) {
       : clips.map((clip, i) => ({ clip, nummer: i + 1 }));
   if (teDoen.length === 0) throw new Error('Geen clips in het plan.');
 
+  // Wat er in een eerdere (afgebroken) poging al gelukt is, doen we niet
+  // opnieuw: de bestanden staan al in de opslag.
+  const alGedaan = ((job as { bestanden?: { naam: string; pad: string; bytes: number }[] }).bestanden ??
+    []) as { naam: string; pad: string; bytes: number }[];
+  if (alGedaan.length > 0) {
+    console.log(`  ${alGedaan.length} clip(s) uit een eerdere poging blijven staan`);
+  }
+
   const werkmap = await mkdtemp(join(tmpdir(), 'clipper-render-'));
 
   // De bron staat per video op een vaste plek, niet per opdracht. Vraag je
   // eerst clip 3 en daarna clip 7 aan, dan wordt dezelfde video niet twee keer
   // gedownload — en downloaden is verreweg de traagste stap.
   const bronmap = join(tmpdir(), 'clipper-bron', job.video_id);
-  const bestanden: { naam: string; pad: string; bytes: number }[] = [];
+  const bestanden: { naam: string; pad: string; bytes: number }[] = [...alGedaan];
 
   await supabase
     .from('render_jobs')
@@ -133,9 +142,17 @@ async function verwerk(job: Job) {
   for (const { clip, nummer } of teDoen) {
     await supabase
       .from('render_jobs')
-      .update({ voortgang: `clip ${nummer}: ${clip.titel_intern.slice(0, 60)}`, gedaan })
+      .update({
+        voortgang: `clip ${nummer}: ${clip.titel_intern.slice(0, 60)}`,
+        gedaan,
+        hartslag: new Date().toISOString(),
+      })
       .eq('id', job.id);
     const naam = `${String(nummer).padStart(2, '0')}-${veilig(clip.titel_intern)}.mp4`;
+    if (alGedaan.some((b) => b.naam === naam)) {
+      gedaan += 1;
+      continue;
+    }
     const lokaal = join(werkmap, naam);
 
     console.log(`  clip ${nummer}: ${clip.titel_intern}`);
@@ -201,7 +218,12 @@ async function verwerk(job: Job) {
 
     bestanden.push({ naam, pad, bytes: size });
     gedaan += 1;
-    await supabase.from('render_jobs').update({ gedaan }).eq('id', job.id);
+    // Meteen wegschrijven: wordt de run halverwege afgebroken, dan blijft dit
+    // werk staan in plaats van verloren te gaan.
+    await supabase
+      .from('render_jobs')
+      .update({ gedaan, bestanden, hartslag: new Date().toISOString() })
+      .eq('id', job.id);
     console.log(`     geüpload (${Math.round(size / 1e6)}MB)`);
   }
 
