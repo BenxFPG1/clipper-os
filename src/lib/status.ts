@@ -22,6 +22,16 @@ export type LopendeTaak = {
   wachtrijPlek: number | null;
 };
 
+export type Verbruik = {
+  /** Zware Opus-calls vandaag (plannen, scripts, concepten; incl. examens). */
+  zwareCallsVandaag: number;
+  /** Afgeronde cloudopdrachten vandaag, tegen de dagelijkse grens. */
+  opdrachtenVandaag: number;
+  dagGrens: number;
+  /** Laatste keer dat de Claude-limiet geraakt werd, met de resettijd eruit. */
+  laatsteLimiet: { wanneer: string; melding: string } | null;
+};
+
 export type WerkStatus = {
   stappen: {
     plannen: StapStatus;
@@ -31,6 +41,7 @@ export type WerkStatus = {
     meten: StapStatus;
   };
   lopend: LopendeTaak[];
+  verbruik: Verbruik;
   perCampagne: {
     id: string;
     naam: string;
@@ -92,6 +103,31 @@ export async function laadWerkStatus(): Promise<WerkStatus> {
     return Math.round(gesorteerd[Math.floor(gesorteerd.length / 2)]);
   };
   const nu = Date.now();
+
+  // Verbruik van vandaag: hoe hard drukken we op de abonnementslimiet?
+  const vandaag = new Date();
+  vandaag.setUTCHours(0, 0, 0, 0);
+  const ZWAAR = ['clip_plan', 'clip_plan_examen', 'character_map', 'scriptwriter', 'scriptwriter_examen', 'campagne_concepten'];
+  const [zwaarRes, klaarVandaagRes, limietRes] = await Promise.all([
+    supabase
+      .from('provider_usage')
+      .select('id', { count: 'exact', head: true })
+      .in('operation', ZWAAR)
+      .gte('created_at', vandaag.toISOString()),
+    supabase
+      .from('ai_jobs')
+      .select('id', { count: 'exact', head: true })
+      .eq('status', 'klaar')
+      .gte('klaar_at', vandaag.toISOString()),
+    supabase
+      .from('ai_jobs')
+      .select('fout, klaar_at, created_at')
+      .not('fout', 'is', null)
+      .ilike('fout', '%limit%')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+  ]);
 
   const videoLijst = videos.data ?? [];
   const videosMetPlan = new Set((plannen.data ?? []).map((p) => p.video_id as string));
@@ -165,6 +201,17 @@ export async function laadWerkStatus(): Promise<WerkStatus> {
       },
     },
     lopend,
+    verbruik: {
+      zwareCallsVandaag: zwaarRes.count ?? 0,
+      opdrachtenVandaag: klaarVandaagRes.count ?? 0,
+      dagGrens: Number(process.env.AI_JOBS_PER_DAG ?? 20),
+      laatsteLimiet: limietRes.data
+        ? {
+            wanneer: (limietRes.data.klaar_at as string) ?? (limietRes.data.created_at as string),
+            melding: (limietRes.data.fout as string).slice(0, 120),
+          }
+        : null,
+    },
     perCampagne: (campagnes.data ?? []).map((c) => {
       const eigenVideos = videoLijst.filter((v) => v.campaign_id === c.id);
       const eigenBriefs = briefLijst.filter((b) => b.campaign_id === c.id);

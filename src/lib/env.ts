@@ -9,6 +9,9 @@ export function optionalEnv(name: string, fallback = ''): string {
 }
 
 export const CLAUDE_MODEL = optionalEnv('CLAUDE_MODEL', 'claude-opus-5');
+// Voor licht werk (classificatie, import-parsing): telt minder zwaar mee in de
+// abonnementslimiet. Het creatieve werk blijft op het hoofdmodel.
+export const CLAUDE_LICHT_MODEL = optionalEnv('CLAUDE_LICHT_MODEL', 'claude-sonnet-5');
 export const COST_ALERT_EUR = Number(optionalEnv('COST_ALERT_EUR', '20'));
 
 /**

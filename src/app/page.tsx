@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { db, one } from '@/lib/supabase';
 import { laadWerkStatus, type StapStatus } from '@/lib/status';
+import { datumTijd } from '@/lib/format';
 import { NuBezig } from './nu-bezig';
 
 export const dynamic = 'force-dynamic';
@@ -87,6 +88,42 @@ export default async function DashboardPage() {
       <section>
         <h2 className="mb-3 text-lg font-medium">Nu bezig</h2>
         <NuBezig taken={werk.lopend} />
+      </section>
+
+      <section className="rounded border border-neutral-800 p-4">
+        <h2 className="text-sm uppercase tracking-wide text-neutral-500">Claude-verbruik vandaag</h2>
+        <div className="mt-2 flex flex-wrap items-center gap-x-6 gap-y-1 text-sm">
+          <span>
+            <span className="font-semibold">{werk.verbruik.zwareCallsVandaag}</span>{' '}
+            <span className="text-neutral-400">zware calls (plannen/scripts/concepten)</span>
+          </span>
+          <span>
+            <span className="font-semibold">
+              {werk.verbruik.opdrachtenVandaag}/{werk.verbruik.dagGrens}
+            </span>{' '}
+            <span className="text-neutral-400">van de dagelijkse cloudgrens</span>
+          </span>
+        </div>
+        <div className="mt-2 h-1.5 overflow-hidden rounded bg-neutral-800">
+          <div
+            className={`h-full ${
+              werk.verbruik.opdrachtenVandaag / werk.verbruik.dagGrens > 0.8 ? 'bg-amber-500' : 'bg-neutral-500'
+            }`}
+            style={{
+              width: `${Math.min(100, Math.round((werk.verbruik.opdrachtenVandaag / werk.verbruik.dagGrens) * 100))}%`,
+            }}
+          />
+        </div>
+        {werk.verbruik.laatsteLimiet && (
+          <p className="mt-2 text-xs text-amber-300/80">
+            Laatste keer limiet geraakt: {datumTijd(werk.verbruik.laatsteLimiet.wanneer)} —{' '}
+            {werk.verbruik.laatsteLimiet.melding}
+          </p>
+        )}
+        <p className="mt-1 text-xs text-neutral-500">
+          De 5-uurs- en weeklimiet zelf zijn niet uitleesbaar; dit is wat de tool ervan verbruikt. Grens
+          aanpassen: AI_JOBS_PER_DAG.
+        </p>
       </section>
 
       <section>

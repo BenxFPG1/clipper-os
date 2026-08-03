@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { SchemaValidationError, structuredCall } from '@/lib/claude';
 import { db } from '@/lib/supabase';
+import { CLAUDE_LICHT_MODEL } from '@/lib/env';
 
 export const maxDuration = 120;
 
@@ -67,6 +68,7 @@ ${
       maxTokens: 4000,
       effort: 'medium',
       operation: 'theme_suggest',
+      model: CLAUDE_LICHT_MODEL,
     });
 
     const bestaand = new Set((thema.zoektermen as string[]).map((z) => z.toLowerCase()));

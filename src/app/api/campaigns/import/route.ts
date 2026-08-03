@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { SchemaValidationError, structuredCall } from '@/lib/claude';
 import { db } from '@/lib/supabase';
+import { CLAUDE_LICHT_MODEL } from '@/lib/env';
 import { startCloudRun } from '@/lib/jobs';
 
 export const maxDuration = 120;
@@ -138,6 +139,7 @@ export async function POST(req: NextRequest) {
         maxTokens: 4000,
         effort: 'medium',
         operation: 'campaign_import',
+      model: CLAUDE_LICHT_MODEL,
       });
     } catch (e) {
       // Op Vercel is er geen Claude CLI en (bewust) geen API-key. Dan parsen

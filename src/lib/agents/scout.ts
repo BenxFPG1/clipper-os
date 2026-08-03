@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { structuredCall } from '../claude';
-import { AGENT_EFFORT } from '../env';
+import { AGENT_EFFORT, CLAUDE_LICHT_MODEL } from '../env';
 import { db, logProviderUsage } from '../supabase';
 import { Theme, buildClassifyPrompt, loadThemes, loadVault, renderVaultForPrompt } from '../vault';
 import { median } from '../tracking/performance';
@@ -475,6 +475,7 @@ async function classificeerThemas(themes: Theme[], posts: Outlier[]): Promise<Ma
     maxTokens: 4000,
     effort: 'low',
     operation: 'scout_classificatie',
+    model: CLAUDE_LICHT_MODEL,
   });
 
   const geldig = new Set(themes.map((t) => t.slug));

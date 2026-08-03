@@ -37,6 +37,12 @@ type StructuredOptions<T extends z.ZodTypeAny> = {
   maxTokens?: number;
   effort?: Effort;
   operation: string;
+  /**
+   * Modeloverride voor licht werk (classificatie, import-parsing). Een kleiner
+   * model telt minder zwaar mee in de abonnementslimiet; het creatieve werk
+   * (plannen, scripts) blijft op het hoofdmodel.
+   */
+  model?: string;
 };
 
 /**
@@ -77,7 +83,7 @@ async function apiStructuredCall<T extends z.ZodTypeAny>(opts: StructuredOptions
 
   for (let attempt = 0; attempt < 2; attempt++) {
     const stream = anthropic().messages.stream({
-      model: CLAUDE_MODEL,
+      model: opts.model ?? CLAUDE_MODEL,
       max_tokens: opts.maxTokens ?? 32000,
       // Geen temperature: Opus 5 accepteert sampling-parameters niet. Consistentie
       // komt uit de vastgelegde prompt-versie en vault-snapshot per plan.
@@ -169,7 +175,12 @@ ${JSON.stringify(jsonSchema)}`;
   let prompt = basePrompt;
 
   for (let attempt = 0; attempt < 2; attempt++) {
-    const { result, costUsd, tokens } = await runClaudeCli(opts.system, prompt, cliEffort(opts.effort));
+    const { result, costUsd, tokens } = await runClaudeCli(
+      opts.system,
+      prompt,
+      cliEffort(opts.effort),
+      opts.model ?? CLAUDE_MODEL,
+    );
 
     void logProviderUsage('claude-code', opts.operation, tokens, costUsd * 0.92).catch(() => undefined);
 
@@ -220,6 +231,7 @@ async function runClaudeCli(
   system: string,
   prompt: string,
   effort: string,
+  model: string,
 ): Promise<{ result: string; costUsd: number; tokens: number }> {
   // Voorbijgaande streamfouten (stalled, overloaded, 5xx) mogen geen hele
   // plannerrun weggooien: tot twee keer opnieuw proberen met korte pauze.
@@ -227,7 +239,7 @@ async function runClaudeCli(
   for (let attempt = 0; attempt < 3; attempt++) {
     if (attempt > 0) await new Promise((r) => setTimeout(r, attempt * 15_000));
     try {
-      return await runClaudeCliOnce(system, prompt, effort);
+      return await runClaudeCliOnce(system, prompt, effort, model);
     } catch (err) {
       lastErr = err as Error;
       const transient = /stalled|overloaded|rate.?limit|50[0-9]|timed? ?out|ECONNRESET|socket hang up/i.test(
@@ -244,6 +256,7 @@ function runClaudeCliOnce(
   system: string,
   prompt: string,
   effort: string,
+  model: string,
 ): Promise<{ result: string; costUsd: number; tokens: number }> {
   const env: NodeJS.ProcessEnv = { ...process.env };
   for (const key of Object.keys(env)) {
@@ -262,7 +275,7 @@ function runClaudeCliOnce(
     '--output-format',
     'json',
     '--model',
-    CLAUDE_MODEL,
+    model,
     '--effort',
     effort,
     '--system-prompt',
