@@ -11,6 +11,8 @@ import { Shot } from '../src/lib/roughcut';
 import { bouwPremiereXml } from '../src/lib/roughcut/fcpxml';
 import { bouwSequences, type PlanClip } from '../src/lib/roughcut/project-opbouw';
 import { detecteerStiltes } from '../src/lib/roughcut';
+import { maakTekstkaarten, kaartenMap } from '../src/lib/roughcut/tekstkaarten';
+import { snapShots } from '../src/lib/roughcut/snap';
 
 /**
  * Maakt een Premiere/Resolve-project van een clip-plan: per clip een sequence
@@ -111,6 +113,20 @@ async function main() {
     console.log(`  ${stiltes.length} pauzes gevonden`);
   }
 
+  // Tekstkaarten die het plan voorschrijft alvast tekenen en op een eigen
+  // beeldlaag zetten; anders moet de editor ze stuk voor stuk zelf plaatsen.
+  const kaarten = await kaartenMap(map);
+  const overlaysPerClip: Record<number, Awaited<ReturnType<typeof maakTekstkaarten>>> = {};
+  for (const [i, c] of clips.entries()) {
+    const gesnapt = snapShots(c.shots, (video.transcript as never) ?? [], {
+      stiltes: stiltes ?? undefined,
+      duur: video.duration_seconds as number | null,
+    });
+    overlaysPerClip[i] = await maakTekstkaarten(gesnapt as never, kaarten, String(i + 1).padStart(2, '0'));
+  }
+  const aantalKaarten = Object.values(overlaysPerClip).reduce((n, o) => n + o.length, 0);
+  if (aantalKaarten > 0) console.log(`${aantalKaarten} tekstkaart(en) getekend in ${kaarten}`);
+
   const xml = bouwPremiereXml(
     veiligeTitel,
     { pad: bronPad, fps, breedte: stream.width, hoogte: stream.height },
@@ -119,6 +135,15 @@ async function main() {
       videoDuur: (video.duration_seconds as number | null) ?? null,
       transcript: (video.transcript as never) ?? undefined,
       stiltes: stiltes ?? undefined,
+    }).map((seq, i) => {
+      // Alleen de hoofdmontages krijgen de kaarten; varianten hebben een andere
+      // volgorde waardoor de posities niet meer kloppen.
+      const isHoofd = /^\d\d - /.test(seq.label ?? '');
+      const clipIndex = Number((seq.label ?? '').slice(0, 2)) - 1;
+      void i;
+      return isHoofd && overlaysPerClip[clipIndex]?.length
+        ? { ...seq, overlays: overlaysPerClip[clipIndex] }
+        : seq;
     }),
   );
 

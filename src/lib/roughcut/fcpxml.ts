@@ -9,6 +9,15 @@ export type Marker = {
   notitie?: string;
 };
 
+export type Overlay = {
+  /** Positie op de tijdlijn in seconden. */
+  start: number;
+  end: number;
+  /** Absoluut pad naar de PNG met de tekstkaart. */
+  pad: string;
+  naam: string;
+};
+
 export type ClipVoorProject = {
   nummer: number;
   titel: string;
@@ -19,6 +28,8 @@ export type ClipVoorProject = {
   doorlopend?: { start: number; end: number };
   /** Markers op de tijdlijn: waar knippen, en wat er moet gebeuren. */
   markers?: Marker[];
+  /** Tekstkaarten als beeldlaag boven de montage. */
+  overlays?: Overlay[];
 };
 
 export type BronInfo = {
@@ -88,6 +99,30 @@ ${indent}</file>`;
 
         const naam = xml(`${String(i + 1).padStart(2, '0')} ${shot.functie}${shot.edit_notitie ? ` — ${shot.edit_notitie.slice(0, 60)}` : ''}`);
 
+        // Punch-in en snelle zoom zetten we meteen als Motion-schaal klaar.
+        // Premiere leest dit als Effect Controls > Motion > Scale, dus je ziet
+        // het effect direct en kunt het met één sleep bijstellen.
+        const effect = (shot as { beeld_effect?: string }).beeld_effect;
+        const zoom = effect === 'punch_in' ? 112 : effect === 'snelle_zoom' ? 118 : null;
+        const motion = zoom
+          ? `            <filter>
+              <effect>
+                <name>Basic Motion</name>
+                <effectid>basic</effectid>
+                <effectcategory>motion</effectcategory>
+                <effecttype>motion</effecttype>
+                <mediatype>video</mediatype>
+                <parameter>
+                  <parameterid>scale</parameterid>
+                  <name>Scale</name>
+                  <valuemin>0</valuemin>
+                  <valuemax>1000</valuemax>
+                  <value>${zoom}</value>
+                </parameter>
+              </effect>
+            </filter>`
+          : '';
+
         // Video en audio aan elkaar knopen, zodat verschuiven of trimmen ze
         // samen meeneemt. Zonder deze links behandelt Premiere ze als losse
         // stukken en loopt het beeld uit de pas met het geluid.
@@ -114,6 +149,7 @@ ${indent}</file>`;
 ${fileNode('            ')}
             <sourcetrack><mediatype>video</mediatype><trackindex>1</trackindex></sourcetrack>
 ${links}
+${motion}
           </clipitem>`);
 
         audio.push(`          <clipitem id="c${sid}-a${i}">
@@ -142,6 +178,32 @@ ${links}
         )
         .join('\n');
 
+      // Tekstkaarten als tweede beeldlaag. Premiere importeert PNG's met
+      // transparantie zonder gedoe, dus de kaart staat meteen op de goede plek
+      // en je hoeft hem alleen nog te restylen naar jouw huisstijl.
+      const overlayItems = (clip.overlays ?? [])
+        .map(
+          (o, n) => `          <clipitem id="c${sid}-o${n}">
+            <name>${xml(o.naam)}</name>
+            <enabled>TRUE</enabled>
+            <rate><timebase>${tb}</timebase><ntsc>${ntsc}</ntsc></rate>
+            <start>${naarFrames(o.start)}</start><end>${naarFrames(o.end)}</end>
+            <in>0</in><out>${naarFrames(o.end - o.start)}</out>
+            <file id="kaart-${sid}-${n}">
+              <name>${xml(basename(o.pad))}</name>
+              <pathurl>${xml(o.pad.startsWith('/') ? `file://localhost${encodeURI(o.pad)}` : encodeURI(o.pad))}</pathurl>
+              <rate><timebase>${tb}</timebase><ntsc>${ntsc}</ntsc></rate>
+              <media><video><samplecharacteristics><width>1080</width><height>1920</height></samplecharacteristics></video></media>
+            </file>
+          </clipitem>`,
+        )
+        .join('\n');
+      const overlayTrack = overlayItems
+        ? `          <track>
+${overlayItems}
+          </track>`
+        : '';
+
       return `    <sequence id="seq-${sid}">
       <name>${xml(clip.label ?? `${String(clip.nummer).padStart(2, '0')} - ${clip.titel}`)}</name>
       <duration>${cursor}</duration>
@@ -152,6 +214,7 @@ ${links}
           <track>
 ${video.join('\n')}
           </track>
+${overlayTrack}
         </video>
         <audio>
           <track>
