@@ -14,6 +14,13 @@ import { bedenkConcepten } from '../src/lib/concepten';
 /** Hoeveel opdrachten tegelijk. Twee is een veilige balans met de sessielimiet. */
 const GELIJKTIJDIG = Number(process.env.AI_JOBS_GELIJKTIJDIG ?? 2);
 
+/**
+ * Rem op het verbruik: zoveel opdrachten per dag. Zonder rem trekt één grote
+ * batch de 5-uurs- en weeklimiet leeg en staat er daarna niets meer klaar als
+ * je iets met spoed nodig hebt. Wat overblijft komt morgen aan de beurt.
+ */
+const MAX_PER_DAG = Number(process.env.AI_JOBS_PER_DAG ?? 20);
+
 async function main() {
   const supabase = db();
 
@@ -31,12 +38,27 @@ async function main() {
     console.log(`${vastgelopen.length} vastgelopen opdracht(en) teruggezet in de wachtrij.`);
   }
 
+  // Hoeveel is er vandaag al gedaan? Dat bepaalt hoeveel er nog bij mag.
+  const vandaag = new Date();
+  vandaag.setUTCHours(0, 0, 0, 0);
+  const { count: gedaanVandaag } = await supabase
+    .from('ai_jobs')
+    .select('id', { count: 'exact', head: true })
+    .eq('status', 'klaar')
+    .gte('klaar_at', vandaag.toISOString());
+
+  const ruimte = Math.max(0, MAX_PER_DAG - (gedaanVandaag ?? 0));
+  if (ruimte === 0) {
+    console.log(`Dagelijkse grens van ${MAX_PER_DAG} opdrachten bereikt; de rest komt morgen.`);
+    return;
+  }
+
   const { data: jobs, error } = await supabase
     .from('ai_jobs')
     .select('*')
     .eq('status', 'wachtend')
     .order('created_at')
-    .limit(10);
+    .limit(Math.min(10, ruimte));
   if (error) throw error;
 
   if (!jobs?.length) {
@@ -59,12 +81,12 @@ async function main() {
       .eq('id', job.id);
 
     try {
-      const params = (job.parameters ?? {}) as { aantal?: number; reuse_character_map?: boolean };
+      const params = (job.parameters ?? {}) as { aantal?: number; opnieuw_analyseren?: boolean };
       let resultaat: unknown;
 
       if (job.soort === 'clip_plan') {
         const r = await runPlannerForVideo(job.doel_id, {
-          reuseCharacterMap: params.reuse_character_map ?? false,
+          opnieuwAnalyseren: params.opnieuw_analyseren ?? false,
         });
         resultaat = { clips: (r.plan as { clips?: unknown[] })?.clips?.length ?? 0 };
       } else if (job.soort === 'scripts') {

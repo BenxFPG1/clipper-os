@@ -20,7 +20,7 @@ export function BatchKnoppen({
   const [busy, setBusy] = useState<string | null>(null);
   const [melding, setMelding] = useState<string | null>(null);
   const [aantalConcepten, setAantalConcepten] = useState(8);
-  const [perOpdracht, setPerOpdracht] = useState(3);
+  const [perOpdracht, setPerOpdracht] = useState(1);
 
   async function concepten() {
     setBusy('concepten');
@@ -119,7 +119,7 @@ export function BatchKnoppen({
             />
           </label>
           <span className="text-xs text-neutral-500">
-            = {totaal} verhaallijnen, elk in een andere stijl per opdracht (reken op ±2-4 min per stuk)
+            = {totaal} verhaallijnen ({totaal * 2} zware calls) — dit telt mee in je Claude-limiet
           </span>
         </div>
       )}

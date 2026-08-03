@@ -30,6 +30,8 @@ export const PLAN_EFFORT = effortFromEnv('PLAN_EFFORT', 'xhigh');
 // denkwerk dan het plan bedenken, en scheelt de helft van de wachttijd.
 export const PLAN_EXAMEN_EFFORT = effortFromEnv('PLAN_EXAMEN_EFFORT', 'high');
 export const SCRIPT_EFFORT = effortFromEnv('SCRIPT_EFFORT', 'xhigh');
+// Zelfde redenering als bij het plan: de examinator toetst tegen vaste kaders.
+export const SCRIPT_EXAMEN_EFFORT = effortFromEnv('SCRIPT_EXAMEN_EFFORT', 'high');
 export const AGENT_EFFORT = effortFromEnv('AGENT_EFFORT', 'high');
 
 /**

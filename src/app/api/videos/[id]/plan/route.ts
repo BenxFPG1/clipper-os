@@ -7,12 +7,16 @@ import { queueAiJob } from '@/lib/jobs';
 export const maxDuration = 300;
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
-  const body = (await req.json().catch(() => ({}))) as { reuse_character_map?: boolean };
+  const body = (await req.json().catch(() => ({}))) as {
+    reuse_character_map?: boolean;
+    opnieuw_analyseren?: boolean;
+  };
+  // Hergebruik is de standaard; alleen als je expliciet opnieuw wilt
+  // analyseren draaien we die dure call nog eens.
+  const opnieuwAnalyseren = body.opnieuw_analyseren ?? body.reuse_character_map === false;
 
   try {
-    const result = await runPlannerForVideo(params.id, {
-      reuseCharacterMap: body.reuse_character_map ?? false,
-    });
+    const result = await runPlannerForVideo(params.id, { opnieuwAnalyseren });
     return NextResponse.json(result);
   } catch (e) {
     const bericht = e instanceof Error ? e.message : String(e);
@@ -20,7 +24,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     const geenClaude = /Ontbrekende env var|CLI niet gevonden|niet \(meer\) ingelogd|ENOENT/i.test(bericht);
     if (geenClaude) {
       const { jobId, directGestart } = await queueAiJob('clip_plan', params.id, {
-        reuse_character_map: body.reuse_character_map ?? false,
+        opnieuw_analyseren: opnieuwAnalyseren,
       });
       return NextResponse.json({
         inWachtrij: true,

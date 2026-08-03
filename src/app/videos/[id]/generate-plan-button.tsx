@@ -25,7 +25,7 @@ export function GeneratePlanButton({
     const res = await fetch(`/api/videos/${videoId}/plan`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ reuse_character_map: reuse }),
+      body: JSON.stringify({ opnieuw_analyseren: !reuse }),
     });
     const json = await res.json();
 

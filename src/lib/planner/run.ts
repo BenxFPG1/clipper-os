@@ -9,7 +9,16 @@ import { SCHEMA_VERSION } from './schema';
  * character map op de video, het plan in clip_plans, en één clips-rij per clip
  * zodat Marlou meteen statussen en post-URL's kan bijhouden.
  */
-export async function runPlannerForVideo(videoId: string, options?: { reuseCharacterMap?: boolean }) {
+/**
+ * Draait de planner voor een video. De character map wordt standaard hergebruikt
+ * als hij er al is: opnieuw analyseren van dezelfde video geeft hetzelfde
+ * antwoord en kost een van de duurste calls uit de pijplijn. Alleen bij
+ * `opnieuwAnalyseren` wordt hij echt opnieuw gemaakt.
+ */
+export async function runPlannerForVideo(
+  videoId: string,
+  options?: { reuseCharacterMap?: boolean; opnieuwAnalyseren?: boolean },
+) {
   const supabase = db();
 
   const { data: video, error } = await supabase
@@ -28,7 +37,7 @@ export async function runPlannerForVideo(videoId: string, options?: { reuseChara
   const vault = await loadVault({ theme: campaign?.theme ?? null });
 
   const characterMap =
-    options?.reuseCharacterMap && video.character_map
+    !options?.opnieuwAnalyseren && video.character_map
       ? video.character_map
       : await generateCharacterMap({ title: video.title, durationSeconds, transcript });
 

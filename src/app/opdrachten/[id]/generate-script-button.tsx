@@ -19,7 +19,7 @@ export function GenerateScriptButton({
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
-  const [aantal, setAantal] = useState(3);
+  const [aantal, setAantal] = useState(1);
   const [error, setError] = useState<string | null>(null);
   const [melding, setMelding] = useState<string | null>(null);
 
@@ -68,6 +68,9 @@ export function GenerateScriptButton({
         />
       </label>
       {versies > 0 && <span className="text-xs text-neutral-500">{versies} variant(en) bewaard</span>}
+      <span className="w-full text-xs text-neutral-500">
+        Elke variant is twee zware calls (bedenken + examineren) en telt mee in je Claude-limiet.
+      </span>
       {melding && <p className="w-full text-sm text-neutral-400">{melding}</p>}
       {error && <p className="w-full text-sm text-red-400">{error}</p>}
     </div>

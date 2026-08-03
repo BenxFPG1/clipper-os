@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { structuredCall } from '../claude';
-import { SCRIPT_EFFORT } from '../env';
+import { SCRIPT_EFFORT, SCRIPT_EXAMEN_EFFORT } from '../env';
 import { db } from '../supabase';
 import { loadVault, renderVaultForPrompt } from '../vault';
 import { STORYCRAFT } from '../vault/storycraft';
@@ -206,7 +206,7 @@ ${STORYCRAFT}\n\n${STORYSTIJLEN}\n\n${ONDERZOEK}${feedbackBlok}${stijlBlok}`,
     toolName: 'lever_verbeterd_script',
     toolDescription: 'Lever het volledige verbeterde script inclusief zelfkritiek.',
     maxTokens: 32000,
-    effort: SCRIPT_EFFORT,
+    effort: SCRIPT_EXAMEN_EFFORT,
     operation: 'scriptwriter_examen',
   });
 
