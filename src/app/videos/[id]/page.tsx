@@ -75,6 +75,12 @@ export default async function VideoDetailPage({ params }: { params: { id: string
               ' Let op: de framerate is nog niet gemeten, dus het project gaat uit van 25 fps — draai npm run project voor zekerheid.'}
           </p>
 
+          <div className="mt-3 rounded bg-neutral-900/60 px-3 py-2 text-xs text-neutral-400">
+            <span className="text-neutral-300">Openen in Premiere:</span> File → Import (Cmd+I) → kies de .xml.
+            Alle sequences verschijnen in een eigen bin. Verticaal maken gaat het snelst met Sequence → Auto
+            Reframe Sequence → 9:16; die volgt de spreker in beeld.
+          </div>
+
           <div className="mt-4 border-t border-neutral-800 pt-3">
             <h3 className="mb-2 text-sm uppercase tracking-wide text-neutral-500">Bronbestand erbij halen</h3>
             <BronDownloaden videoId={video.id} sourceUrl={video.source_url as string | null} />
