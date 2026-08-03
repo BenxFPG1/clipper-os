@@ -1,11 +1,24 @@
 import { Shot } from './index';
 
+export type Marker = {
+  /** Positie op de tijdlijn in seconden. */
+  start: number;
+  /** Eindpunt; met een eind krijg je een gekleurd bereik in plaats van een punt. */
+  end?: number;
+  naam: string;
+  notitie?: string;
+};
+
 export type ClipVoorProject = {
   nummer: number;
   titel: string;
   shots: Shot[];
   /** Volledige naam in Premiere; zonder dit wordt "01 - titel" gebruikt. */
   label?: string;
+  /** Eén doorlopend fragment i.p.v. losse shots (voor de overzichtssequence). */
+  doorlopend?: { start: number; end: number };
+  /** Markers op de tijdlijn: waar knippen, en wat er moet gebeuren. */
+  markers?: Marker[];
 };
 
 export type BronInfo = {
@@ -58,7 +71,9 @@ ${indent}</file>`;
       // Ids op basis van de plek in de lijst: twee varianten van dezelfde clip
       // hebben hetzelfde nummer, en dubbele ids weigert Premiere.
       const sid = seqIndex + 1;
-      const shots = [...clip.shots].sort((a, b) => a.volgorde - b.volgorde).filter((s) => s.end > s.start);
+      const shots = clip.doorlopend
+        ? [{ volgorde: 1, start: clip.doorlopend.start, end: clip.doorlopend.end, functie: 'bron', edit_notitie: '' } as Shot]
+        : [...clip.shots].sort((a, b) => a.volgorde - b.volgorde).filter((s) => s.end > s.start);
       let cursor = 0;
       const video: string[] = [];
       const audio: string[] = [];
@@ -97,6 +112,17 @@ ${fileNode('            ')}
       // De cuts staan op V2, met V1 leeg eronder. Zo houd je de onderste laag
       // vrij voor je eigen werk (b-roll, achtergrond, ondertitels) en kun je de
       // knippen erboven verschuiven zonder dat je iets anders raakt.
+      const markerXml = (clip.markers ?? [])
+        .map(
+          (m) => `        <marker>
+          <name>${xml(m.naam)}</name>
+          <comment>${xml(m.notitie ?? '')}</comment>
+          <in>${naarFrames(m.start)}</in>
+          <out>${m.end !== undefined ? naarFrames(m.end) : -1}</out>
+        </marker>`,
+        )
+        .join('\n');
+
       return `    <sequence id="seq-${sid}">
       <name>${xml(clip.label ?? `${String(clip.nummer).padStart(2, '0')} - ${clip.titel}`)}</name>
       <duration>${cursor}</duration>
@@ -118,6 +144,7 @@ ${audio.join('\n')}
           </track>
         </audio>
       </media>
+${markerXml}
     </sequence>`;
     })
     .join('\n');

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/supabase';
 import { bouwPremiereXml } from '@/lib/roughcut/fcpxml';
 import { Shot } from '@/lib/roughcut';
-import { maakVarianten } from '@/lib/roughcut/varianten';
+import { bouwSequences, type PlanClip } from '@/lib/roughcut/project-opbouw';
 
 /**
  * Downloadt het Premiere/Resolve-projectbestand (FCP7 XML) voor het nieuwste
@@ -22,7 +22,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
 
   const { data: video, error } = await supabase
     .from('videos')
-    .select('id, title, fps, breedte, hoogte')
+    .select('id, title, fps, breedte, hoogte, duration_seconds')
     .eq('id', params.id)
     .single();
   if (error || !video) {
@@ -52,21 +52,10 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
 
   // Per clip eerst de hoofdmontage, daarna de mechanische varianten. Zo staan
   // ze in Premiere netjes bij elkaar: 01, 01b, 01c, dan 02, enzovoort.
-  const sequences: { nummer: number; titel: string; shots: Shot[]; label: string }[] = [];
-  const letters = 'bcdefgh';
-  for (const [i, c] of clips.entries()) {
-    const nr = String(i + 1).padStart(2, '0');
-    sequences.push({ nummer: i + 1, titel: c.titel_intern, shots: c.shots, label: `${nr} - ${c.titel_intern}` });
-    if (!metVarianten) continue;
-    for (const [v, variant] of maakVarianten(c.shots).entries()) {
-      sequences.push({
-        nummer: i + 1,
-        titel: c.titel_intern,
-        shots: variant.shots,
-        label: `${nr}${letters[v] ?? 'x'} - ${c.titel_intern} — ${variant.naam}`,
-      });
-    }
-  }
+  const sequences = bouwSequences(clips as unknown as PlanClip[], {
+    metVarianten,
+    videoDuur: (video.duration_seconds as number | null) ?? null,
+  });
 
   const xml = bouwPremiereXml(
     veiligeTitel,

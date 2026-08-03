@@ -9,7 +9,7 @@ import { resolveBinary } from '../src/lib/ingest/binaries';
 import { ytdlpAuthArgs } from '../src/lib/ingest/youtube';
 import { Shot } from '../src/lib/roughcut';
 import { bouwPremiereXml } from '../src/lib/roughcut/fcpxml';
-import { maakVarianten } from '../src/lib/roughcut/varianten';
+import { bouwSequences, type PlanClip } from '../src/lib/roughcut/project-opbouw';
 
 /**
  * Maakt een Premiere/Resolve-project van een clip-plan: per clip een sequence
@@ -30,7 +30,7 @@ async function main() {
   const supabase = db();
   const { data: video, error } = await supabase
     .from('videos')
-    .select('id, title, source_url')
+    .select('id, title, source_url, duration_seconds')
     .eq('id', videoId)
     .single();
   if (error) throw error;
@@ -103,20 +103,9 @@ async function main() {
   const xml = bouwPremiereXml(
     veiligeTitel,
     { pad: bronPad, fps, breedte: stream.width, hoogte: stream.height },
-    // Zelfde opbouw als de download op de site: per clip de hoofdmontage plus
-    // de mechanische varianten (kort skelet, ander anker, part 1/2).
-    clips.flatMap((c, i) => {
-      const nr = String(i + 1).padStart(2, '0');
-      const letters = 'bcdefgh';
-      return [
-        { nummer: i + 1, titel: c.titel_intern, shots: c.shots, label: `${nr} - ${c.titel_intern}` },
-        ...maakVarianten(c.shots).map((v, n) => ({
-          nummer: i + 1,
-          titel: c.titel_intern,
-          shots: v.shots,
-          label: `${nr}${letters[n] ?? 'x'} - ${c.titel_intern} — ${v.naam}`,
-        })),
-      ];
+    bouwSequences(clips as unknown as PlanClip[], {
+      metVarianten: true,
+      videoDuur: (video.duration_seconds as number | null) ?? null,
     }),
   );
 

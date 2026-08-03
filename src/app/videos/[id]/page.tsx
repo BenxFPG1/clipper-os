@@ -77,7 +77,10 @@ export default async function VideoDetailPage({ params }: { params: { id: string
 
           <div className="mt-3 rounded bg-neutral-900/60 px-3 py-2 text-xs text-neutral-400">
             <span className="text-neutral-300">Openen in Premiere:</span> File → Import (Cmd+I) → kies de .xml.
-            Alle sequences verschijnen in een eigen bin. Verticaal maken gaat het snelst met Sequence → Auto
+            Alle sequences verschijnen in een eigen bin. Begin bij{' '}
+            <span className="text-neutral-300">00 - BRON met knippunten</span>: daar staat de hele video met een
+            marker op elk knippunt (welke clip, welke functie, wat de bedoeling is). De genummerde sequences
+            eronder zijn diezelfde knippen al gemaakt. Verticaal maken gaat het snelst met Sequence → Auto
             Reframe Sequence → 9:16; die volgt de spreker in beeld.
           </div>
 
