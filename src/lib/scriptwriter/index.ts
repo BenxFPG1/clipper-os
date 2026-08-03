@@ -6,9 +6,10 @@ import { loadVault, renderVaultForPrompt } from '../vault';
 import { STORYCRAFT } from '../vault/storycraft';
 import { STORYSTIJLEN } from '../vault/storystijlen';
 import { ONDERZOEK } from '../vault/onderzoek';
+import { EFFECTEN } from '../vault/effecten';
 
 export const SCRIPT_SCHEMA_VERSION = '1.0';
-export const SCRIPT_PROMPT_VERSION = 'script-3.0';
+export const SCRIPT_PROMPT_VERSION = 'script-3.1';
 
 export const scriptSchema = z.object({
   concept: z.string(),
@@ -42,12 +43,16 @@ export const scriptSchema = z.object({
         gesproken_tekst: z.string(),
         tekst_in_beeld: z.string().nullable(),
         edit_notitie: z.string(),
+        sfx: z.string().optional(),
+        beeld_effect: z.string().optional(),
+        effect_waarom: z.string().optional(),
       }),
     )
     .min(3)
     .refine((shots) => shots.some((s) => s.functie === 'payoff'), {
       message: 'De shotlist moet een payoff bevatten; zonder payoff is er geen verhaal.',
     }),
+  muziek: z.string().optional(),
   caption: z.object({ tiktok: z.string(), reels: z.string(), shorts: z.string() }),
   hashtags: z.array(z.string()),
   benodigdheden: z.array(z.string()),
@@ -88,6 +93,7 @@ Ambachtsregels:
 - Beat 1 is de hook in de eerste 0 tot 1,5 seconde: beweging in beeld, audio start mid-zin, tekst-overlay met de spanning. Geen aanloop, geen begroeting, geen logo.
 - Context maximaal één regel, direct na de hook.
 - De shotlist is per shot uitvoerbaar: wat zie je, wat wordt er gezegd, wat staat er in beeld, wat doet de editor.
+- Vul per shot "sfx" en "beeld_effect" met een slug uit de effectenvault (of "geen"), plus "effect_waarom": wat de ingreep voor de kijker doet. Vul "muziek" op scriptniveau. Hoogstens twee ingrepen per shot.
 - Tijdcodes lopen op binnen de nieuwe video.
 - Captions zijn vragen, geen beschrijvingen.
 - Respecteer de campagneregels; zet risico op "check_regels" bij twijfel.
@@ -177,7 +183,7 @@ ${JSON.stringify(brief.campaignRules ?? {}, null, 2)}
 === VAULT (onze gemeten kennis) ===
 ${renderVaultForPrompt(vault)}
 
-${STORYCRAFT}\n\n${STORYSTIJLEN}\n\n${ONDERZOEK}${scoutBlok}${feedbackBlok}${stijlBlok}`,
+${STORYCRAFT}\n\n${STORYSTIJLEN}\n\n${ONDERZOEK}\n\n${EFFECTEN}${scoutBlok}${feedbackBlok}${stijlBlok}`,
     schema: scriptSchema,
     toolName: 'lever_script',
     toolDescription: 'Lever het volledige script voor deze briefing.',
@@ -201,7 +207,7 @@ ${brief.briefing}
 === CAMPAGNEREGELS ===
 ${JSON.stringify(brief.campaignRules ?? {}, null, 2)}
 
-${STORYCRAFT}\n\n${STORYSTIJLEN}\n\n${ONDERZOEK}${feedbackBlok}${stijlBlok}`,
+${STORYCRAFT}\n\n${STORYSTIJLEN}\n\n${ONDERZOEK}\n\n${EFFECTEN}${feedbackBlok}${stijlBlok}`,
     schema: scriptSchema,
     toolName: 'lever_verbeterd_script',
     toolDescription: 'Lever het volledige verbeterde script inclusief zelfkritiek.',

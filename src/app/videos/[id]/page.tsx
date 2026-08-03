@@ -7,6 +7,7 @@ import { GeneratePlanButton } from './generate-plan-button';
 import { RenderPanel } from './render-panel';
 import { ArchiveButton } from '../archive-button';
 import { BronDownloaden } from './bron-downloaden';
+import { CaptionsDownload } from './captions-download';
 
 export const dynamic = 'force-dynamic';
 
@@ -84,6 +85,14 @@ export default async function VideoDetailPage({ params }: { params: { id: string
             staat per clip de hele briefing — hook-overlay, captions per platform, verplichte tags — en bij elke
             knip wat er letterlijk gezegd wordt. Verticaal maken gaat het snelst met Sequence → Auto Reframe
             Sequence → 9:16; die volgt de spreker in beeld.
+          </div>
+
+          <div className="mt-4 border-t border-neutral-800 pt-3">
+            <h3 className="mb-2 text-sm uppercase tracking-wide text-neutral-500">Ondertiteling</h3>
+            <CaptionsDownload
+              videoId={video.id}
+              clips={(latest.plan as ClipPlan).clips.map((c) => c.titel_intern)}
+            />
           </div>
 
           <div className="mt-4 border-t border-neutral-800 pt-3">

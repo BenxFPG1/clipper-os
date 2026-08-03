@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 export const SCHEMA_VERSION = '1.0';
 export const PROMPT_VERSION_CHARACTER_MAP = 'charmap-1.0';
-export const PROMPT_VERSION_PLAN = 'plan-2.0';
+export const PROMPT_VERSION_PLAN = 'plan-2.1';
 
 // ------------------------------------------------------- stap 1: character map
 export const sleutelmomentSchema = z.object({
@@ -47,6 +47,10 @@ export const shotSchema = z.object({
   functie: z.enum(['hook', 'setup', 'escalatie', 'barst', 'payoff', 'button']),
   transcript_fragment: z.string(),
   edit_notitie: z.string(),
+  // Optioneel: oudere plannen hebben deze velden niet en moeten blijven werken.
+  sfx: z.string().optional(),
+  beeld_effect: z.string().optional(),
+  effect_waarom: z.string().optional(),
 });
 
 export const clipSchema = z.object({
@@ -78,6 +82,7 @@ export const clipSchema = z.object({
     .min(2),
   risico: z.enum(['geen', 'check_regels']),
   waarom_dit_werkt: z.string(),
+  muziek: z.string().optional(),
 });
 
 export const clipPlanSchema = z.object({

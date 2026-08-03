@@ -10,6 +10,12 @@ export function ScriptWeergave({ script }: { script: Script }) {
         <p className="mt-2 text-sm text-neutral-400">
           Structuur <span className="font-mono">{script.structure_type}</span> · hook{' '}
           <span className="font-mono">{script.hook.type}</span>
+          {script.muziek && script.muziek !== 'geen' && (
+            <>
+              {' '}
+              · muziek <span className="font-mono">{script.muziek}</span>
+            </>
+          )}
           {script.risico === 'check_regels' && (
             <span className="ml-2 rounded bg-amber-900/60 px-2 py-0.5 text-xs text-amber-200">check regels</span>
           )}
@@ -51,6 +57,7 @@ export function ScriptWeergave({ script }: { script: Script }) {
                 <th className="py-1 pr-3">Beeld</th>
                 <th className="py-1 pr-3">Gesproken</th>
                 <th className="py-1 pr-3">In beeld</th>
+                <th className="py-1 pr-3">Effecten</th>
                 <th className="py-1">Edit</th>
               </tr>
             </thead>
@@ -65,6 +72,12 @@ export function ScriptWeergave({ script }: { script: Script }) {
                   <td className="py-1 pr-3">{shot.beeld}</td>
                   <td className="py-1 pr-3">{shot.gesproken_tekst}</td>
                   <td className="py-1 pr-3 text-neutral-400">{shot.tekst_in_beeld ?? '—'}</td>
+                  <td className="py-1 pr-3 text-neutral-400">
+                    {[shot.sfx, shot.beeld_effect].filter((x) => x && x !== 'geen').join(' · ') || '—'}
+                    {shot.effect_waarom && (
+                      <span className="block text-xs text-neutral-600">{shot.effect_waarom}</span>
+                    )}
+                  </td>
                   <td className="py-1 text-neutral-400">{shot.edit_notitie}</td>
                 </tr>
               ))}

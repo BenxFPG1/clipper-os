@@ -2,7 +2,12 @@ import type { ClipVoorProject, Marker } from './fcpxml';
 import type { Shot } from './index';
 import { maakVarianten } from './varianten';
 
-export type PlanShot = Shot & { transcript_fragment?: string };
+export type PlanShot = Shot & {
+  transcript_fragment?: string;
+  sfx?: string;
+  beeld_effect?: string;
+  effect_waarom?: string;
+};
 
 export type PlanClip = {
   titel_intern: string;
@@ -14,6 +19,7 @@ export type PlanClip = {
   caption?: { tiktok?: string; reels?: string; shorts?: string };
   verplichte_elementen?: string[];
   waarom_dit_werkt?: string;
+  muziek?: string;
 };
 
 /**
@@ -112,6 +118,7 @@ function briefingMarker(clip: PlanClip, variantToelichting?: string): Marker {
     clip.caption?.reels ? `CAPTION REELS: ${clip.caption.reels}` : null,
     clip.caption?.shorts ? `CAPTION SHORTS: ${clip.caption.shorts}` : null,
     clip.verplichte_elementen?.length ? `VERPLICHT: ${clip.verplichte_elementen.join(' · ')}` : null,
+    clip.muziek && clip.muziek !== 'geen' ? `MUZIEK: ${clip.muziek}` : null,
     clip.structure_type ? `STRUCTUUR: ${clip.structure_type}` : null,
     clip.waarom_dit_werkt ? `WAAROM: ${clip.waarom_dit_werkt}` : null,
   ].filter(Boolean);
@@ -137,6 +144,7 @@ function shotMarkers(shots: PlanShot[]): Marker[] {
       notitie: [
         shot.transcript_fragment ? `"${shot.transcript_fragment}"` : null,
         shot.edit_notitie,
+        effectRegel(shot),
         `bron ${fmt(shot.start)}–${fmt(shot.end)}`,
       ]
         .filter(Boolean)
@@ -146,6 +154,16 @@ function shotMarkers(shots: PlanShot[]): Marker[] {
   }
 
   return markers;
+}
+
+/** Geluid en beeldingreep op één regel, met de reden erachter. */
+function effectRegel(shot: PlanShot): string | null {
+  const delen = [
+    shot.sfx && shot.sfx !== 'geen' ? `SFX: ${shot.sfx}` : null,
+    shot.beeld_effect && shot.beeld_effect !== 'geen' ? `BEELD: ${shot.beeld_effect}` : null,
+  ].filter(Boolean);
+  if (delen.length === 0) return null;
+  return `${delen.join(' · ')}${shot.effect_waarom ? ` (${shot.effect_waarom})` : ''}`;
 }
 
 function fmt(seconden: number): string {
