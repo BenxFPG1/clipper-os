@@ -89,6 +89,9 @@ ${fileNode('            ')}
           </clipitem>`);
       }
 
+      // De cuts staan op V2, met V1 leeg eronder. Zo houd je de onderste laag
+      // vrij voor je eigen werk (b-roll, achtergrond, ondertitels) en kun je de
+      // knippen erboven verschuiven zonder dat je iets anders raakt.
       return `    <sequence id="seq-${clip.nummer}">
       <name>${xml(`${String(clip.nummer).padStart(2, '0')} - ${clip.titel}`)}</name>
       <duration>${cursor}</duration>
@@ -96,6 +99,10 @@ ${fileNode('            ')}
       <media>
         <video>
           <format><samplecharacteristics><rate><timebase>${tb}</timebase><ntsc>${ntsc}</ntsc></rate><width>${bron.breedte}</width><height>${bron.hoogte}</height></samplecharacteristics></format>
+          <track>
+            <enabled>TRUE</enabled>
+            <locked>FALSE</locked>
+          </track>
           <track>
 ${video.join('\n')}
           </track>

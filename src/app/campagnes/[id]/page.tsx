@@ -110,9 +110,18 @@ export default async function CampagnePage({ params }: { params: { id: string } 
                     toegevoegd {datumTijd(v.created_at)}
                   </div>
                 </div>
-                <div className="flex shrink-0 gap-2 text-xs">
+                <div className="flex shrink-0 items-center gap-2 text-xs">
                   <Stap af={heeftMap} label="characters" />
                   <Stap af={heeftPlan > 0} label={heeftPlan > 1 ? `plan (${heeftPlan}×)` : 'plan'} />
+                  {heeftPlan > 0 && (
+                    <a
+                      href={`/api/videos/${v.id}/project`}
+                      className="rounded border border-neutral-700 px-2 py-0.5 hover:bg-neutral-900"
+                      download
+                    >
+                      project ↓
+                    </a>
+                  )}
                 </div>
               </li>
             );
