@@ -6,6 +6,7 @@ import { PlanEditor } from './plan-editor';
 import { GeneratePlanButton } from './generate-plan-button';
 import { RenderPanel } from './render-panel';
 import { ArchiveButton } from '../archive-button';
+import { BronDownloaden } from './bron-downloaden';
 
 export const dynamic = 'force-dynamic';
 
@@ -46,20 +47,38 @@ export default async function VideoDetailPage({ params }: { params: { id: string
       <GeneratePlanButton videoId={video.id} hasPlan={Boolean(latest)} hasCharacterMap={Boolean(characterMap)} />
 
       {latest && (
-        <div className="flex flex-wrap items-center gap-3 rounded border border-neutral-800 p-4 text-sm">
-          <a
-            href={`/api/videos/${video.id}/project`}
-            className="rounded border border-neutral-700 px-3 py-1.5 hover:bg-neutral-900"
-            download
-          >
-            Download Premiere-project (.xml)
-          </a>
-          <span className="text-neutral-500">
-            Per clip een sequence met de cuts los op de tijdlijn. Zet de bron als <code>bron.mp4</code> naast de
-            .xml (volle kwaliteit: <code>npm run project -- {video.id}</code>), of relink in Premiere.
+        <div className="rounded border border-neutral-800 p-4">
+          <div className="flex flex-wrap items-center gap-3">
+            <a
+              href={`/api/videos/${video.id}/project`}
+              className="rounded bg-neutral-100 px-4 py-2 text-sm font-medium text-neutral-900"
+              download
+            >
+              Premiere-project downloaden ({(latest.plan as ClipPlan).clips.length} clips + varianten)
+            </a>
+            <span className="text-sm text-neutral-400">
+              Klaar in een seconde — de cuts staan op V2, met V1 vrij voor je eigen laag.
+            </span>
+            <a
+              href={`/api/videos/${video.id}/project?varianten=0`}
+              className="text-xs text-neutral-500 hover:text-neutral-300"
+              download
+            >
+              alleen de hoofdmontages
+            </a>
+          </div>
+          <p className="mt-2 text-sm text-neutral-500">
+            Elke clip is een eigen sequence met de knippen los op de tijdlijn, dus je verschuift ze zonder opnieuw
+            te renderen. Per clip zitten er gratis varianten bij — kort skelet, ander instappunt, en een part
+            1/part 2-knip — dus uit één plan komen drie tot vier keer zoveel posts.
             {!video.fps &&
-              ' Framerate is nog niet gemeten — draai eerst een montage of npm run project voor framerate-correcte cuts.'}
-          </span>
+              ' Let op: de framerate is nog niet gemeten, dus het project gaat uit van 25 fps — draai npm run project voor zekerheid.'}
+          </p>
+
+          <div className="mt-4 border-t border-neutral-800 pt-3">
+            <h3 className="mb-2 text-sm uppercase tracking-wide text-neutral-500">Bronbestand erbij halen</h3>
+            <BronDownloaden videoId={video.id} sourceUrl={video.source_url as string | null} />
+          </div>
         </div>
       )}
 
@@ -101,7 +120,14 @@ export default async function VideoDetailPage({ params }: { params: { id: string
       )}
 
       {latest && (
-        <RenderPanel videoId={params.id} aantalClips={(latest.plan as ClipPlan).clips.length} />
+        <details className="rounded border border-neutral-800 p-4">
+          <summary className="cursor-pointer text-sm text-neutral-500">
+            Liever kant-en-klare mp4&apos;s? (trager: renderen in de cloud)
+          </summary>
+          <div className="mt-3">
+            <RenderPanel videoId={params.id} aantalClips={(latest.plan as ClipPlan).clips.length} />
+          </div>
+        </details>
       )}
 
       {latest && (
