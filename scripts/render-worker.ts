@@ -163,7 +163,12 @@ async function verwerk(job: Job) {
     const { error: uploadError } = await supabase.storage
       .from(BUCKET)
       .upload(pad, await readFile(lokaal), { contentType: 'video/mp4', upsert: true });
-    if (uploadError) throw new Error(`Uploaden mislukt: ${uploadError.message}`);
+    if (uploadError) {
+      // Eén mislukte upload mag niet de hele montage weggooien: de andere
+      // clips zijn al gerenderd en bruikbaar.
+      console.log(`     upload mislukt, clip overgeslagen: ${uploadError.message}`);
+      continue;
+    }
 
     bestanden.push({ naam, pad, bytes: size });
     gedaan += 1;
@@ -175,8 +180,21 @@ async function verwerk(job: Job) {
   return bestanden;
 }
 
+/**
+ * Bestandsnaam voor de opslag. Supabase weigert sleutels met accenten of andere
+ * niet-ASCII tekens, dus normaliseren we die weg ("Eén" wordt "Een"). Eerder
+ * liep een hele montage van 33 minuten hierop stuk bij de laatste upload.
+ */
 function veilig(naam: string): string {
-  return naam.replace(/[^\p{L}\p{N} _-]/gu, '').slice(0, 45).trim().replace(/\s+/g, '-') || 'clip';
+  return (
+    naam
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^A-Za-z0-9 _-]/g, '')
+      .slice(0, 45)
+      .trim()
+      .replace(/\s+/g, '-') || 'clip'
+  );
 }
 
 requireEnv('SUPABASE_SERVICE_ROLE_KEY');
