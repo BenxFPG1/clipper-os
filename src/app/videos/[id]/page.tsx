@@ -80,8 +80,10 @@ export default async function VideoDetailPage({ params }: { params: { id: string
             Alle sequences verschijnen in een eigen bin. Begin bij{' '}
             <span className="text-neutral-300">00 - BRON met knippunten</span>: daar staat de hele video met een
             marker op elk knippunt (welke clip, welke functie, wat de bedoeling is). De genummerde sequences
-            eronder zijn diezelfde knippen al gemaakt. Verticaal maken gaat het snelst met Sequence → Auto
-            Reframe Sequence → 9:16; die volgt de spreker in beeld.
+            eronder zijn diezelfde knippen al gemaakt. Zet het Markers-paneel open (Window → Markers): daar
+            staat per clip de hele briefing — hook-overlay, captions per platform, verplichte tags — en bij elke
+            knip wat er letterlijk gezegd wordt. Verticaal maken gaat het snelst met Sequence → Auto Reframe
+            Sequence → 9:16; die volgt de spreker in beeld.
           </div>
 
           <div className="mt-4 border-t border-neutral-800 pt-3">
