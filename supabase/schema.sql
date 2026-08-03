@@ -380,3 +380,9 @@ alter table ai_jobs add column if not exists pogingen int not null default 0;
 alter table render_jobs add column if not exists voortgang text;
 alter table render_jobs add column if not exists gedaan int not null default 0;
 alter table render_jobs add column if not exists totaal int;
+
+-- Eén bronvideo per campagne: twee gelijktijdige runs (handmatig + cloud)
+-- voegden dezelfde video twee keer toe, met dubbel plan-werk tot gevolg.
+create unique index if not exists videos_bron_uniek
+  on videos (campaign_id, source_url)
+  where source_url is not null and archived_at is null;

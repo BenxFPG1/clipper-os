@@ -114,6 +114,10 @@ export function KanaalForm({
           <div className="text-xs uppercase tracking-wide text-amber-400/80">
             Bij de laatste check ging dit mis
           </div>
+          <p className="mt-1 text-xs text-neutral-500">
+            Video&apos;s zonder ondertiteling worden zelf getranscribeerd; dat duurt ongeveer een halve minuut
+            per minuut video. Zolang dat loopt staat de video er nog niet.
+          </p>
           <ul className="mt-1 space-y-0.5 text-sm text-neutral-300">
             {(fouten.length > 0 ? fouten : laatsteFouten).map((f, i) => (
               <li key={i}>{f}</li>
