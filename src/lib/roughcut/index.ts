@@ -72,9 +72,10 @@ export async function maakRuweMontage(opties: {
       // tv- en ios-profielen krijgen ze wel.
       '--extractor-args', 'youtube:player_client=default,tv',
       '-f',
-      // Met terugval naar wat er wél is: datacenter-IP's krijgen van YouTube
-      // vaak een beperktere formatenlijst dan een thuisverbinding.
-      'bv*[height<=1080]+ba/b[height<=1080]/b',
+      // Eerst H.264 (avc1): AV1 kan Premiere niet importeren en kost bovendien
+      // meer rekentijd bij het knippen. Met terugval naar wat er wél is, want
+      // datacenter-IP's krijgen van YouTube een beperktere formatenlijst.
+      'bv*[vcodec^=avc1][height<=1080]+ba/b[vcodec^=avc1][height<=1080]/bv*[height<=1080]+ba/b[height<=1080]/b',
       '--merge-output-format',
       'mp4',
       '-o',
