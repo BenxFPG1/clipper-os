@@ -9,6 +9,7 @@ import { resolveBinary } from '../src/lib/ingest/binaries';
 import { ytdlpAuthArgs } from '../src/lib/ingest/youtube';
 import { Shot } from '../src/lib/roughcut';
 import { bouwPremiereXml } from '../src/lib/roughcut/fcpxml';
+import { maakVarianten } from '../src/lib/roughcut/varianten';
 
 /**
  * Maakt een Premiere/Resolve-project van een clip-plan: per clip een sequence
@@ -99,13 +100,27 @@ async function main() {
   const xml = bouwPremiereXml(
     veiligeTitel,
     { pad: bronPad, fps, breedte: stream.width, hoogte: stream.height },
-    clips.map((c, i) => ({ nummer: i + 1, titel: c.titel_intern, shots: c.shots })),
+    // Zelfde opbouw als de download op de site: per clip de hoofdmontage plus
+    // de mechanische varianten (kort skelet, ander anker, part 1/2).
+    clips.flatMap((c, i) => {
+      const nr = String(i + 1).padStart(2, '0');
+      const letters = 'bcdefgh';
+      return [
+        { nummer: i + 1, titel: c.titel_intern, shots: c.shots, label: `${nr} - ${c.titel_intern}` },
+        ...maakVarianten(c.shots).map((v, n) => ({
+          nummer: i + 1,
+          titel: c.titel_intern,
+          shots: v.shots,
+          label: `${nr}${letters[n] ?? 'x'} - ${c.titel_intern} — ${v.naam}`,
+        })),
+      ];
+    }),
   );
 
   const xmlPad = join(map, `${veiligeTitel}.xml`);
   await writeFile(xmlPad, xml);
 
-  console.log(`\nKlaar: ${clips.length} sequences (${fps.toFixed(2)} fps, ${stream.width}x${stream.height})`);
+  console.log(`\nKlaar: ${clips.length} clips met varianten (${fps.toFixed(2)} fps, ${stream.width}x${stream.height})`);
   console.log(`  ${xmlPad}`);
   console.log(`  ${bronPad}`);
   console.log('\nPremiere: File → Import → kies de .xml. Resolve: File → Import Timeline.');
