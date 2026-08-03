@@ -30,6 +30,15 @@ export function BronDownloaden({ videoId, sourceUrl }: { videoId: string; source
 
   return (
     <div className="space-y-3 text-sm">
+      <ol className="list-inside list-decimal space-y-0.5 rounded bg-neutral-900/60 px-3 py-2 text-xs text-neutral-400">
+        <li>Open Terminal (Cmd+spatie, typ &quot;Terminal&quot;).</li>
+        <li>
+          Typ <code className="text-neutral-300">cd</code> met een spatie erachter, sleep de map uit Finder het
+          venster in, en druk op Enter.
+        </li>
+        <li>Plak het commando hieronder en druk op Enter. Klaar als de prompt terugkomt.</li>
+      </ol>
+
       <div>
         <div className="mb-1 flex items-center gap-2">
           <span className="text-neutral-400">Snelste weg — bron ophalen in de map van je project:</span>
@@ -48,7 +57,8 @@ export function BronDownloaden({ videoId, sourceUrl }: { videoId: string; source
       <div>
         <div className="mb-1 flex items-center gap-2">
           <span className="text-neutral-400">
-            Of alles in één keer (bron + .xml in ~/Movies/Clipper OS, met gemeten framerate):
+            Of alles in één keer — draai dit in de map van de tool (Documents/Antonie/Cursor/Clipping tool); je
+            krijgt bron + .xml samen in ~/Movies/Clipper OS, met de juiste framerate:
           </span>
           <button
             onClick={() => kopieer(viaTool, 'tool')}
