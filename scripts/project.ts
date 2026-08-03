@@ -65,10 +65,10 @@ async function main() {
         ...ytdlpAuthArgs(),
         '--no-warnings',
         '--extractor-args', 'youtube:player_client=default,tv',
-        // H.264 afdwingen: YouTube levert vaak AV1, en dat kan Premiere niet
-        // importeren ("unsupported video compression type av01"). Pas als er
-        // geen avc1 is, vallen we terug op wat er wél is.
-        '-f', 'bv*[vcodec^=avc1][height<=1080]+ba/b[vcodec^=avc1][height<=1080]/bv*[height<=1080]+ba/b[height<=1080]/b',
+        // H.264 én AAC afdwingen. YouTube levert standaard AV1-video en
+        // Opus-audio; Premiere weigert allebei ('unsupported compression type
+        // av01', en bij relinken 'does not match original type').
+        '-f', 'bv*[vcodec^=avc1][height<=1080]+ba[ext=m4a]/b[vcodec^=avc1][height<=1080]/bv*[height<=1080]+ba[ext=m4a]/b[height<=1080]/b',
         '--merge-output-format', 'mp4',
         '-o', bronPad,
         video.source_url,

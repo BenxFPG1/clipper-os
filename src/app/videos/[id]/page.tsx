@@ -86,7 +86,11 @@ export default async function VideoDetailPage({ params }: { params: { id: string
 
           <div className="mt-4 border-t border-neutral-800 pt-3">
             <h3 className="mb-2 text-sm uppercase tracking-wide text-neutral-500">Bronbestand erbij halen</h3>
-            <BronDownloaden videoId={video.id} sourceUrl={video.source_url as string | null} />
+            <BronDownloaden
+              videoId={video.id}
+              sourceUrl={video.source_url as string | null}
+              toolPad={process.cwd()}
+            />
           </div>
         </div>
       )}
