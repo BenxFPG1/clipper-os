@@ -98,6 +98,18 @@ export async function maakRuweMontage(opties: {
   const delen: string[] = [];
   let totaal = 0;
 
+  // Weten we vooraf hoe groot het mag worden, dan leggen we meteen een plafond
+  // op de bitrate. Zonder dat plafond encodeerden we het hele bestand een
+  // tweede keer als het te groot bleek — dubbel werk voor hetzelfde resultaat.
+  const totaleDuur = gesorteerd.reduce((som, sh) => som + Math.max(0, sh.end - sh.start), 0);
+  const plafond =
+    opties.maxBytes && totaleDuur > 0
+      ? Math.max(800_000, Math.floor(((opties.maxBytes * 8) / totaleDuur) * 0.85) - 192_000)
+      : null;
+  const bitrateGrens = plafond
+    ? ['-maxrate', String(plafond), '-bufsize', String(plafond * 2)]
+    : [];
+
   for (const [i, shot] of gesorteerd.entries()) {
     const duur = shot.end - shot.start;
     if (duur <= 0) continue;
@@ -118,7 +130,10 @@ export async function maakRuweMontage(opties: {
         ? []
         : [
             '-vf',
-            'split[a][b];[a]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=32:4[bg];[b]scale=1080:-2[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2,format=yuv420p',
+            // De achtergrond wordt tóch onscherp, dus blurren we op een klein
+            // formaat en schalen daarna op: visueel gelijk, veel minder werk
+            // dan een boxblur over 1080x1920 per frame.
+            'split[a][b];[a]scale=192:342:force_original_aspect_ratio=increase,crop=192:342,boxblur=6:2,scale=1080:1920[bg];[b]scale=1080:-2[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2,format=yuv420p',
           ];
 
     await run(resolveBinary('ffmpeg'), [
@@ -128,6 +143,9 @@ export async function maakRuweMontage(opties: {
       '-t', String(duur),
       ...schaal,
       '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20',
+      // CRF blijft leidend voor de kwaliteit; het plafond grijpt alleen in als
+      // een shot anders te groot zou worden voor de opslaglimiet.
+      ...bitrateGrens,
       // Uniforme audio en tijdstempels: zonder dit hoor of zie je tikjes en
       // haperingen op de naden tussen shots.
       '-c:a', 'aac', '-b:a', '192k', '-ar', '48000', '-ac', '2',

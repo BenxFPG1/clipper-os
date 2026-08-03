@@ -93,6 +93,11 @@ async function verwerk(job: Job) {
   if (teDoen.length === 0) throw new Error('Geen clips in het plan.');
 
   const werkmap = await mkdtemp(join(tmpdir(), 'clipper-render-'));
+
+  // De bron staat per video op een vaste plek, niet per opdracht. Vraag je
+  // eerst clip 3 en daarna clip 7 aan, dan wordt dezelfde video niet twee keer
+  // gedownload — en downloaden is verreweg de traagste stap.
+  const bronmap = join(tmpdir(), 'clipper-bron', job.video_id);
   const bestanden: { naam: string; pad: string; bytes: number }[] = [];
 
   let bronBewaard = false;
@@ -105,7 +110,7 @@ async function verwerk(job: Job) {
       sourceUrl: video.source_url,
       shots: clip.shots,
       outputPad: lokaal,
-      werkmap: join(werkmap, 'bron'),
+      werkmap: bronmap,
       maxBytes: MAX_BYTES,
       onVoortgang: (m) => console.log(`     ${m}`),
     });
