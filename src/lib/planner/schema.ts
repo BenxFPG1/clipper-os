@@ -83,6 +83,7 @@ export const clipSchema = z.object({
   risico: z.enum(['geen', 'check_regels']),
   waarom_dit_werkt: z.string(),
   muziek: z.string().optional(),
+  kader: z.enum(['staand', 'vullend', 'blur', 'origineel']).optional(),
 });
 
 export const clipPlanSchema = z.object({

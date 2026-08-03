@@ -10,6 +10,7 @@ import { ytdlpAuthArgs } from '../src/lib/ingest/youtube';
 import { Shot } from '../src/lib/roughcut';
 import { bouwPremiereXml } from '../src/lib/roughcut/fcpxml';
 import { bouwSequences, type PlanClip } from '../src/lib/roughcut/project-opbouw';
+import { detecteerStiltes } from '../src/lib/roughcut';
 
 /**
  * Maakt een Premiere/Resolve-project van een clip-plan: per clip een sequence
@@ -30,7 +31,7 @@ async function main() {
   const supabase = db();
   const { data: video, error } = await supabase
     .from('videos')
-    .select('id, title, source_url, duration_seconds')
+    .select('id, title, source_url, duration_seconds, transcript, stiltes')
     .eq('id', videoId)
     .single();
   if (error) throw error;
@@ -100,12 +101,24 @@ async function main() {
       if (e) console.log(`Broneigenschappen niet bewaard: ${e.message}`);
     });
 
+  // Stiltes één keer meten en bewaren; daarmee vallen de knippen op echte
+  // spraakpauzes in plaats van midden in een woord.
+  let stiltes = (video.stiltes as { start: number; end: number }[] | null) ?? null;
+  if (!stiltes?.length) {
+    console.log('Spraakpauzes meten…');
+    stiltes = await detecteerStiltes(bronPad);
+    await supabase.from('videos').update({ stiltes }).eq('id', videoId);
+    console.log(`  ${stiltes.length} pauzes gevonden`);
+  }
+
   const xml = bouwPremiereXml(
     veiligeTitel,
     { pad: bronPad, fps, breedte: stream.width, hoogte: stream.height },
     bouwSequences(clips as unknown as PlanClip[], {
       metVarianten: true,
       videoDuur: (video.duration_seconds as number | null) ?? null,
+      transcript: (video.transcript as never) ?? undefined,
+      stiltes: stiltes ?? undefined,
     }),
   );
 

@@ -1,9 +1,11 @@
 import { spawn } from 'node:child_process';
-import { mkdir, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, rename, rm, stat } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { resolveBinary } from '../ingest/binaries';
 import { ytdlpAuthArgs } from '../ingest/youtube';
+import { kaderFilter, standaardKader, type Kader } from './kader';
+import { snapShots, type SnapSegment, type Stilte } from './snap';
 
 export type Shot = {
   volgorde: number;
@@ -48,6 +50,11 @@ export async function maakRuweMontage(opties: {
   outputPad: string;
   werkmap: string;
   verticaal?: boolean;
+  /** Kadering; standaard 'staand' (geen blur, niets weggesneden). */
+  kader?: Kader;
+  /** Transcript en gemeten stiltes om knippen naar spraakgrenzen te schuiven. */
+  transcript?: SnapSegment[];
+  stiltes?: Stilte[];
   /** Maximale bestandsgrootte; groter wordt automatisch gecomprimeerd. */
   maxBytes?: number;
   onVoortgang?: (bericht: string) => void;
@@ -95,79 +102,61 @@ export async function maakRuweMontage(opties: {
     // Niet fataal: de montage zelf heeft de meting niet nodig.
   }
 
-  const gesorteerd = [...shots].sort((a, b) => a.volgorde - b.volgorde);
-  const delen: string[] = [];
-  let totaal = 0;
+  // Knippunten naar de spraakpauzes schuiven: het model noteert tijdcodes op de
+  // seconde, waardoor elke knip midden in een woord viel.
+  const gesnapt = snapShots(shots, opties.transcript ?? [], {
+    stiltes: opties.stiltes,
+    duur: bronInfo ? undefined : undefined,
+  });
+  const gesorteerd = [...gesnapt].sort((a, b) => a.volgorde - b.volgorde).filter((s) => s.end > s.start);
+  if (gesorteerd.length === 0) throw new Error('Alle shots hadden een ongeldige lengte.');
+
+  const totaleDuur = gesorteerd.reduce((som, sh) => som + (sh.end - sh.start), 0);
+  const totaal = totaleDuur;
 
   // Weten we vooraf hoe groot het mag worden, dan leggen we meteen een plafond
-  // op de bitrate. Zonder dat plafond encodeerden we het hele bestand een
-  // tweede keer als het te groot bleek — dubbel werk voor hetzelfde resultaat.
-  const totaleDuur = gesorteerd.reduce((som, sh) => som + Math.max(0, sh.end - sh.start), 0);
+  // op de bitrate in plaats van achteraf een tweede keer te encoderen.
   const plafond =
     opties.maxBytes && totaleDuur > 0
       ? Math.max(800_000, Math.floor(((opties.maxBytes * 8) / totaleDuur) * 0.85) - 192_000)
       : null;
-  const bitrateGrens = plafond
-    ? ['-maxrate', String(plafond), '-bufsize', String(plafond * 2)]
-    : [];
+  const bitrateGrens = plafond ? ['-maxrate', String(plafond), '-bufsize', String(plafond * 2)] : [];
 
-  for (const [i, shot] of gesorteerd.entries()) {
+  const kader: Kader = opties.verticaal === false ? 'origineel' : (opties.kader ?? 'staand');
+  const kaderArg = kaderFilter(kader);
+  const kaderKeten = kaderArg.length ? kaderArg[1] : 'null';
+
+  log(`Monteren in één doorloop (${gesorteerd.length} shots, kader: ${kader})…`);
+
+  // Alles in één ffmpeg-opdracht in plaats van losse bestanden aan elkaar
+  // plakken. Die constructie was de oorzaak van haperingen op de naden: elk
+  // deelbestand had zijn eigen tijdbasis en audio-aanloop. Nu wordt er één
+  // doorlopende stroom gebouwd, met een fade van 12 ms op elke naad zodat er
+  // geen klik hoorbaar is.
+  const delenFilter: string[] = [];
+  gesorteerd.forEach((shot, i) => {
     const duur = shot.end - shot.start;
-    if (duur <= 0) continue;
-
-    const deel = join(werkmap, `deel-${String(i).padStart(3, '0')}.mp4`);
-    log(`Shot ${i + 1}/${gesorteerd.length} knippen (${fmt(shot.start)}–${fmt(shot.end)}, ${shot.functie})…`);
-
-    // Opnieuw encoderen in plaats van kopiëren: los kopiëren knipt alleen op
-    // keyframes, waardoor je begin een halve seconde mis zit. Bij hooks is dat
-    // precies het verschil tussen wel en niet werken.
-    //
-    // Verticaal: géén harde crop meer. Center-croppen sneed sprekers weg die
-    // niet in het midden stonden. Nu: het volledige beeld gecentreerd, met een
-    // geblurde uitvergroting als achtergrond — niets gaat verloren en de
-    // definitieve uitsnede blijft een keuze van de editor.
-    const schaal =
-      opties.verticaal === false
-        ? []
-        : [
-            '-vf',
-            // De achtergrond wordt tóch onscherp, dus blurren we op een klein
-            // formaat en schalen daarna op: visueel gelijk, veel minder werk
-            // dan een boxblur over 1080x1920 per frame.
-            'split[a][b];[a]scale=192:342:force_original_aspect_ratio=increase,crop=192:342,boxblur=6:2,scale=1080:1920[bg];[b]scale=1080:-2[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2,format=yuv420p',
-          ];
-
-    await run(resolveBinary('ffmpeg'), [
-      '-y',
-      '-ss', String(shot.start),
-      '-i', bronBestand,
-      '-t', String(duur),
-      ...schaal,
-      '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20',
-      // CRF blijft leidend voor de kwaliteit; het plafond grijpt alleen in als
-      // een shot anders te groot zou worden voor de opslaglimiet.
-      ...bitrateGrens,
-      // Uniforme audio en tijdstempels: zonder dit hoor of zie je tikjes en
-      // haperingen op de naden tussen shots.
-      '-c:a', 'aac', '-b:a', '192k', '-ar', '48000', '-ac', '2',
-      '-avoid_negative_ts', 'make_zero',
-      '-r', '30',
-      deel,
-    ]);
-
-    delen.push(deel);
-    totaal += duur;
-  }
-
-  if (delen.length === 0) throw new Error('Alle shots hadden een ongeldige lengte.');
-
-  log('Shots aan elkaar plakken…');
-  const lijst = join(werkmap, 'delen.txt');
-  await writeFile(lijst, delen.map((d) => `file '${d.replace(/'/g, "'\\''")}'`).join('\n'));
+    delenFilter.push(
+      `[0:v]trim=start=${shot.start.toFixed(3)}:end=${shot.end.toFixed(3)},setpts=PTS-STARTPTS,fps=30,${kaderKeten},setsar=1[v${i}]`,
+    );
+    delenFilter.push(
+      `[0:a]atrim=start=${shot.start.toFixed(3)}:end=${shot.end.toFixed(3)},asetpts=PTS-STARTPTS,` +
+        `afade=t=in:st=0:d=0.012,afade=t=out:st=${Math.max(0, duur - 0.012).toFixed(3)}:d=0.012,` +
+        `aformat=sample_rates=48000:channel_layouts=stereo[a${i}]`,
+    );
+  });
+  const koppel = gesorteerd.map((_, i) => `[v${i}][a${i}]`).join('');
+  const filter = `${delenFilter.join(';')};${koppel}concat=n=${gesorteerd.length}:v=1:a=1[vuit][auit]`;
 
   await run(resolveBinary('ffmpeg'), [
-    '-y', '-f', 'concat', '-safe', '0', '-i', lijst,
-    '-c', 'copy',
+    '-y',
+    '-i', bronBestand,
+    '-filter_complex', filter,
+    '-map', '[vuit]', '-map', '[auit]',
+    '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20',
+    ...bitrateGrens,
+    '-c:a', 'aac', '-b:a', '192k', '-ar', '48000', '-ac', '2',
+    '-movflags', '+faststart',
     outputPad,
   ]);
 
@@ -198,10 +187,8 @@ export async function maakRuweMontage(opties: {
     }
   }
 
-  // Losse delen weggooien, bronvideo bewaren voor de volgende clip.
-  for (const d of delen) await rm(d, { force: true });
-  await rm(lijst, { force: true });
-
+  // Geen tussenbestanden meer op te ruimen: de montage wordt in één doorloop
+  // gebouwd. De bronvideo blijft staan voor de volgende clip.
   return { pad: outputPad, duur: Math.round(totaal), bron: bronInfo };
 }
 
@@ -218,11 +205,6 @@ export async function ruimBronnenOp(werkmap: string): Promise<number> {
   return opgeruimd;
 }
 
-function fmt(seconden: number): string {
-  const m = Math.floor(seconden / 60);
-  const s = Math.round(seconden % 60);
-  return `${m}:${String(s).padStart(2, '0')}`;
-}
 
 function run(command: string, args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -238,4 +220,47 @@ function run(command: string, args: string[]): Promise<string> {
       code === 0 ? resolve(stdout) : reject(new Error(`${command} exit ${code}: ${stderr.trim().slice(-400)}`)),
     );
   });
+}
+
+/**
+ * Zoekt de spraakpauzes in een bestand. Dit is het betrouwbaarste signaal voor
+ * schone knippen: het transcript is te grof (rollende ondertitelblokken van
+ * seconden), maar de audio liegt niet. Eén meting per video volstaat; het
+ * resultaat gaat de database in en wordt door zowel de montage als het
+ * Premiere-project gebruikt.
+ */
+export async function detecteerStiltes(
+  pad: string,
+  opties: { drempelDb?: number; minDuur?: number } = {},
+): Promise<{ start: number; end: number }[]> {
+  const drempel = opties.drempelDb ?? -32;
+  const minDuur = opties.minDuur ?? 0.1;
+
+  // ffmpeg schrijft de meetresultaten naar stderr, niet naar stdout — vandaar
+  // een eigen spawn die beide stromen meeneemt in plaats van run().
+  const uit = await new Promise<string>((klaar) => {
+    const kind = spawn(resolveBinary('ffmpeg'), [
+      '-i', pad,
+      '-af', `silencedetect=noise=${drempel}dB:d=${minDuur}`,
+      '-f', 'null', '-',
+    ]);
+    let alles = '';
+    kind.stdout.on('data', (d) => (alles += d));
+    kind.stderr.on('data', (d) => (alles += d));
+    kind.on('error', () => klaar(''));
+    kind.on('close', () => klaar(alles));
+  });
+
+  const stiltes: { start: number; end: number }[] = [];
+  let open: number | null = null;
+  for (const regel of uit.split('\n')) {
+    const start = regel.match(/silence_start:\s*([\d.]+)/);
+    if (start) open = Number(start[1]);
+    const eind = regel.match(/silence_end:\s*([\d.]+)/);
+    if (eind && open !== null) {
+      stiltes.push({ start: open, end: Number(eind[1]) });
+      open = null;
+    }
+  }
+  return stiltes;
 }

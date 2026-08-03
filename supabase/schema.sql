@@ -386,3 +386,7 @@ alter table render_jobs add column if not exists totaal int;
 create unique index if not exists videos_bron_uniek
   on videos (campaign_id, source_url)
   where source_url is not null and archived_at is null;
+
+-- Gemeten spraakpauzes per video: hiermee schuiven knippunten naar echte
+-- stiltes in plaats van midden in een woord.
+alter table videos add column if not exists stiltes jsonb;

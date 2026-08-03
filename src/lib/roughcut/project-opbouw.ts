@@ -1,6 +1,7 @@
 import type { ClipVoorProject, Marker } from './fcpxml';
 import type { Shot } from './index';
 import { maakVarianten } from './varianten';
+import { snapShots, type SnapSegment, type Stilte } from './snap';
 
 export type PlanShot = Shot & {
   transcript_fragment?: string;
@@ -35,8 +36,25 @@ export type PlanClip = {
  */
 export function bouwSequences(
   clips: PlanClip[],
-  opties: { metVarianten?: boolean; videoDuur?: number | null } = {},
+  opties: {
+    metVarianten?: boolean;
+    videoDuur?: number | null;
+    /** Transcript en gemeten stiltes: knippen naar spraakgrenzen schuiven. */
+    transcript?: SnapSegment[];
+    stiltes?: Stilte[];
+  } = {},
 ): ClipVoorProject[] {
+  // Dezelfde correctie als bij de montage: het model noteert tijdcodes op de
+  // seconde, waardoor knippen midden in een woord vallen. Zo krijgen het
+  // projectbestand en de mp4 exact dezelfde knippunten.
+  const gecorrigeerd = clips.map((c) => ({
+    ...c,
+    shots: snapShots(c.shots, opties.transcript ?? [], {
+      stiltes: opties.stiltes,
+      duur: opties.videoDuur,
+    }),
+  }));
+  clips = gecorrigeerd;
   const sequences: ClipVoorProject[] = [];
   const letters = 'bcdefgh';
 

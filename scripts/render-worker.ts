@@ -5,7 +5,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { db } from '../src/lib/supabase';
 import { requireEnv } from '../src/lib/env';
-import { Shot, maakRuweMontage } from '../src/lib/roughcut';
+import { Shot, maakRuweMontage, detecteerStiltes } from '../src/lib/roughcut';
+import { standaardKader } from '../src/lib/roughcut/kader';
+import { join as padJoin } from 'node:path';
 
 const BUCKET = 'montages';
 /** Ruim onder de 50MB-limiet van de gratis opslag; grotere clips slaan we over. */
@@ -83,6 +85,12 @@ async function verwerk(job: Job) {
   const video = job.videos;
   if (!video?.source_url) throw new Error('Video heeft geen bron-URL.');
 
+  const { data: videoRij } = await supabase
+    .from('videos')
+    .select('transcript, stiltes')
+    .eq('id', job.video_id)
+    .single();
+
   const { data: plan, error } = await supabase
     .from('clip_plans')
     .select('plan')
@@ -116,6 +124,10 @@ async function verwerk(job: Job) {
     .update({ totaal: teDoen.length, gedaan: 0, voortgang: 'bronvideo ophalen…' })
     .eq('id', job.id);
 
+  // Stiltes één keer meten per video: daarmee schuiven de knippen naar echte
+  // spraakpauzes in plaats van midden in een woord.
+  let stiltes = (videoRij?.stiltes as { start: number; end: number }[] | null) ?? null;
+
   let bronBewaard = false;
   let gedaan = 0;
   for (const { clip, nummer } of teDoen) {
@@ -132,9 +144,26 @@ async function verwerk(job: Job) {
       shots: clip.shots,
       outputPad: lokaal,
       werkmap: bronmap,
+      // Kader per clip: het plan mag kiezen, anders afwisselend zodat niet
+      // alles er hetzelfde uitziet.
+      kader:
+        (clip as { kader?: 'staand' | 'vullend' | 'blur' | 'origineel' }).kader ?? standaardKader(nummer - 1),
+      transcript: (videoRij?.transcript as never) ?? undefined,
+      stiltes: stiltes ?? undefined,
       maxBytes: MAX_BYTES,
       onVoortgang: (m) => console.log(`     ${m}`),
     });
+
+    // Na de eerste clip staat de bron er; meet dan de stiltes voor de rest.
+    if (!stiltes) {
+      try {
+        stiltes = await detecteerStiltes(padJoin(bronmap, 'bron.mp4'));
+        await supabase.from('videos').update({ stiltes }).eq('id', job.video_id);
+        console.log(`     ${stiltes.length} spraakpauzes gemeten en bewaard`);
+      } catch (e) {
+        console.log(`     stiltes meten mislukt: ${(e as Error).message.slice(0, 80)}`);
+      }
+    }
 
     // Gemeten broneigenschappen bewaren: daarmee genereert de site het
     // Premiere-projectbestand met de juiste framerate.

@@ -22,7 +22,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
 
   const { data: video, error } = await supabase
     .from('videos')
-    .select('id, title, fps, breedte, hoogte, duration_seconds')
+    .select('id, title, fps, breedte, hoogte, duration_seconds, transcript, stiltes')
     .eq('id', params.id)
     .single();
   if (error || !video) {
@@ -55,6 +55,8 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   const sequences = bouwSequences(clips as unknown as PlanClip[], {
     metVarianten,
     videoDuur: (video.duration_seconds as number | null) ?? null,
+    transcript: (video.transcript as never) ?? undefined,
+    stiltes: (video.stiltes as never) ?? undefined,
   });
 
   const xml = bouwPremiereXml(
