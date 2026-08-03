@@ -138,6 +138,7 @@ export async function haalNieuweBronvideos(): Promise<{
     }
     if (uniek.length === 0) continue;
 
+    const foutenVoorCampagne = fouten.length;
     try {
       // Alle bronnen van deze campagne samen; per bron een eigen foutmelding,
       // zodat één kapot kanaal de rest niet blokkeert.
@@ -213,7 +214,9 @@ export async function haalNieuweBronvideos(): Promise<{
 
       // Bewaar wat er misging bij déze campagne, zodat een verkeerde bron of
       // een mislukt transcript zichtbaar is in de UI en niet alleen in de logs.
-      const eigenFouten = fouten.filter((f) => f.startsWith(campagne.name as string) || f.includes(': geen transcript'));
+      // Alles wat tijdens déze campagne is bijgeschreven hoort erbij; filteren
+      // op de campagnenaam liet regels als "<titel>: geen transcript" vallen.
+      const eigenFouten = fouten.slice(foutenVoorCampagne);
       await supabase
         .from('campaigns')
         .update({

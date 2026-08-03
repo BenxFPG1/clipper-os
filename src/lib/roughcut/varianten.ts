@@ -27,7 +27,6 @@ export function maakVarianten(shots: Shot[]): ClipVariant[] {
   const hook = gesorteerd.find((s) => s.functie === 'hook') ?? gesorteerd[0];
   const payoff = [...gesorteerd].reverse().find((s) => s.functie === 'payoff');
   const barst = gesorteerd.find((s) => s.functie === 'barst');
-  const midden = gesorteerd.filter((s) => s !== hook && s !== payoff);
 
   // 1. Kort skelet: alleen de dragende beats. Korte clips worden vaker
   //    afgekeken, en afkijkratio weegt zwaar in de distributie.
@@ -62,14 +61,11 @@ export function maakVarianten(shots: Shot[]): ClipVariant[] {
     const deel1 = gesorteerd.slice(0, index);
     if (deel1.length >= 2) {
       varianten.push({
-        naam: 'part 1 (cliffhanger)',
-        toelichting: 'Stopt vóór de payoff. Post de payoff als part 2 zodra dit deel aanslaat.',
+        naam: 'part 1 — stopt vóór de onthulling',
+        toelichting:
+          'Zelfde opbouw als de hoofdmontage maar zonder payoff, zodat de comments om deel 2 vragen. ' +
+          'Deel 2 is de hoofdmontage zelf: die post je erna, met "deel 2" in de caption.',
         shots: hernummer(deel1),
-      });
-      varianten.push({
-        naam: 'part 2 (de payoff)',
-        toelichting: 'Begint bij het moment vlak vóór de onthulling. Alleen posten na part 1.',
-        shots: hernummer([...(barst && barst !== payoff ? [barst] : midden.slice(-1)), payoff]),
       });
     }
   }

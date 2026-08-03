@@ -88,6 +88,23 @@ ${indent}</file>`;
 
         const naam = xml(`${String(i + 1).padStart(2, '0')} ${shot.functie}${shot.edit_notitie ? ` — ${shot.edit_notitie.slice(0, 60)}` : ''}`);
 
+        // Video en audio aan elkaar knopen, zodat verschuiven of trimmen ze
+        // samen meeneemt. Zonder deze links behandelt Premiere ze als losse
+        // stukken en loopt het beeld uit de pas met het geluid.
+        const links = `            <link>
+              <linkclipref>c${sid}-v${i}</linkclipref>
+              <mediatype>video</mediatype>
+              <trackindex>1</trackindex>
+              <clipindex>${i + 1}</clipindex>
+            </link>
+            <link>
+              <linkclipref>c${sid}-a${i}</linkclipref>
+              <mediatype>audio</mediatype>
+              <trackindex>1</trackindex>
+              <clipindex>${i + 1}</clipindex>
+              <groupindex>1</groupindex>
+            </link>`;
+
         video.push(`          <clipitem id="c${sid}-v${i}">
             <name>${naam}</name>
             <enabled>TRUE</enabled>
@@ -96,6 +113,7 @@ ${indent}</file>`;
             <in>${inF}</in><out>${outF}</out>
 ${fileNode('            ')}
             <sourcetrack><mediatype>video</mediatype><trackindex>1</trackindex></sourcetrack>
+${links}
           </clipitem>`);
 
         audio.push(`          <clipitem id="c${sid}-a${i}">
@@ -106,6 +124,7 @@ ${fileNode('            ')}
             <in>${inF}</in><out>${outF}</out>
             <file id="bron-1"/>
             <sourcetrack><mediatype>audio</mediatype><trackindex>1</trackindex></sourcetrack>
+${links}
           </clipitem>`);
       }
 
@@ -130,10 +149,6 @@ ${fileNode('            ')}
       <media>
         <video>
           <format><samplecharacteristics><rate><timebase>${tb}</timebase><ntsc>${ntsc}</ntsc></rate><width>${bron.breedte}</width><height>${bron.hoogte}</height></samplecharacteristics></format>
-          <track>
-            <enabled>TRUE</enabled>
-            <locked>FALSE</locked>
-          </track>
           <track>
 ${video.join('\n')}
           </track>

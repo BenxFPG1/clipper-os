@@ -88,7 +88,7 @@ export function bouwSequences(
         nummer: i + 1,
         titel: c.titel_intern,
         shots: variant.shots,
-        label: `${nr}${letters[v] ?? 'x'} - ${c.titel_intern} — ${variant.naam}`,
+        label: `${nr}${letters[v] ?? 'x'} VARIANT ${variant.naam} - ${c.titel_intern}`,
         markers: [briefingMarker(c, variant.toelichting), ...shotMarkers(variant.shots)],
       });
     }

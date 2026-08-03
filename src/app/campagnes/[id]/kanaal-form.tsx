@@ -28,6 +28,7 @@ export function KanaalForm({
   const [plan, setPlan] = useState(autoPlan);
   const [busy, setBusy] = useState(false);
   const [melding, setMelding] = useState<string | null>(null);
+  const [fouten, setFouten] = useState<string[]>([]);
 
   function wijzig(i: number, waarde: string) {
     setLijst((l) => l.map((k, n) => (n === i ? waarde : k)));
@@ -65,6 +66,9 @@ export function KanaalForm({
     const json = await res.json().catch(() => ({}));
     setBusy(false);
     setMelding(res.ok ? (json.melding ?? 'Ophalen gestart.') : (json.error ?? 'Ophalen mislukt'));
+    // De problemen uit dit antwoord direct tonen: eerder stond er alleen
+    // "4 probleem(en) — zie hieronder" zonder dat er iets onder stond.
+    setFouten(Array.isArray(json.fouten) ? json.fouten : []);
     router.refresh();
   }
 
@@ -105,13 +109,13 @@ export function KanaalForm({
         </button>
       </div>
 
-      {laatsteFouten.length > 0 && (
+      {(fouten.length > 0 || laatsteFouten.length > 0) && (
         <div className="rounded border border-amber-900/60 bg-amber-950/20 p-3">
           <div className="text-xs uppercase tracking-wide text-amber-400/80">
             Bij de laatste check ging dit mis
           </div>
           <ul className="mt-1 space-y-0.5 text-sm text-neutral-300">
-            {laatsteFouten.map((f, i) => (
+            {(fouten.length > 0 ? fouten : laatsteFouten).map((f, i) => (
               <li key={i}>{f}</li>
             ))}
           </ul>
