@@ -8,6 +8,7 @@ import { requireEnv } from '../src/lib/env';
 import { spawn } from 'node:child_process';
 import { Shot, maakRuweMontage, detecteerStiltes, bepaalSegmenten, zorgVoorBron, type BurnOverlay } from '../src/lib/roughcut';
 import { maakTekstkaarten, tekenHookKaart, kleurUitThumbnail, kaartenMap, type Huisstijl } from '../src/lib/roughcut/tekstkaarten';
+import { lijnShotsUit } from '../src/lib/roughcut/uitlijnen';
 
 const BUCKET = 'montages';
 /** Ruim onder de 50MB-limiet van de gratis opslag; grotere clips slaan we over. */
@@ -106,6 +107,7 @@ async function verwerk(job: Job) {
     shots: Shot[];
     hook?: { tekst_overlay?: string };
     kader?: 'staand' | 'vullend' | 'blur' | 'origineel';
+    muziek?: string;
   }[];
 
   const teDoen =
@@ -177,11 +179,16 @@ async function verwerk(job: Job) {
 
     console.log(`  clip ${nummer}: ${clip.titel_intern}`);
 
-    // Definitieve segmenten eerst: geknipt op spraakpauzes, dode lucht eruit.
-    // Daarop rekenen we de kaartposities en de gezichtsfocus uit.
-    const segmenten = bepaalSegmenten(clip.shots, {
+    // Eerst het citaat terugvinden op woordniveau: dat legt de grenzen op de
+    // zin die het plan bedoelt, in plaats van op de dichtstbijzijnde stilte
+    // (die kan van de verkeerde zin zijn). Daarna pas segmenteren.
+    const { shots: uitgelijnd, uitgelijnd: aantalUitgelijnd } = await lijnShotsUit(bronPad, clip.shots, {
+      log: (m) => console.log(`     ${m}`),
+    });
+    const segmenten = bepaalSegmenten(uitgelijnd, {
       transcript: (videoRij?.transcript as never) ?? undefined,
       stiltes: stiltes ?? undefined,
+      uitgelijnd: aantalUitgelijnd > 0,
     });
 
     // Gezichtsfocus per segment (alleen waar het script geen focus opgeeft).
@@ -213,6 +220,14 @@ async function verwerk(job: Job) {
       werkmap: bronmap,
       kader: clip.kader ?? 'vullend',
       overlays,
+      // Eigen gelicenseerde audio uit assets/: muziekbed met ducking en
+      // stiltevensters, sfx op de shots die erom vragen. Ontbreekt een
+      // bestand, dan wordt het stil overgeslagen.
+      muziekPad:
+        clip.muziek && clip.muziek !== 'geen'
+          ? join(process.cwd(), 'assets', 'muziek', `${clip.muziek}.mp3`)
+          : undefined,
+      sfxMap: join(process.cwd(), 'assets', 'sfx'),
       maxBytes: MAX_BYTES,
       onVoortgang: (m) => console.log(`     ${m}`),
     });

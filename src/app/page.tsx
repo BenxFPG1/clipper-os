@@ -56,6 +56,7 @@ async function loadDashboard() {
 }
 
 import { ImportCampaignForm } from './import-campaign-form';
+import { ClipArmyBookmarklet } from './cliparmy-bookmarklet';
 
 export default async function DashboardPage() {
   const [{ campaigns, perStatus, totalViews, topClip, videosPer, briefsPer }, werk] = await Promise.all([
@@ -128,8 +129,9 @@ export default async function DashboardPage() {
 
       <section>
         <h2 className="mb-3 text-lg font-medium">Actieve campagnes</h2>
-        <div className="mb-3">
+        <div className="mb-3 space-y-2">
           <ImportCampaignForm />
+          <ClipArmyBookmarklet />
         </div>
         {campaigns.length === 0 ? (
           <Empty>Nog geen actieve campagne. Draai `npm run seed` om de voorbeeldcampagne te laden.</Empty>

@@ -196,7 +196,7 @@ export async function runScoutAgent(options?: { limitPerAccount?: number }): Pro
       const posts =
         platform === 'shorts'
           ? await searchYoutubeShorts(q.query, 12)
-          : await provider.searchPosts(q.query, platform, 30);
+          : await provider.searchPosts(q.query, platform, 50);
       if (platform !== 'shorts') {
         await logProviderUsage(provider.name, 'search_posts', 1, provider.costPerCallEur);
       }
@@ -232,7 +232,7 @@ export async function runScoutAgent(options?: { limitPerAccount?: number }): Pro
       // regio te filteren, dus ze leveren veel content die niets met ons
       // materiaal te maken heeft. De themazoekopdrachten met Nederlandse
       // termen zijn de relevante bron; dit is aanvulling.
-      const posts = await provider.fetchTrending(platform, 20);
+      const posts = await provider.fetchTrending(platform, 40);
       if (platform !== 'shorts') {
         await logProviderUsage(provider.name, 'fetch_trending', 1, provider.costPerCallEur);
       }
@@ -293,7 +293,7 @@ export async function runScoutAgent(options?: { limitPerAccount?: number }): Pro
   }
 
   outliers.sort((a, b) => b.outlier_score - a.outlier_score);
-  const teDecoderen = dedupeByUrl(outliers).slice(0, 25);
+  const teDecoderen = dedupeByUrl(outliers).slice(0, 35);
 
   // Decoderen is een verrijking, geen voorwaarde: als de Claude-call faalt
   // (bijvoorbeeld op credits), bewaren we de vondsten alsnog en decoderen we
@@ -523,7 +523,7 @@ const PLATFORMS: Platform[] = ['shorts', 'tiktok', 'reels'];
  * posttijd (zoals bij de snelle Shorts-listing, die al op deze week filtert),
  * dan zijn ruwe views binnen die set alsnog vergelijkbaar.
  */
-function pakUitschieters(posts: AccountPost[], maxHits = 8) {
+function pakUitschieters(posts: AccountPost[], maxHits = 12) {
   // Instagram geeft lang niet altijd een viewcount terug; likes zijn daar de
   // beste beschikbare maat voor hoe goed iets liep.
   const opLikes = posts.every((p) => p.views === null);

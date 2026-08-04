@@ -50,8 +50,8 @@ jobs:
           deno --version | head -1
 
       # Gezichtsdetectie voor het kadreren van de verticale uitsnede.
-      - name: Installeer OpenCV
-        run: pip3 install --quiet opencv-python-headless
+      - name: Installeer OpenCV en faster-whisper
+        run: pip3 install --quiet opencv-python-headless faster-whisper
 
       - name: Dependencies
         run: npm ci

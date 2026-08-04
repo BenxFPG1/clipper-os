@@ -13,6 +13,7 @@ export type Shot = {
   end: number;
   functie: string;
   edit_notitie?: string;
+  sfx?: string;
   /** Uit het plan: waar het verticale kader op richt. */
   focus?: 'links' | 'midden' | 'rechts';
   /** Gemeten gezichtspositie (0..1) uit de gezichtsdetectie. */
@@ -77,6 +78,10 @@ export async function maakRuweMontage(opties: {
   overlays?: BurnOverlay[];
   /** Shots zijn al door bepaalSegmenten gehaald; niet opnieuw knippen. */
   alGesegmenteerd?: boolean;
+  /** Muziekbed (pad naar eigen gelicenseerd bestand); geduckt onder de spraak. */
+  muziekPad?: string;
+  /** Map met sfx-bestanden (slug.wav/mp3); alleen aanwezige worden gemixt. */
+  sfxMap?: string;
   /** Maximale bestandsgrootte; groter wordt automatisch gecomprimeerd. */
   maxBytes?: number;
   onVoortgang?: (bericht: string) => void;
@@ -142,14 +147,79 @@ export async function maakRuweMontage(opties: {
     );
   });
   const koppel = gesorteerd.map((_, i) => `[v${i}][a${i}]`).join('');
-  let filter = `${delenFilter.join(';')};${koppel}concat=n=${gesorteerd.length}:v=1:a=1[vuit][auit]`;
+  let filter = `${delenFilter.join(';')};${koppel}concat=n=${gesorteerd.length}:v=1:a=1[vuit][aruw]`;
+
+  // Spraak schoonmaken: lage bromtonen eruit, ruis dempen, en naar een vast
+  // luidheidsniveau. Elke telefoonluidspreker klinkt hiermee beter en de
+  // clips van één account klinken hetzelfde.
+  filter += `;[aruw]highpass=f=75,afftdn=nf=-28,speechnorm=e=6.25:r=0.00001:l=1[aspraak]`;
+  let audioUit = 'aspraak';
+
+  // Tijdvensters op de uiteindelijke tijdlijn waarin de muziek volledig stil
+  // moet zijn: payoff-shots en shots met sfx 'stilte'. Dit is het
+  // muziek-valt-weg-moment dat de onthulling groot maakt.
+  const stilteVensters: { van: number; tot: number }[] = [];
+  {
+    let cursor = 0;
+    for (const shot of gesorteerd) {
+      const duur = shot.end - shot.start;
+      if (shot.functie === 'payoff' || shot.sfx === 'stilte') {
+        stilteVensters.push({ van: Math.max(0, cursor - 0.4), tot: cursor + duur });
+      }
+      cursor += duur;
+    }
+  }
+
+  const extraInvoer: string[] = [];
+  let extraIndex = gesorteerd.length;
+
+  if (opties.muziekPad && existsSync(opties.muziekPad)) {
+    extraInvoer.push('-stream_loop', '-1', '-i', opties.muziekPad);
+    const stilExpr = stilteVensters.length
+      ? stilteVensters.map((v) => `between(t\,${v.van.toFixed(2)}\,${v.tot.toFixed(2)})`).join('+')
+      : '0';
+    // Muziek zacht (0.18), hard op nul in de stiltevensters, en daarbovenop
+    // sidechain-ducking zodat hij onder spraak nog verder zakt.
+    filter +=
+      `;[${extraIndex}:a]aformat=sample_rates=48000:channel_layouts=stereo,` +
+      `volume='if(${stilExpr}\,0\,0.18)':eval=frame[muz]` +
+      `;[muz][${audioUit}]sidechaincompress=threshold=0.02:ratio=8:attack=40:release=400[muzged]` +
+      `;[${audioUit}][muzged]amix=inputs=2:duration=first:normalize=0[amix]`;
+    audioUit = 'amix';
+    extraIndex += 1;
+  }
+
+  // Geluidseffecten: elk aanwezig sfx-bestand klinkt op het begin van zijn shot.
+  if (opties.sfxMap) {
+    let cursor = 0;
+    for (const shot of gesorteerd) {
+      const duur = shot.end - shot.start;
+      const slug = shot.sfx;
+      if (slug && slug !== 'geen' && slug !== 'stilte') {
+        const kandidaten = [join(opties.sfxMap, `${slug}.wav`), join(opties.sfxMap, `${slug}.mp3`)];
+        const bestand = kandidaten.find((k) => existsSync(k));
+        if (bestand) {
+          extraInvoer.push('-i', bestand);
+          filter +=
+            `;[${extraIndex}:a]aformat=sample_rates=48000:channel_layouts=stereo,` +
+            `volume=0.5,adelay=${Math.round(cursor * 1000)}|${Math.round(cursor * 1000)}[fx${extraIndex}]` +
+            `;[${audioUit}][fx${extraIndex}]amix=inputs=2:duration=first:normalize=0[am${extraIndex}]`;
+          audioUit = `am${extraIndex}`;
+          extraIndex += 1;
+        }
+      }
+      cursor += duur;
+    }
+  }
+
+  invoer.push(...extraInvoer);
 
   // Tekstkaarten en hook in het beeld branden: elke PNG als extra invoer, met
   // een tijdvenster waarin hij zichtbaar is.
   const overlays = opties.overlays ?? [];
   let laatsteV = 'vuit';
   overlays.forEach((o, n) => {
-    const inputIndex = gesorteerd.length + n;
+    const inputIndex = extraIndex + n;
     invoer.push('-i', o.pad);
     const uitLabel = n === overlays.length - 1 ? 'vfinal' : `vo${n}`;
     filter += `;[${laatsteV}][${inputIndex}:v]overlay=0:0:enable='between(t\,${o.start.toFixed(2)}\,${o.end.toFixed(2)})'[${uitLabel}]`;
@@ -160,7 +230,7 @@ export async function maakRuweMontage(opties: {
     '-y',
     ...invoer,
     '-filter_complex', filter,
-    '-map', `[${laatsteV}]`, '-map', '[auit]',
+    '-map', `[${laatsteV}]`, '-map', `[${audioUit}]`,
     '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20',
     ...bitrateGrens,
     '-c:a', 'aac', '-b:a', '192k', '-ar', '48000', '-ac', '2',
@@ -238,9 +308,14 @@ export async function zorgVoorBron(
  */
 export function bepaalSegmenten(
   shots: Shot[],
-  opties: { transcript?: SnapSegment[]; stiltes?: Stilte[] },
+  opties: { transcript?: SnapSegment[]; stiltes?: Stilte[]; uitgelijnd?: boolean },
 ): (Shot & { subKnip?: boolean })[] {
-  const gesnapt = snapShots(shots, opties.transcript ?? [], { stiltes: opties.stiltes });
+  // Na citaat-uitlijning zitten de grenzen al op het woord; dan mag de
+  // stilte-snap alleen nog micro-corrigeren, niet naar een andere zin springen.
+  const gesnapt = snapShots(shots, opties.transcript ?? [], {
+    stiltes: opties.stiltes,
+    venster: opties.uitgelijnd ? 0.35 : undefined,
+  });
   const zonderDodeLucht = verwijderDodeLucht(gesnapt, opties.stiltes ?? []);
   return [...zonderDodeLucht].sort((a, b) => (a.volgorde ?? 0) - (b.volgorde ?? 0)).filter((s) => s.end > s.start);
 }

@@ -9,7 +9,7 @@ name: clipper-jobs
 on:
   schedule:
     - cron: '15 0,6,12,18 * * *' # tracking: 4x per dag
-    - cron: '30 5 * * *'         # scout: dagelijks ~7:30 NL
+    - cron: '30 5,14 * * *'      # scout: 2x per dag (~7:30 en ~16:30 NL)
     - cron: '30 7 * * 0'         # retro: zondag ~9:30 NL
   workflow_dispatch:
     inputs:
