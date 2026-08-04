@@ -93,3 +93,52 @@ function dichtstbij(
   }
   return beste;
 }
+
+/**
+ * Haalt dode lucht wég uit shots: interne stiltes langer dan `maxStilte`
+ * worden strak getrokken naar `laat` seconden. Dit is het verschil tussen een
+ * edit die loopt en een die sleept (editcraft).
+ *
+ * Uitzondering: payoff-shots blijven heel. Stilte vlak vóór of ín de
+ * onthulling is spanning, geen dode lucht.
+ */
+export function verwijderDodeLucht<T extends SnapShot & { volgorde?: number }>(
+  shots: T[],
+  stiltes: Stilte[],
+  opties: { maxStilte?: number; laat?: number } = {},
+): (T & { subKnip?: boolean })[] {
+  const maxStilte = opties.maxStilte ?? 0.8;
+  const laat = opties.laat ?? 0.3;
+  if (stiltes.length === 0) return shots;
+
+  const uit: (T & { subKnip?: boolean })[] = [];
+
+  for (const shot of shots) {
+    if (shot.functie === 'payoff') {
+      uit.push(shot);
+      continue;
+    }
+
+    // Stiltes die ruim bínnen het shot vallen; de randen zijn al door het
+    // snappen afgehandeld.
+    const binnen = stiltes
+      .filter((st) => st.start > shot.start + 0.4 && st.end < shot.end - 0.4 && st.end - st.start > maxStilte)
+      .sort((a, b) => a.start - b.start);
+
+    if (binnen.length === 0) {
+      uit.push(shot);
+      continue;
+    }
+
+    let cursor = shot.start;
+    for (const st of binnen) {
+      // Stukje vóór de stilte, plus een klein restje stilte als ademruimte.
+      uit.push({ ...shot, start: cursor, end: st.start + laat / 2, subKnip: cursor !== shot.start });
+      cursor = st.end - laat / 2;
+    }
+    uit.push({ ...shot, start: cursor, end: shot.end, subKnip: true });
+  }
+
+  // Volgorde opnieuw doornummeren zodat de rest van de keten er niets van merkt.
+  return uit.map((s, i) => ({ ...s, volgorde: i + 1 }));
+}

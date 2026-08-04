@@ -49,6 +49,10 @@ jobs:
           sudo unzip -oq /tmp/deno.zip -d /usr/local/bin
           deno --version | head -1
 
+      # Gezichtsdetectie voor het kadreren van de verticale uitsnede.
+      - name: Installeer OpenCV
+        run: pip3 install --quiet opencv-python-headless
+
       - name: Dependencies
         run: npm ci
 

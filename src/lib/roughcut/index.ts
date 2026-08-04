@@ -4,8 +4,8 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { resolveBinary } from '../ingest/binaries';
 import { ytdlpAuthArgs } from '../ingest/youtube';
-import { kaderFilter, standaardKader, type Kader } from './kader';
-import { snapShots, type SnapSegment, type Stilte } from './snap';
+import { focusNaarX, kaderKeten, type Kader } from './kader';
+import { snapShots, verwijderDodeLucht, type SnapSegment, type Stilte } from './snap';
 
 export type Shot = {
   volgorde: number;
@@ -13,6 +13,19 @@ export type Shot = {
   end: number;
   functie: string;
   edit_notitie?: string;
+  /** Uit het plan: waar het verticale kader op richt. */
+  focus?: 'links' | 'midden' | 'rechts';
+  /** Gemeten gezichtspositie (0..1) uit de gezichtsdetectie. */
+  focusX?: number;
+  beeld_effect?: string;
+};
+
+export type BurnOverlay = {
+  /** Absoluut pad naar een transparante PNG van 1080x1920. */
+  pad: string;
+  /** Zichtbaar van/tot, in seconden op de tijdlijn van de montage. */
+  start: number;
+  end: number;
 };
 
 export type BronEigenschappen = { fps: number; breedte: number; hoogte: number };
@@ -55,6 +68,15 @@ export async function maakRuweMontage(opties: {
   /** Transcript en gemeten stiltes om knippen naar spraakgrenzen te schuiven. */
   transcript?: SnapSegment[];
   stiltes?: Stilte[];
+  /**
+   * Tekstkaarten en hookoverlay om in het beeld te branden. Posities gelden op
+   * de uiteindelijke tijdlijn; gebruik de teruggegeven segmentlijst van een
+   * eerdere droge run of laat de aanroeper ze na afloop berekenen via
+   * `bepaalSegmenten`.
+   */
+  overlays?: BurnOverlay[];
+  /** Shots zijn al door bepaalSegmenten gehaald; niet opnieuw knippen. */
+  alGesegmenteerd?: boolean;
   /** Maximale bestandsgrootte; groter wordt automatisch gecomprimeerd. */
   maxBytes?: number;
   onVoortgang?: (bericht: string) => void;
@@ -64,34 +86,7 @@ export async function maakRuweMontage(opties: {
 
   if (shots.length === 0) throw new Error('Geen shots om te monteren.');
 
-  await mkdir(werkmap, { recursive: true });
-  const bronBestand = join(werkmap, 'bron.mp4');
-
-  // De bronvideo halen we één keer op en hergebruiken we voor alle clips uit
-  // dezelfde video; downloaden is verreweg de traagste stap.
-  if (!existsSync(bronBestand)) {
-    log('Bronvideo downloaden…');
-    await run(resolveBinary('yt-dlp'), [
-      ...ytdlpAuthArgs(),
-      '--no-warnings',
-      // YouTube geeft datacenter-IP's via de standaardclient geen formaten
-      // ("Requested format is not available", ongeacht de formaatkeuze). De
-      // tv- en ios-profielen krijgen ze wel.
-      '--extractor-args', 'youtube:player_client=default,tv',
-      '-f',
-      // H.264 (avc1) plus AAC-audio (m4a): YouTube levert standaard AV1 en
-      // Opus, en Premiere kan geen van beide lezen. Met terugval naar wat er
-      // wél is, want datacenter-IP's krijgen een beperktere formatenlijst.
-      'bv*[vcodec^=avc1][height<=1080]+ba[ext=m4a]/b[vcodec^=avc1][height<=1080]/bv*[height<=1080]+ba[ext=m4a]/b[height<=1080]/b',
-      '--merge-output-format',
-      'mp4',
-      '-o',
-      bronBestand,
-      sourceUrl,
-    ]);
-  } else {
-    log('Bronvideo staat al klaar.');
-  }
+  const bronBestand = await zorgVoorBron(sourceUrl, werkmap, log);
 
   // Eigenschappen van de bron meten; de aanroeper bewaart ze in de database
   // zodat het Premiere-projectbestand framerate-correct gegenereerd kan worden.
@@ -102,58 +97,62 @@ export async function maakRuweMontage(opties: {
     // Niet fataal: de montage zelf heeft de meting niet nodig.
   }
 
-  // Knippunten naar de spraakpauzes schuiven: het model noteert tijdcodes op de
-  // seconde, waardoor elke knip midden in een woord viel.
-  const gesnapt = snapShots(shots, opties.transcript ?? [], {
-    stiltes: opties.stiltes,
-    duur: bronInfo ? undefined : undefined,
-  });
-  const gesorteerd = [...gesnapt].sort((a, b) => a.volgorde - b.volgorde).filter((s) => s.end > s.start);
+  const gesorteerd = opties.alGesegmenteerd
+    ? [...shots].sort((a, b) => a.volgorde - b.volgorde).filter((s) => s.end > s.start)
+    : bepaalSegmenten(shots, opties);
   if (gesorteerd.length === 0) throw new Error('Alle shots hadden een ongeldige lengte.');
 
   const totaleDuur = gesorteerd.reduce((som, sh) => som + (sh.end - sh.start), 0);
   const totaal = totaleDuur;
 
-  // Weten we vooraf hoe groot het mag worden, dan leggen we meteen een plafond
-  // op de bitrate in plaats van achteraf een tweede keer te encoderen.
   const plafond =
     opties.maxBytes && totaleDuur > 0
       ? Math.max(800_000, Math.floor(((opties.maxBytes * 8) / totaleDuur) * 0.85) - 192_000)
       : null;
   const bitrateGrens = plafond ? ['-maxrate', String(plafond), '-bufsize', String(plafond * 2)] : [];
 
-  const kader: Kader = opties.verticaal === false ? 'origineel' : (opties.kader ?? 'staand');
-  const kaderArg = kaderFilter(kader);
-  const kaderKeten = kaderArg.length ? kaderArg[1] : 'null';
+  const kader: Kader = opties.verticaal === false ? 'origineel' : (opties.kader ?? 'vullend');
+  log(`Monteren in één doorloop (${gesorteerd.length} segmenten, kader: ${kader})…`);
 
-  log(`Monteren in één doorloop (${gesorteerd.length} shots, kader: ${kader})…`);
-
-  // Eén ffmpeg-opdracht, maar met de bron per shot apart als invoer én met
-  // -ss vóór -i. Dat laatste is essentieel: met alleen trim-filters decodeert
-  // ffmpeg voor élk shot de hele video vanaf het begin, wat op een runner met
-  // beperkt geheugen na een paar minuten wordt afgeschoten. Met een zoekactie
-  // per invoer springt hij direct naar het fragment.
+  // Bron per shot als eigen invoer met -ss vóór -i: ffmpeg springt dan direct
+  // naar het fragment in plaats van de hele video te decoderen (dat werd op de
+  // runner afgeschoten). Per shot een eigen kaderketen: focuspunt en punch-in
+  // verschillen per shot.
   const invoer: string[] = [];
   const delenFilter: string[] = [];
   gesorteerd.forEach((shot, i) => {
     const duur = shot.end - shot.start;
+    const zoom =
+      shot.beeld_effect === 'punch_in' ? 1.12 : shot.beeld_effect === 'snelle_zoom' ? 1.18 : 1;
+    const keten = kaderKeten(kader, { focusX: focusNaarX(shot.focus, shot.focusX), zoom });
     invoer.push('-ss', shot.start.toFixed(3), '-t', duur.toFixed(3), '-i', bronBestand);
-    delenFilter.push(`[${i}:v]setpts=PTS-STARTPTS,fps=30,${kaderKeten},setsar=1[v${i}]`);
+    delenFilter.push(`[${i}:v]setpts=PTS-STARTPTS,fps=30,${keten},setsar=1[v${i}]`);
     delenFilter.push(
       `[${i}:a]asetpts=PTS-STARTPTS,` +
-        // Korte fade op elke naad: zonder dit hoor je een klik op de overgang.
         `afade=t=in:st=0:d=0.012,afade=t=out:st=${Math.max(0, duur - 0.012).toFixed(3)}:d=0.012,` +
         `aformat=sample_rates=48000:channel_layouts=stereo[a${i}]`,
     );
   });
   const koppel = gesorteerd.map((_, i) => `[v${i}][a${i}]`).join('');
-  const filter = `${delenFilter.join(';')};${koppel}concat=n=${gesorteerd.length}:v=1:a=1[vuit][auit]`;
+  let filter = `${delenFilter.join(';')};${koppel}concat=n=${gesorteerd.length}:v=1:a=1[vuit][auit]`;
+
+  // Tekstkaarten en hook in het beeld branden: elke PNG als extra invoer, met
+  // een tijdvenster waarin hij zichtbaar is.
+  const overlays = opties.overlays ?? [];
+  let laatsteV = 'vuit';
+  overlays.forEach((o, n) => {
+    const inputIndex = gesorteerd.length + n;
+    invoer.push('-i', o.pad);
+    const uitLabel = n === overlays.length - 1 ? 'vfinal' : `vo${n}`;
+    filter += `;[${laatsteV}][${inputIndex}:v]overlay=0:0:enable='between(t\,${o.start.toFixed(2)}\,${o.end.toFixed(2)})'[${uitLabel}]`;
+    laatsteV = uitLabel;
+  });
 
   await run(resolveBinary('ffmpeg'), [
     '-y',
     ...invoer,
     '-filter_complex', filter,
-    '-map', '[vuit]', '-map', '[auit]',
+    '-map', `[${laatsteV}]`, '-map', '[auit]',
     '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20',
     ...bitrateGrens,
     '-c:a', 'aac', '-b:a', '192k', '-ar', '48000', '-ac', '2',
@@ -191,6 +190,51 @@ export async function maakRuweMontage(opties: {
   // Geen tussenbestanden meer op te ruimen: de montage wordt in één doorloop
   // gebouwd. De bronvideo blijft staan voor de volgende clip.
   return { pad: outputPad, duur: Math.round(totaal), bron: bronInfo };
+}
+
+/**
+ * Downloadt de bronvideo als hij er nog niet staat, in een formaat dat zowel
+ * ffmpeg als Premiere aankan (H.264 + AAC). Uitgesplitst zodat de worker de
+ * bron vóór de eerste clip kan klaarzetten voor stilte- en gezichtsmeting.
+ */
+export async function zorgVoorBron(
+  sourceUrl: string,
+  werkmap: string,
+  log: (m: string) => void = () => {},
+): Promise<string> {
+  await mkdir(werkmap, { recursive: true });
+  const bronBestand = join(werkmap, 'bron.mp4');
+
+  if (!existsSync(bronBestand)) {
+    log('Bronvideo downloaden…');
+    await run(resolveBinary('yt-dlp'), [
+      ...ytdlpAuthArgs(),
+      '--no-warnings',
+      '--extractor-args', 'youtube:player_client=default,tv',
+      '-f',
+      'bv*[vcodec^=avc1][height<=1080]+ba[ext=m4a]/b[vcodec^=avc1][height<=1080]/bv*[height<=1080]+ba[ext=m4a]/b[height<=1080]/b',
+      '--merge-output-format', 'mp4',
+      '-o', bronBestand,
+      sourceUrl,
+    ]);
+  } else {
+    log('Bronvideo staat al klaar.');
+  }
+  return bronBestand;
+}
+
+/**
+ * De definitieve segmentlijst van een montage: geknipt op spraakpauzes en met
+ * de dode lucht eruit. Zelfde volgorde en velden als het plan, dus de
+ * aanroeper kan hier kaartposities en ondertitels op uitrekenen.
+ */
+export function bepaalSegmenten(
+  shots: Shot[],
+  opties: { transcript?: SnapSegment[]; stiltes?: Stilte[] },
+): (Shot & { subKnip?: boolean })[] {
+  const gesnapt = snapShots(shots, opties.transcript ?? [], { stiltes: opties.stiltes });
+  const zonderDodeLucht = verwijderDodeLucht(gesnapt, opties.stiltes ?? []);
+  return [...zonderDodeLucht].sort((a, b) => (a.volgorde ?? 0) - (b.volgorde ?? 0)).filter((s) => s.end > s.start);
 }
 
 /** Ruimt gedownloade bronvideo's op; die zijn groot en makkelijk opnieuw op te halen. */

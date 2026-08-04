@@ -2,6 +2,7 @@ import { STORYCRAFT } from '../vault/storycraft';
 import { STORYSTIJLEN } from '../vault/storystijlen';
 import { ONDERZOEK } from '../vault/onderzoek';
 import { EFFECTEN } from '../vault/effecten';
+import { EDITCRAFT } from '../vault/editcraft';
 export const CHARACTER_MAP_SYSTEM = `Je bent een verhaalanalist. Je leest het volledige transcript van een lange video en brengt de narratieve structuur in kaart.
 
 Zoek NIET naar losse grappige momenten. Zoek naar PERSONEN en wat er over de volledige duur met ze gebeurt:
@@ -18,7 +19,7 @@ Regels:
 - Verzin niets dat niet in het transcript staat.`;
 
 export function planSystem(maxClips: number): string {
-  return (PLAN_SYSTEM + '\n\n' + STORYCRAFT + '\n\n' + STORYSTIJLEN + '\n\n' + ONDERZOEK + '\n\n' + EFFECTEN).replace('Lever 10 tot 25 clips', `Lever 10 tot ${maxClips} clips`);
+  return (PLAN_SYSTEM + '\n\n' + STORYCRAFT + '\n\n' + STORYSTIJLEN + '\n\n' + ONDERZOEK + '\n\n' + EFFECTEN + '\n\n' + EDITCRAFT).replace('Lever 10 tot 25 clips', `Lever 10 tot ${maxClips} clips`);
 }
 
 export const PLAN_SYSTEM = `Je bent een clip-strateeg. Je bouwt uit een lange bronvideo een plan voor short-form clips (TikTok/Reels/Shorts) die als mini-verhalen werken.
@@ -44,6 +45,7 @@ Harde eisen:
 - Captions zijn vragen, geen beschrijvingen.
 - Per shot vul je "sfx" en "beeld_effect" met een slug uit de effectenvault (of "geen"), plus "effect_waarom": wat de ingreep voor de kijker doet. Op clipniveau vul je "muziek".
 - Elke tijdsprong krijgt beeld_effect "tekstkaart", met in de edit_notitie de regel die op die kaart staat.
+- Vul per shot "focus" (links/midden/rechts) alleen als uit de context duidelijk is waar de kijker moet kijken (bijv. de reactie in plaats van de spreker); laat het anders weg, dan kadreert de montage automatisch op de gezichten.
 - Lever 10 tot 25 clips, gesorteerd op prioriteit (1 = sterkste).`;
 
 /**
@@ -74,7 +76,9 @@ ${STORYSTIJLEN}
 
 ${ONDERZOEK}
 
-${EFFECTEN}`;
+${EFFECTEN}
+
+${EDITCRAFT}`;
 }
 
 export function buildCharacterMapUser(input: {

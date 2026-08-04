@@ -5,9 +5,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { db } from '../src/lib/supabase';
 import { requireEnv } from '../src/lib/env';
-import { Shot, maakRuweMontage, detecteerStiltes } from '../src/lib/roughcut';
-import { standaardKader } from '../src/lib/roughcut/kader';
-import { join as padJoin } from 'node:path';
+import { spawn } from 'node:child_process';
+import { Shot, maakRuweMontage, detecteerStiltes, bepaalSegmenten, zorgVoorBron, type BurnOverlay } from '../src/lib/roughcut';
+import { maakTekstkaarten, tekenHookKaart, kleurUitThumbnail, kaartenMap } from '../src/lib/roughcut/tekstkaarten';
 
 const BUCKET = 'montages';
 /** Ruim onder de 50MB-limiet van de gratis opslag; grotere clips slaan we over. */
@@ -104,6 +104,8 @@ async function verwerk(job: Job) {
   const clips = ((plan.plan as { clips?: unknown[] }).clips ?? []) as {
     titel_intern: string;
     shots: Shot[];
+    hook?: { tekst_overlay?: string };
+    kader?: 'staand' | 'vullend' | 'blur' | 'origineel';
   }[];
 
   const teDoen =
@@ -137,6 +139,24 @@ async function verwerk(job: Job) {
   // spraakpauzes in plaats van midden in een woord.
   let stiltes = (videoRij?.stiltes as { start: number; end: number }[] | null) ?? null;
 
+  // Huisstijl van de campagne: eenmalig de accentkleur uit de thumbnail halen
+  // en bewaren, zodat kaarten en hook bij het merk horen.
+  const accent = await bepaalAccent(supabase, job.video_id, video.source_url);
+  const kaartMap = await kaartenMap(werkmap);
+
+  // Bron en stiltes vóór de eerste clip klaarzetten: anders mist clip 1 de
+  // spraakpauze-knippen en de gezichtsfocus die de rest wel krijgt.
+  const bronPad = await zorgVoorBron(video.source_url, bronmap, (m) => console.log(`  ${m}`));
+  if (!stiltes) {
+    try {
+      stiltes = await detecteerStiltes(bronPad);
+      await supabase.from('videos').update({ stiltes }).eq('id', job.video_id);
+      console.log(`  ${stiltes.length} spraakpauzes gemeten en bewaard`);
+    } catch (e) {
+      console.log(`  stiltes meten mislukt: ${(e as Error).message.slice(0, 80)}`);
+    }
+  }
+
   let bronBewaard = false;
   let gedaan = 0;
   for (const { clip, nummer } of teDoen) {
@@ -156,31 +176,46 @@ async function verwerk(job: Job) {
     const lokaal = join(werkmap, naam);
 
     console.log(`  clip ${nummer}: ${clip.titel_intern}`);
-    const montage = await maakRuweMontage({
-      sourceUrl: video.source_url,
-      shots: clip.shots,
-      outputPad: lokaal,
-      werkmap: bronmap,
-      // Kader per clip: het plan mag kiezen, anders afwisselend zodat niet
-      // alles er hetzelfde uitziet.
-      kader:
-        (clip as { kader?: 'staand' | 'vullend' | 'blur' | 'origineel' }).kader ?? standaardKader(nummer - 1),
+
+    // Definitieve segmenten eerst: geknipt op spraakpauzes, dode lucht eruit.
+    // Daarop rekenen we de kaartposities en de gezichtsfocus uit.
+    const segmenten = bepaalSegmenten(clip.shots, {
       transcript: (videoRij?.transcript as never) ?? undefined,
       stiltes: stiltes ?? undefined,
+    });
+
+    // Gezichtsfocus per segment (alleen waar het script geen focus opgeeft).
+    await vulGezichtsFocus(bronPad, segmenten);
+
+    // Kaarten en hook: subsegmenten (uit de dode-luchtsplitsing) krijgen geen
+    // eigen kaart, anders staat dezelfde kaart er twee keer.
+    const kaartSegmenten = segmenten.map((sgm) =>
+      (sgm as { subKnip?: boolean }).subKnip ? { ...sgm, edit_notitie: '', beeld_effect: undefined } : sgm,
+    );
+    const overlays: BurnOverlay[] = await maakTekstkaarten(
+      kaartSegmenten as never,
+      kaartMap,
+      `c${nummer}`,
+      accent ?? undefined,
+    );
+    const hookTekst = clip.hook?.tekst_overlay;
+    if (hookTekst) {
+      const hookPad = join(kaartMap, `c${nummer}-hook.png`);
+      await tekenHookKaart(hookTekst, hookPad, accent ?? undefined);
+      overlays.unshift({ pad: hookPad, start: 0, end: 2.6 });
+    }
+
+    const montage = await maakRuweMontage({
+      sourceUrl: video.source_url,
+      shots: segmenten,
+      alGesegmenteerd: true,
+      outputPad: lokaal,
+      werkmap: bronmap,
+      kader: clip.kader ?? 'vullend',
+      overlays,
       maxBytes: MAX_BYTES,
       onVoortgang: (m) => console.log(`     ${m}`),
     });
-
-    // Na de eerste clip staat de bron er; meet dan de stiltes voor de rest.
-    if (!stiltes) {
-      try {
-        stiltes = await detecteerStiltes(padJoin(bronmap, 'bron.mp4'));
-        await supabase.from('videos').update({ stiltes }).eq('id', job.video_id);
-        console.log(`     ${stiltes.length} spraakpauzes gemeten en bewaard`);
-      } catch (e) {
-        console.log(`     stiltes meten mislukt: ${(e as Error).message.slice(0, 80)}`);
-      }
-    }
 
     // Gemeten broneigenschappen bewaren: daarmee genereert de site het
     // Premiere-projectbestand met de juiste framerate.
@@ -236,6 +271,61 @@ async function verwerk(job: Job) {
  * niet-ASCII tekens, dus normaliseren we die weg ("Eén" wordt "Een"). Eerder
  * liep een hele montage van 33 minuten hierop stuk bij de laatste upload.
  */
+/** Accentkleur van de campagne: uit de database, of eenmalig uit de thumbnail. */
+async function bepaalAccent(
+  supabase: ReturnType<typeof db>,
+  videoId: string,
+  sourceUrl: string,
+): Promise<string | null> {
+  const { data: v } = await supabase.from('videos').select('campaign_id').eq('id', videoId).single();
+  if (!v?.campaign_id) return null;
+  const { data: c } = await supabase.from('campaigns').select('huisstijl').eq('id', v.campaign_id).single();
+  const bestaand = (c?.huisstijl as { accent?: string } | null)?.accent;
+  if (bestaand) return bestaand;
+
+  const kleur = await kleurUitThumbnail(sourceUrl);
+  if (kleur) {
+    await supabase
+      .from('campaigns')
+      .update({ huisstijl: { accent: kleur, bron: 'thumbnail' } })
+      .eq('id', v.campaign_id);
+    console.log(`  huisstijl bepaald uit thumbnail: ${kleur}`);
+  }
+  return kleur;
+}
+
+/**
+ * Meet per segment waar het grootste gezicht staat en zet dat als focusX,
+ * zodat de verticale uitsnede de spreker volgt in plaats van blind het midden
+ * te pakken. Draait via OpenCV (python); ontbreekt dat, dan blijft het midden.
+ */
+async function vulGezichtsFocus(bronPad: string, segmenten: Shot[]): Promise<void> {
+  const zonderScriptFocus = segmenten.filter((s) => !s.focus);
+  if (zonderScriptFocus.length === 0) return;
+
+  const tijden = zonderScriptFocus.map((s) => (s.start + s.end) / 2);
+  try {
+    const uit = await new Promise<string>((klaar, fout) => {
+      const kind = spawn('python3', ['scripts/gezichten.py', bronPad, JSON.stringify(tijden)]);
+      let stdout = '';
+      let stderr = '';
+      kind.stdout.on('data', (d) => (stdout += d));
+      kind.stderr.on('data', (d) => (stderr += d));
+      kind.on('error', fout);
+      kind.on('close', (code) => (code === 0 ? klaar(stdout) : fout(new Error(stderr.slice(-150)))));
+    });
+    const posities = JSON.parse(uit.trim() || '[]') as (number | null)[];
+    if (posities.length === 0) return;
+    zonderScriptFocus.forEach((s, i) => {
+      if (typeof posities[i] === 'number') s.focusX = posities[i] as number;
+    });
+    const gevonden = posities.filter((x) => x !== null).length;
+    console.log(`     gezichtsfocus: ${gevonden}/${posities.length} segmenten`);
+  } catch {
+    // Geen OpenCV of geen leesbare video: het midden is de nette terugval.
+  }
+}
+
 function veilig(naam: string): string {
   return (
     naam

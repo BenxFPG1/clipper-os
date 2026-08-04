@@ -7,6 +7,7 @@ import { STORYCRAFT } from '../vault/storycraft';
 import { STORYSTIJLEN } from '../vault/storystijlen';
 import { ONDERZOEK } from '../vault/onderzoek';
 import { EFFECTEN } from '../vault/effecten';
+import { EDITCRAFT } from '../vault/editcraft';
 
 export const SCRIPT_SCHEMA_VERSION = '1.0';
 export const SCRIPT_PROMPT_VERSION = 'script-3.1';
@@ -183,7 +184,7 @@ ${JSON.stringify(brief.campaignRules ?? {}, null, 2)}
 === VAULT (onze gemeten kennis) ===
 ${renderVaultForPrompt(vault)}
 
-${STORYCRAFT}\n\n${STORYSTIJLEN}\n\n${ONDERZOEK}\n\n${EFFECTEN}${scoutBlok}${feedbackBlok}${stijlBlok}`,
+${STORYCRAFT}\n\n${STORYSTIJLEN}\n\n${ONDERZOEK}\n\n${EFFECTEN}\n\n${EDITCRAFT}${scoutBlok}${feedbackBlok}${stijlBlok}`,
     schema: scriptSchema,
     toolName: 'lever_script',
     toolDescription: 'Lever het volledige script voor deze briefing.',
@@ -207,7 +208,7 @@ ${brief.briefing}
 === CAMPAGNEREGELS ===
 ${JSON.stringify(brief.campaignRules ?? {}, null, 2)}
 
-${STORYCRAFT}\n\n${STORYSTIJLEN}\n\n${ONDERZOEK}\n\n${EFFECTEN}${feedbackBlok}${stijlBlok}`,
+${STORYCRAFT}\n\n${STORYSTIJLEN}\n\n${ONDERZOEK}\n\n${EFFECTEN}\n\n${EDITCRAFT}${feedbackBlok}${stijlBlok}`,
     schema: scriptSchema,
     toolName: 'lever_verbeterd_script',
     toolDescription: 'Lever het volledige verbeterde script inclusief zelfkritiek.',

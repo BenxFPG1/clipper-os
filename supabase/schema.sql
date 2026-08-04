@@ -393,3 +393,6 @@ alter table videos add column if not exists stiltes jsonb;
 
 -- Hartslag van de montage-worker: blijft die uit, dan is de run afgebroken.
 alter table render_jobs add column if not exists hartslag timestamptz default now();
+
+-- Huisstijl per campagne (v1: accentkleur uit de thumbnail van de bron).
+alter table campaigns add column if not exists huisstijl jsonb;
