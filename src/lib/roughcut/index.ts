@@ -120,10 +120,18 @@ export async function maakRuweMontage(opties: {
   // verschillen per shot.
   const invoer: string[] = [];
   const delenFilter: string[] = [];
+  let vorigeZoom = 1;
   gesorteerd.forEach((shot, i) => {
     const duur = shot.end - shot.start;
-    const zoom =
+    let zoom =
       shot.beeld_effect === 'punch_in' ? 1.12 : shot.beeld_effect === 'snelle_zoom' ? 1.18 : 1;
+    // Jump-cut afdekken (editcraft): een knip binnen dezelfde opname is
+    // zichtbaar als een sprong. Wissel daarom van schaal (>10% verschil) op
+    // elke dode-luchtknip, zodat de sprong als bewuste punch-in leest.
+    if ((shot as { subKnip?: boolean }).subKnip && zoom === 1) {
+      zoom = vorigeZoom > 1.05 ? 1 : 1.11;
+    }
+    vorigeZoom = zoom;
     const keten = kaderKeten(kader, { focusX: focusNaarX(shot.focus, shot.focusX), zoom });
     invoer.push('-ss', shot.start.toFixed(3), '-t', duur.toFixed(3), '-i', bronBestand);
     delenFilter.push(`[${i}:v]setpts=PTS-STARTPTS,fps=30,${keten},setsar=1[v${i}]`);

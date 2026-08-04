@@ -25,4 +25,23 @@ KADER EN FOCUS — waar de kijker kijkt:
 
 CONSISTENTIE — de clip als merk:
 - Eén stijl per clip: zelfde ondertitelstijl, zelfde kaartstijl, zelfde kleuraccent. De kijker herkent een account aan de vormtaal vóór hij de naam leest.
-- Gebruik de huisstijl van de campagne (kleur, toon) in kaarten en accenten, niet de standaardsjabloon van de tool.`;
+- Gebruik de huisstijl van de campagne (kleur, font, toon) in kaarten en accenten, niet de standaardsjabloon van de tool.
+
+RITME ALS DRAMATURGIE (Hillier-Smith, editor Logan Paul, Streamy Best Editing 2020):
+- Trage cuts bouwen spanning, snelle cuts zíjn de payoff. Het ritme is niet constant maar volgt de emotie: versnellen naar het moment toe, en op het moment zelf ruimte geven.
+- Net te weinig tijd om het beeld helemaal te zien wekt nieuwsgierigheid: een shot dat een fractie te vroeg wegknipt trekt de kijker naar het volgende.
+- Elke knip, overgang en effect dient het verhaal. Een effect dat geen gevoel overbrengt is versiering en gaat eruit.
+- Geef terugkerende personen of momenten een eigen audio-cue: dezelfde muziek of hetzelfde geluid bij hetzelfde type moment leert de kijker wat er komt, zonder uitleg.
+- Geluid eerst: het juiste geluid op de juiste knip doet meer voor de beleving dan een visueel effect. Sound design is onderdeel van de vertelling, geen laag erbovenop.
+
+TALKING-HEAD EN JUMP-CUTS (gedocumenteerde interviewpraktijk):
+- Eerst de audio-edit: knip het gesprek zoals het moet klinken (tempo, inhoud), en repareer daarna het beeld. Andersom werken levert mooie beelden op met een slecht verhaal.
+- Elke weggeknipte stilte of verspreking geeft een zichtbare sprong. Dek die af: met een insert/b-roll van 2-5 seconden, een punch-in (>10% schaalverschil), of een wissel naar de reactie van de ander.
+- Een goed gedekt gesprek verdraagt dat meer dan de helft van de dialoog wegvalt zonder dat de kijker het merkt; ongedekt vallen diezelfde knippen meteen op.
+
+VISUELE AFWISSELING EN TEKST (short-form praktijk, o.a. Ryan Herrick):
+- Verander elke 2-4 seconden iets aan het beeld (knip, zoom, tekst, insert); langer dan 5-7 seconden statisch is een uitstapmoment.
+- Tekstanimaties clean en kort: tekst die aandacht naar zichzélf trekt in plaats van naar de inhoud is ruis. Eén tekststijl per clip.
+- Ondertiteling is verplicht: het overgrote deel van short-form wordt zonder geluid gestart. De ondertitel is bij muted afspelen je enige hook.
+
+BRONNEN: Forbes-interview Hayden Hillier-Smith (2023) en zijn Edit Like an Artist-materiaal; talking-head/b-roll-praktijkgidsen (captions.ai, jryze); short-form retentie-editing (AIR Media-Tech, Schedulala); Ryan Herrick short-form/tekstanimatie-materiaal. Verzameld aug 2026.`;

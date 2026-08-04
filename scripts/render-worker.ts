@@ -7,7 +7,7 @@ import { db } from '../src/lib/supabase';
 import { requireEnv } from '../src/lib/env';
 import { spawn } from 'node:child_process';
 import { Shot, maakRuweMontage, detecteerStiltes, bepaalSegmenten, zorgVoorBron, type BurnOverlay } from '../src/lib/roughcut';
-import { maakTekstkaarten, tekenHookKaart, kleurUitThumbnail, kaartenMap } from '../src/lib/roughcut/tekstkaarten';
+import { maakTekstkaarten, tekenHookKaart, kleurUitThumbnail, kaartenMap, type Huisstijl } from '../src/lib/roughcut/tekstkaarten';
 
 const BUCKET = 'montages';
 /** Ruim onder de 50MB-limiet van de gratis opslag; grotere clips slaan we over. */
@@ -141,7 +141,7 @@ async function verwerk(job: Job) {
 
   // Huisstijl van de campagne: eenmalig de accentkleur uit de thumbnail halen
   // en bewaren, zodat kaarten en hook bij het merk horen.
-  const accent = await bepaalAccent(supabase, job.video_id, video.source_url);
+  const stijl = await bepaalHuisstijl(supabase, job.video_id, video.source_url);
   const kaartMap = await kaartenMap(werkmap);
 
   // Bron en stiltes vóór de eerste clip klaarzetten: anders mist clip 1 de
@@ -196,12 +196,12 @@ async function verwerk(job: Job) {
       kaartSegmenten as never,
       kaartMap,
       `c${nummer}`,
-      accent ?? undefined,
+      stijl,
     );
     const hookTekst = clip.hook?.tekst_overlay;
     if (hookTekst) {
       const hookPad = join(kaartMap, `c${nummer}-hook.png`);
-      await tekenHookKaart(hookTekst, hookPad, accent ?? undefined);
+      await tekenHookKaart(hookTekst, hookPad, stijl);
       overlays.unshift({ pad: hookPad, start: 0, end: 2.6 });
     }
 
@@ -271,27 +271,31 @@ async function verwerk(job: Job) {
  * niet-ASCII tekens, dus normaliseren we die weg ("Eén" wordt "Een"). Eerder
  * liep een hele montage van 33 minuten hierop stuk bij de laatste upload.
  */
-/** Accentkleur van de campagne: uit de database, of eenmalig uit de thumbnail. */
-async function bepaalAccent(
+/**
+ * Huisstijl van de campagne: accentkleur en font. De kleur komt eenmalig uit
+ * de thumbnail; het font is instelbaar per campagne (archivo/bebas/inter) met
+ * archivo als stevige standaard.
+ */
+async function bepaalHuisstijl(
   supabase: ReturnType<typeof db>,
   videoId: string,
   sourceUrl: string,
-): Promise<string | null> {
+): Promise<Huisstijl> {
   const { data: v } = await supabase.from('videos').select('campaign_id').eq('id', videoId).single();
-  if (!v?.campaign_id) return null;
+  if (!v?.campaign_id) return { font: 'archivo' };
   const { data: c } = await supabase.from('campaigns').select('huisstijl').eq('id', v.campaign_id).single();
-  const bestaand = (c?.huisstijl as { accent?: string } | null)?.accent;
-  if (bestaand) return bestaand;
+  const bestaand = (c?.huisstijl as { accent?: string; font?: string } | null) ?? {};
+  if (bestaand.accent) return { accent: bestaand.accent, font: bestaand.font ?? 'archivo' };
 
   const kleur = await kleurUitThumbnail(sourceUrl);
   if (kleur) {
     await supabase
       .from('campaigns')
-      .update({ huisstijl: { accent: kleur, bron: 'thumbnail' } })
+      .update({ huisstijl: { ...bestaand, accent: kleur, bron: 'thumbnail' } })
       .eq('id', v.campaign_id);
     console.log(`  huisstijl bepaald uit thumbnail: ${kleur}`);
   }
-  return kleur;
+  return { accent: kleur, font: bestaand.font ?? 'archivo' };
 }
 
 /**

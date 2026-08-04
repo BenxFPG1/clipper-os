@@ -1,6 +1,35 @@
 import { mkdir, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { createCanvas } from '@napi-rs/canvas';
+import { createCanvas, GlobalFonts } from '@napi-rs/canvas';
+
+export type Huisstijl = { accent?: string | null; font?: string | null };
+
+/**
+ * Merk-fonts (OFL-licentie, meegeleverd in assets/fonts). Eén keer registreren;
+ * daarna kiest de huisstijl van de campagne welke gebruikt wordt.
+ */
+const FONTS: Record<string, { bestand: string; familie: string; gewicht: string }> = {
+  archivo: { bestand: 'ArchivoBlack-Regular.ttf', familie: 'Archivo Black', gewicht: '400' },
+  bebas: { bestand: 'BebasNeue-Regular.ttf', familie: 'Bebas Neue', gewicht: '400' },
+  inter: { bestand: 'Inter-Variable.ttf', familie: 'Inter', gewicht: '800' },
+};
+
+let fontsGeladen = false;
+function laadFonts(): void {
+  if (fontsGeladen) return;
+  fontsGeladen = true;
+  for (const f of Object.values(FONTS)) {
+    const pad = join(process.cwd(), 'assets', 'fonts', f.bestand);
+    if (existsSync(pad)) GlobalFonts.registerFromPath(pad, f.familie);
+  }
+}
+
+function fontVoor(stijl?: Huisstijl | null): { familie: string; gewicht: string } {
+  laadFonts();
+  const keuze = FONTS[stijl?.font ?? 'archivo'] ?? FONTS.archivo;
+  return { familie: keuze.familie, gewicht: keuze.gewicht };
+}
 import type { Overlay } from './fcpxml';
 import type { PlanShot } from './project-opbouw';
 
@@ -18,7 +47,7 @@ export async function maakTekstkaarten(
   shots: PlanShot[],
   map: string,
   voorvoegsel: string,
-  accent?: string,
+  stijl?: Huisstijl | null,
 ): Promise<Overlay[]> {
   const gesorteerd = [...shots].sort((a, b) => a.volgorde - b.volgorde);
   const overlays: Overlay[] = [];
@@ -32,7 +61,7 @@ export async function maakTekstkaarten(
     if (tekst) {
       teller += 1;
       const bestand = join(map, `${voorvoegsel}-${String(teller).padStart(2, '0')}.png`);
-      await tekenKaart(tekst, bestand, accent);
+      await tekenKaart(tekst, bestand, stijl);
       overlays.push({
         start: cursor,
         // Kaarten horen kort in beeld: lang genoeg om te lezen, kort genoeg om
@@ -81,14 +110,16 @@ function standaardRegel(notitie: string): string {
  * heeft geen tekstfilter, en een tekenbibliotheek met kant-en-klare binaries
  * werkt zowel hier als op de cloudrunner.
  */
-async function tekenKaart(tekst: string, pad: string, accent?: string): Promise<void> {
+async function tekenKaart(tekst: string, pad: string, stijl?: Huisstijl | null): Promise<void> {
+  const accent = stijl?.accent ?? undefined;
+  const font = fontVoor(stijl);
   const B = 1080;
   const H = 1920;
   const canvas = createCanvas(B, H);
   const ctx = canvas.getContext('2d');
 
   const fontgrootte = tekst.length > 24 ? 54 : 68;
-  ctx.font = `600 ${fontgrootte}px "Helvetica Neue", Helvetica, Arial, sans-serif`;
+  ctx.font = `${font.gewicht} ${fontgrootte}px "${font.familie}", "Helvetica Neue", Arial, sans-serif`;
   const breedte = ctx.measureText(tekst).width;
 
   const padding = 42;
@@ -133,14 +164,16 @@ async function tekenKaart(tekst: string, pad: string, accent?: string): Promise<
  * hoger dan een tijdkaart, want dit ís de belofte van de clip. Meerdere regels
  * worden zelf afgebroken.
  */
-export async function tekenHookKaart(tekst: string, pad: string, accent?: string): Promise<void> {
+export async function tekenHookKaart(tekst: string, pad: string, stijl?: Huisstijl | null): Promise<void> {
+  const accent = stijl?.accent ?? undefined;
+  const font = fontVoor(stijl);
   const B = 1080;
   const H = 1920;
   const canvas = createCanvas(B, H);
   const ctx = canvas.getContext('2d');
 
   const fontgrootte = 72;
-  ctx.font = `800 ${fontgrootte}px "Helvetica Neue", Helvetica, Arial, sans-serif`;
+  ctx.font = `${font.gewicht} ${fontgrootte}px "${font.familie}", "Helvetica Neue", Arial, sans-serif`;
 
   // Woorden over regels verdelen (max ~2 regels op deze grootte).
   const woorden = tekst.split(/\s+/);
