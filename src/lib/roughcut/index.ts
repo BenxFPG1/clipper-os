@@ -128,19 +128,20 @@ export async function maakRuweMontage(opties: {
 
   log(`Monteren in één doorloop (${gesorteerd.length} shots, kader: ${kader})…`);
 
-  // Alles in één ffmpeg-opdracht in plaats van losse bestanden aan elkaar
-  // plakken. Die constructie was de oorzaak van haperingen op de naden: elk
-  // deelbestand had zijn eigen tijdbasis en audio-aanloop. Nu wordt er één
-  // doorlopende stroom gebouwd, met een fade van 12 ms op elke naad zodat er
-  // geen klik hoorbaar is.
+  // Eén ffmpeg-opdracht, maar met de bron per shot apart als invoer én met
+  // -ss vóór -i. Dat laatste is essentieel: met alleen trim-filters decodeert
+  // ffmpeg voor élk shot de hele video vanaf het begin, wat op een runner met
+  // beperkt geheugen na een paar minuten wordt afgeschoten. Met een zoekactie
+  // per invoer springt hij direct naar het fragment.
+  const invoer: string[] = [];
   const delenFilter: string[] = [];
   gesorteerd.forEach((shot, i) => {
     const duur = shot.end - shot.start;
+    invoer.push('-ss', shot.start.toFixed(3), '-t', duur.toFixed(3), '-i', bronBestand);
+    delenFilter.push(`[${i}:v]setpts=PTS-STARTPTS,fps=30,${kaderKeten},setsar=1[v${i}]`);
     delenFilter.push(
-      `[0:v]trim=start=${shot.start.toFixed(3)}:end=${shot.end.toFixed(3)},setpts=PTS-STARTPTS,fps=30,${kaderKeten},setsar=1[v${i}]`,
-    );
-    delenFilter.push(
-      `[0:a]atrim=start=${shot.start.toFixed(3)}:end=${shot.end.toFixed(3)},asetpts=PTS-STARTPTS,` +
+      `[${i}:a]asetpts=PTS-STARTPTS,` +
+        // Korte fade op elke naad: zonder dit hoor je een klik op de overgang.
         `afade=t=in:st=0:d=0.012,afade=t=out:st=${Math.max(0, duur - 0.012).toFixed(3)}:d=0.012,` +
         `aformat=sample_rates=48000:channel_layouts=stereo[a${i}]`,
     );
@@ -150,7 +151,7 @@ export async function maakRuweMontage(opties: {
 
   await run(resolveBinary('ffmpeg'), [
     '-y',
-    '-i', bronBestand,
+    ...invoer,
     '-filter_complex', filter,
     '-map', '[vuit]', '-map', '[auit]',
     '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20',
