@@ -62,14 +62,19 @@ export function snapShots<T extends SnapShot>(
   // Stiltes zijn gemeten uit de audio zelf en dus precies; transcriptgrenzen
   // zijn een grove terugval (YouTube-ondertitels zijn rollende blokken van
   // meerdere seconden die elkaar overlappen).
-  const startGrenzen = stiltes.length
-    ? stiltes.map((s) => s.end) // spraak begint waar de stilte eindigt
-    : transcript.map((s) => s.start_seconds);
-  const eindGrenzen = stiltes.length
-    ? stiltes.map((s) => s.start) // spraak stopt waar de stilte begint
-    : transcript.map((s) => s.end_seconds);
-  const starts = [...startGrenzen].sort((a, b) => a - b);
-  const einden = [...eindGrenzen].sort((a, b) => a - b);
+  //
+  // Per kandidaat-knippunt onthouden we in wélke pauze hij ligt. Dat is nodig
+  // omdat de in- en uitloop het knippunt anders zó uit die pauze duwt dat je
+  // alsnog in het volgende woord knipt: gemeten -17,5 dB vlak na een knip die
+  // "op een stilte" stond.
+  const startKandidaten = stiltes.length
+    ? stiltes.map((s) => ({ punt: s.end, van: s.start, tot: s.end }))
+    : transcript.map((s) => ({ punt: s.start_seconds, van: s.start_seconds, tot: s.start_seconds }));
+  const eindKandidaten = stiltes.length
+    ? stiltes.map((s) => ({ punt: s.start, van: s.start, tot: s.end }))
+    : transcript.map((s) => ({ punt: s.end_seconds, van: s.end_seconds, tot: s.end_seconds }));
+  const starts = [...startKandidaten].sort((a, b) => a.punt - b.punt);
+  const einden = [...eindKandidaten].sort((a, b) => a.punt - b.punt);
 
   // Na citaat-uitlijning staan de grenzen op het woord, maar dat is niet
   // hetzelfde als op een stílte. Zit de dichtstbijzijnde pauze net buiten het
@@ -77,23 +82,25 @@ export function snapShots<T extends SnapShot>(
   // je als een half afgekapt woord. Daarom mag hij nu véél verder zoeken zolang
   // hij alleen maar verruimt: extra ademruimte kost niets, een afgekapt woord
   // wel.
-  const zoekVenster = opties.alleenVerruimen ? Math.max(venster, 1.6) : venster;
-
-  const woorden = opties.woordgrenzen ?? [];
+  const zoekVenster = opties.alleenVerruimen ? Math.max(venster, 2.5) : venster;
 
   return shots.map((shot) => {
-    // Eerst een echte spraakpauze zoeken; die klinkt het schoonst. Lukt dat
-    // niet, dan de dichtstbijzijnde woordgrens — nog altijd oneindig veel beter
-    // dan midden in een lettergreep.
-    const start =
-      dichtstbij(starts, shot.start, zoekVenster, 'eerder', opties.alleenVerruimen) ??
-      dichtstbij(woorden, shot.start, 0.6, 'eerder', opties.alleenVerruimen);
-    const eind =
-      dichtstbij(einden, shot.end, zoekVenster, 'later', opties.alleenVerruimen) ??
-      dichtstbij(woorden, shot.end, 0.6, 'later', opties.alleenVerruimen);
+    // Alleen echte spraakpauzes als knippunt. Woordgrenzen uit de transcriptie
+    // leken een goede terugval, maar die tijden zijn op een tiende seconde
+    // nauwkeurig: gemeten schoof een knip daardoor van -49 dB (stilte) naar
+    // -14 dB (volle spraak). Vind je geen pauze binnen het venster, dan blijft
+    // de uitgelijnde grens staan — die zit tenminste op het citaat.
+    const start = dichtstbij(starts, shot.start, zoekVenster, 'eerder', opties.alleenVerruimen);
+    const eind = dichtstbij(einden, shot.end, zoekVenster, 'later', opties.alleenVerruimen);
 
-    let nieuweStart = Math.max(0, (start ?? shot.start) - inloop);
-    let nieuwEind = Math.min(maxDuur, (eind ?? shot.end) + uitloop);
+    // Binnen de pauze blijven: hooguit tot de helft ervan, zodat er aan beide
+    // kanten stilte overblijft en de knip niet hoorbaar is.
+    let nieuweStart = start
+      ? Math.max(0, Math.max(start.punt - inloop, start.van + (start.tot - start.van) / 2))
+      : shot.start;
+    let nieuwEind = eind
+      ? Math.min(maxDuur, Math.min(eind.punt + uitloop, eind.tot - (eind.tot - eind.van) / 2))
+      : shot.end;
 
     // De gesproken tekst is heilig: eerder beginnen en later stoppen mag, maar
     // de grens naar binnen schuiven kost een woord uit het script.
@@ -113,25 +120,27 @@ export function snapShots<T extends SnapShot>(
  * kant wint bij gelijke afstand: aan het begin willen we liever te vroeg, aan
  * het einde liever te laat.
  */
+type Kandidaat = { punt: number; van: number; tot: number };
+
 function dichtstbij(
-  grenzen: number[],
+  grenzen: Kandidaat[],
   doel: number,
   venster: number,
   voorkeur: 'eerder' | 'later',
   /** Alleen grenzen accepteren die de kant op liggen die het shot verruimt. */
   alleenRichting = false,
-): number | null {
-  let beste: number | null = null;
+): Kandidaat | null {
+  let beste: Kandidaat | null = null;
   let besteAfstand = Infinity;
 
   for (const g of grenzen) {
-    const afstand = Math.abs(g - doel);
+    const afstand = Math.abs(g.punt - doel);
     if (afstand > venster) continue;
-    if (alleenRichting && (voorkeur === 'eerder' ? g > doel : g < doel)) continue;
+    if (alleenRichting && (voorkeur === 'eerder' ? g.punt > doel : g.punt < doel)) continue;
     const isBeter =
       afstand < besteAfstand - 0.001 ||
       (Math.abs(afstand - besteAfstand) <= 0.001 &&
-        (voorkeur === 'eerder' ? g < (beste ?? Infinity) : g > (beste ?? -Infinity)));
+        (voorkeur === 'eerder' ? g.punt < (beste?.punt ?? Infinity) : g.punt > (beste?.punt ?? -Infinity)));
     if (isBeter) {
       beste = g;
       besteAfstand = afstand;
