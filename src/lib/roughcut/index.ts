@@ -18,6 +18,12 @@ export type Shot = {
   focus?: 'links' | 'midden' | 'rechts';
   /** Gemeten gezichtspositie (0..1) uit de gezichtsdetectie. */
   focusX?: number;
+  /**
+   * Meerdere mensen ver uit elkaar in beeld, zonder duidelijke spreker. Dan mag
+   * er niet strak gekadreerd of ingezoomd worden: dan valt de uitsnede precies
+   * tussen twee hoofden in.
+   */
+  breed?: boolean;
   beeld_effect?: string;
 };
 
@@ -78,6 +84,13 @@ export async function maakRuweMontage(opties: {
   overlays?: BurnOverlay[];
   /** Shots zijn al door bepaalSegmenten gehaald; niet opnieuw knippen. */
   alGesegmenteerd?: boolean;
+  /**
+   * Ruisvloer in dBFS, gemeten tijdens de spraakpauzes van de bron. Boven de
+   * -45 dB zit er muziek of ruis onder de spraak en zetten we de
+   * ruisonderdrukking aan; daaronder is de bron schoon en zou hij alleen maar
+   * schade aanrichten.
+   */
+  ruisvloerDb?: number | null;
   /** Muziekbed (pad naar eigen gelicenseerd bestand); geduckt onder de spraak. */
   muziekPad?: string;
   /** Map met sfx-bestanden (slug.wav/mp3); alleen aanwezige worden gemixt. */
@@ -129,7 +142,13 @@ export async function maakRuweMontage(opties: {
   gesorteerd.forEach((shot, i) => {
     const duur = shot.end - shot.start;
     let zoom =
-      shot.beeld_effect === 'punch_in' ? 1.12 : shot.beeld_effect === 'snelle_zoom' ? 1.18 : 1;
+      shot.breed
+        ? 1
+        : shot.beeld_effect === 'punch_in'
+          ? 1.12
+          : shot.beeld_effect === 'snelle_zoom'
+            ? 1.18
+            : 1;
     // Jump-cut afdekken (editcraft): een knip binnen dezelfde opname is
     // zichtbaar als een sprong. Wissel daarom van schaal (>10% verschil) op
     // elke dode-luchtknip, zodat de sprong als bewuste punch-in leest.
@@ -149,10 +168,17 @@ export async function maakRuweMontage(opties: {
   const koppel = gesorteerd.map((_, i) => `[v${i}][a${i}]`).join('');
   let filter = `${delenFilter.join(';')};${koppel}concat=n=${gesorteerd.length}:v=1:a=1[vuit][aruw]`;
 
-  // Spraak schoonmaken: lage bromtonen eruit, ruis dempen, en naar een vast
-  // luidheidsniveau. Elke telefoonluidspreker klinkt hiermee beter en de
-  // clips van één account klinken hetzelfde.
-  filter += `;[aruw]highpass=f=75,afftdn=nf=-28,speechnorm=e=6.25:r=0.00001:l=1[aspraak]`;
+  // Spraak schoonmaken. Ruisonderdrukking (afftdn) is een grof middel: op
+  // schone studio-audio hoor je hem als een blikkerig, onderwaterachtig randje
+  // om de stem. Hij gaat daarom alleen aan als er werkelijk iets onder de
+  // spraak zit — muziek of ruis in de bron — gemeten aan de ruisvloer tijdens
+  // de spraakpauzes. Highpass en luidheid blijven altijd staan: die zijn
+  // onhoorbaar goed.
+  const ruis = opties.ruisvloerDb ?? null;
+  const ruisig = ruis !== null && ruis > -45;
+  filter += ruisig
+    ? `;[aruw]highpass=f=75,afftdn=nf=-22,speechnorm=e=6.25:r=0.00001:l=1[aspraak]`
+    : `;[aruw]highpass=f=75,speechnorm=e=5:r=0.00001:l=1[aspraak]`;
   let audioUit = 'aspraak';
 
   // Tijdvensters op de uiteindelijke tijdlijn waarin de muziek volledig stil
@@ -315,6 +341,7 @@ export function bepaalSegmenten(
   const gesnapt = snapShots(shots, opties.transcript ?? [], {
     stiltes: opties.stiltes,
     venster: opties.uitgelijnd ? 0.35 : undefined,
+    alleenVerruimen: opties.uitgelijnd,
   });
   const zonderDodeLucht = verwijderDodeLucht(gesnapt, opties.stiltes ?? []);
   return [...zonderDodeLucht].sort((a, b) => (a.volgorde ?? 0) - (b.volgorde ?? 0)).filter((s) => s.end > s.start);
@@ -391,4 +418,53 @@ export async function detecteerStiltes(
     }
   }
   return stiltes;
+}
+
+/**
+ * Meet hoe luid het is tijdens de spraakpauzes: de ruisvloer van de bron.
+ *
+ * Zit er muziek of ruis onder het gesprek, dan is het tussen de zinnen niet
+ * stil maar bijvoorbeeld -30 dB. Bij schone studio-audio zakt het naar -60 dB
+ * of lager. Dat verschil bepaalt of ruisonderdrukking nodig is — en die zetten
+ * we liever uit, want op schone spraak hoor je hem als een blikkerig randje.
+ *
+ * We meten een handvol pauzes in plaats van allemaal: dat is genoeg voor een
+ * betrouwbaar beeld en kost een fractie van de tijd.
+ */
+export async function meetRuisvloer(
+  pad: string,
+  stiltes: { start: number; end: number }[],
+): Promise<number | null> {
+  const bruikbaar = stiltes.filter((s) => s.end - s.start > 0.5).slice(0, 40);
+  if (bruikbaar.length === 0) return null;
+
+  // Verspreid over de video, zodat één stil begin niet het hele oordeel bepaalt.
+  const stap = Math.max(1, Math.floor(bruikbaar.length / 6));
+  const monsters = bruikbaar.filter((_, i) => i % stap === 0).slice(0, 6);
+
+  const metingen: number[] = [];
+  for (const s of monsters) {
+    const uit = await new Promise<string>((klaar) => {
+      const kind = spawn(resolveBinary('ffmpeg'), [
+        '-nostdin',
+        '-ss', (s.start + 0.15).toFixed(3),
+        '-t', Math.min(0.6, s.end - s.start - 0.25).toFixed(3),
+        '-i', pad,
+        '-af', 'volumedetect',
+        '-f', 'null', '-',
+      ], { stdio: ['ignore', 'pipe', 'pipe'] });
+      let alles = '';
+      kind.stdout.on('data', (d) => (alles += d));
+      kind.stderr.on('data', (d) => (alles += d));
+      kind.on('error', () => klaar(''));
+      kind.on('close', () => klaar(alles));
+    });
+    const m = uit.match(/mean_volume:\s*(-?[\d.]+) dB/);
+    if (m) metingen.push(Number(m[1]));
+  }
+
+  if (metingen.length === 0) return null;
+  // Mediaan: één pauze waarin iemand toevallig hoest telt niet mee.
+  const gesorteerd = [...metingen].sort((a, b) => a - b);
+  return Math.round(gesorteerd[Math.floor(gesorteerd.length / 2)] * 10) / 10;
 }

@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { db } from '../src/lib/supabase';
 import { requireEnv } from '../src/lib/env';
 import { spawn } from 'node:child_process';
-import { Shot, maakRuweMontage, detecteerStiltes, bepaalSegmenten, zorgVoorBron, type BurnOverlay } from '../src/lib/roughcut';
+import { Shot, maakRuweMontage, detecteerStiltes, meetRuisvloer, bepaalSegmenten, zorgVoorBron, type BurnOverlay } from '../src/lib/roughcut';
 import { maakTekstkaarten, tekenHookKaart, kleurUitThumbnail, kaartenMap, type Huisstijl } from '../src/lib/roughcut/tekstkaarten';
 import { lijnShotsUit } from '../src/lib/roughcut/uitlijnen';
 import { runEditAgent, beslissingenVoorClip } from '../src/lib/agents/edit';
@@ -174,6 +174,20 @@ async function verwerk(job: Job) {
     }
   }
 
+  // Zit er muziek of ruis onder de spraak? Alleen dan is ruisonderdrukking
+  // gerechtvaardigd; op schone bron maakt hij de stem juist slechter.
+  let ruisvloer: number | null = null;
+  try {
+    ruisvloer = await meetRuisvloer(bronPad, stiltes ?? []);
+    if (ruisvloer !== null) {
+      console.log(
+        `  ruisvloer ${ruisvloer} dB — ${ruisvloer > -45 ? 'muziek/ruis onder de spraak, isolatie aan' : 'schone bron, isolatie uit'}`,
+      );
+    }
+  } catch {
+    // Niet kunnen meten betekent: laat de audio met rust.
+  }
+
   let bronBewaard = false;
   let gedaan = 0;
   for (const { clip, nummer } of teDoen) {
@@ -269,6 +283,7 @@ async function verwerk(job: Job) {
           : undefined;
       })(),
       sfxMap: join(process.cwd(), 'assets', 'sfx'),
+      ruisvloerDb: ruisvloer,
       maxBytes: MAX_BYTES,
       onVoortgang: (m) => console.log(`     ${m}`),
     });
@@ -374,13 +389,27 @@ async function vulGezichtsFocus(bronPad: string, segmenten: Shot[]): Promise<voi
       kind.on('error', fout);
       kind.on('close', (code) => (code === 0 ? klaar(stdout) : fout(new Error(stderr.slice(-150)))));
     });
-    const posities = JSON.parse(uit.trim() || '[]') as (number | null)[];
+    type Meting = { x: number; breedte: number; personen: number; breed: boolean };
+    const posities = JSON.parse(uit.trim() || '[]') as (Meting | null)[];
     if (posities.length === 0) return;
+
+    let breedGeteld = 0;
     zonderScriptFocus.forEach((s, i) => {
-      if (typeof posities[i] === 'number') s.focusX = posities[i] as number;
+      const m = posities[i];
+      if (!m) return;
+      s.focusX = m.x;
+      // Twee mensen ver uit elkaar zonder duidelijke spreker: niet inzoomen en
+      // niet strak kadreren, anders staat de uitsnede tussen twee hoofden in.
+      if (m.breed) {
+        s.breed = true;
+        breedGeteld++;
+      }
     });
     const gevonden = posities.filter((x) => x !== null).length;
-    console.log(`     gezichtsfocus: ${gevonden}/${posities.length} segmenten`);
+    console.log(
+      `     spreker in beeld: ${gevonden}/${posities.length} segmenten` +
+        (breedGeteld ? `, ${breedGeteld}x meerdere personen (niet ingezoomd)` : ''),
+    );
   } catch {
     // Geen OpenCV of geen leesbare video: het midden is de nette terugval.
   }

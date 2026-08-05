@@ -8,8 +8,10 @@ export type Kader = (typeof KADERS)[number];
  *   focuspunt zodat de spreker in beeld blijft. Verticaal beeld hoort gevuld;
  *   zwarte vlakken lezen als onafgemaakt (editcraft).
  * - blur: geblurde uitvergroting als achtergrond. Alleen op verzoek.
- * - staand: letterbox met ruimte voor ondertiteling. Alleen als bewuste stijl,
- *   nooit automatisch — als losse keuze zag dit er onafgemaakt uit.
+ * - staand: bestond als letterbox met ruimte voor ondertiteling, maar zonder
+ *   ingebrande tekst blijft er een zwart vlak van duizend pixels over en leest
+ *   de clip als kapot. Rendert daarom nu hetzelfde als vullend; de edit-agent
+ *   kan hem niet meer kiezen.
  * - origineel: geen conversie (YouTube, of zelf kadreren in Premiere).
  */
 export function kaderKeten(
@@ -24,10 +26,6 @@ export function kaderKeten(
 
   if (kader === 'blur') {
     return 'split[a][b];[a]scale=192:342:force_original_aspect_ratio=increase,crop=192:342,boxblur=6:2,scale=1080:1920[bg];[b]scale=1080:-2[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2,format=yuv420p';
-  }
-
-  if (kader === 'staand') {
-    return 'scale=1080:-2,pad=1080:1920:(ow-iw)/2:300:color=#0B0B0F,format=yuv420p';
   }
 
   // vullend: hoogte vullen (maal de zoom voor punch-ins), dan de uitsnede op

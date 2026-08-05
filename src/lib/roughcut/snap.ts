@@ -30,6 +30,13 @@ export function snapShots<T extends SnapShot>(
     duur?: number | null;
     /** Gemeten spraakpauzes; veruit het betrouwbaarste signaal. */
     stiltes?: Stilte[];
+    /**
+     * Staan de grenzen al op het woord (citaat-uitlijning)? Dan mag het snappen
+     * het shot alleen nog verruimen, nooit inkorten. Anders knipt hij woorden
+     * weg die wél in het script staan — en dat is precies de klacht: de montage
+     * hoort het script letterlijk te volgen.
+     */
+    alleenVerruimen?: boolean;
   } = {},
 ): T[] {
   const stiltes = opties.stiltes ?? [];
@@ -56,8 +63,15 @@ export function snapShots<T extends SnapShot>(
     const start = dichtstbij(starts, shot.start, venster, 'eerder');
     const eind = dichtstbij(einden, shot.end, venster, 'later');
 
-    const nieuweStart = Math.max(0, (start ?? shot.start) - inloop);
-    const nieuwEind = Math.min(maxDuur, (eind ?? shot.end) + uitloop);
+    let nieuweStart = Math.max(0, (start ?? shot.start) - inloop);
+    let nieuwEind = Math.min(maxDuur, (eind ?? shot.end) + uitloop);
+
+    // De gesproken tekst is heilig: eerder beginnen en later stoppen mag, maar
+    // de grens naar binnen schuiven kost een woord uit het script.
+    if (opties.alleenVerruimen) {
+      nieuweStart = Math.min(nieuweStart, shot.start);
+      nieuwEind = Math.max(nieuwEind, shot.end);
+    }
 
     // Nooit een shot omdraaien of leegmaken door het schuiven.
     if (nieuwEind - nieuweStart < 0.4) return shot;

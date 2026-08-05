@@ -110,6 +110,33 @@ function standaardRegel(notitie: string): string {
  * heeft geen tekstfilter, en een tekenbibliotheek met kant-en-klare binaries
  * werkt zowel hier als op de cloudrunner.
  */
+
+/**
+ * Welke tekstkleur leest op deze achtergrond? Puur rekenwerk (relatieve
+ * luminantie), zodat een gele huisstijl zwarte letters krijgt en een donkerblauwe
+ * witte — in plaats van overal wit, wat op licht accent onleesbaar is.
+ */
+function tekstOp(kleur: string): string {
+  const hex = kleur.replace('#', '');
+  const n = hex.length === 3 ? hex.split('').map((c) => c + c).join('') : hex;
+  const [r, g, b] = [0, 2, 4].map((i) => parseInt(n.slice(i, i + 2), 16) / 255);
+  const lin = (c: number) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
+  const L = 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+  return L > 0.42 ? '#0A0A0E' : '#FFFFFF';
+}
+
+/**
+ * De kleuren van één kaart. Het accent van de campagne is hier de dráger van de
+ * kaart, niet een streepje eronder: met een donkere doos plus een dun lijntje
+ * zien de kaarten van twee verschillende merken er praktisch identiek uit, en
+ * dat was precies de klacht.
+ */
+function kaartkleuren(stijl?: Huisstijl | null): { vlak: string; tekst: string; rand: string | null } {
+  const accent = stijl?.accent;
+  if (!accent) return { vlak: 'rgba(10, 10, 14, 0.82)', tekst: '#FFFFFF', rand: null };
+  return { vlak: accent, tekst: tekstOp(accent), rand: tekstOp(accent) === '#FFFFFF' ? null : 'rgba(0,0,0,0.25)' };
+}
+
 async function tekenKaart(tekst: string, pad: string, stijl?: Huisstijl | null): Promise<void> {
   const accent = stijl?.accent ?? undefined;
   const font = fontVoor(stijl);
@@ -129,7 +156,8 @@ async function tekenKaart(tekst: string, pad: string, stijl?: Huisstijl | null):
   // Boven de onderste 20%: daar staan de caption en de knoppen van het platform.
   const y = H * 0.72;
 
-  ctx.fillStyle = 'rgba(10, 10, 14, 0.82)';
+  const kleuren = kaartkleuren(stijl);
+  ctx.fillStyle = kleuren.vlak;
   const r = 22;
   ctx.beginPath();
   ctx.moveTo(x + r, y);
@@ -144,14 +172,7 @@ async function tekenKaart(tekst: string, pad: string, stijl?: Huisstijl | null):
   ctx.closePath();
   ctx.fill();
 
-  // Accentlijn in de huisstijlkleur van de campagne, zodat de kaarten bij het
-  // merk horen in plaats van bij de tool.
-  if (accent) {
-    ctx.fillStyle = accent;
-    ctx.fillRect(x, y + balkH - 6, balkB, 6);
-  }
-
-  ctx.fillStyle = '#FFFFFF';
+  ctx.fillStyle = kleuren.tekst;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText(tekst, B / 2, y + balkH / 2 + 2);
@@ -192,7 +213,8 @@ export async function tekenHookKaart(tekst: string, pad: string, stijl?: Huissti
   const blokH = regels.length * regelH + 56;
   const y = H * 0.14;
 
-  ctx.fillStyle = 'rgba(10, 10, 14, 0.78)';
+  const kleuren = kaartkleuren(stijl);
+  ctx.fillStyle = kleuren.vlak;
   const breedste = Math.max(...regels.map((r) => ctx.measureText(r).width));
   const blokB = Math.min(B - 80, breedste + 96);
   const x = (B - blokB) / 2;
@@ -210,12 +232,7 @@ export async function tekenHookKaart(tekst: string, pad: string, stijl?: Huissti
   ctx.closePath();
   ctx.fill();
 
-  if (accent) {
-    ctx.fillStyle = accent;
-    ctx.fillRect(x, y + blokH - 7, blokB, 7);
-  }
-
-  ctx.fillStyle = '#FFFFFF';
+  ctx.fillStyle = kleuren.tekst;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   regels.forEach((regel, i) => {

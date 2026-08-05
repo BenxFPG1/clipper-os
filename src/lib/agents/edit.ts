@@ -11,7 +11,7 @@ const editSchema = z.object({
   clips: z.array(
     z.object({
       clip_nummer: z.number().int().min(1),
-      kader: z.enum(['vullend', 'blur', 'staand', 'origineel']),
+      kader: z.enum(['vullend', 'blur', 'origineel']),
       muziek: z.enum(['geen', 'spanningsbed', 'opbouw', 'luchtig']),
       shots: z.array(
         z.object({
@@ -46,6 +46,7 @@ Werk de zeven stappen af in volgorde en denk per shot:
 - Wie moet de kijker zien: de spreker of de reactie? Zet focus op "auto" als de gezichtsdetectie het mag bepalen, en kies expliciet links/midden/rechts als het script of de inhoud iets anders vraagt (een reactie, een object).
 - Verdient dit shot een ingreep, of redt het zich? Hoogstens twee ingrepen per shot; een ingreep zonder functie kost aandacht.
 - Is dit een tijdsprong? Dan verplicht een tekstkaart met de sprong erop.
+- Kader: verticaal beeld hoort gevuld. "vullend" is de norm; "blur" alleen als de uitsnede echt iets belangrijks afsnijdt (twee mensen naast elkaar, tekst in beeld). Zwarte balken bestaan niet.
 - Waar valt de muziek weg? Op de payoff of een vragende beat — dat is het moment dat je groot maakt.
 
 Sluit per clip af met de eindcontrole: benoem de zwakste plek van de montage die je zojuist hebt ontworpen. Niet "ziet er goed uit" — een concreet zwak punt.`;
