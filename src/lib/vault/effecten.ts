@@ -82,8 +82,7 @@ BEELD (veld "beeld_effect"):
 - split_screen: twee reacties tegelijk, of vraag en antwoord naast elkaar.
 
 KADER (veld "kader" op clipniveau):
-- staand: beeld op volle breedte hoog in het kader, rustige ruimte eronder voor ondertiteling. Standaard: er gaat niets verloren en het oogt schoon.
-- vullend: beeld gevuld met een uitsnede. Strak, maar alleen als het onderwerp midden in beeld zit — anders snijd je de spreker weg.
+- vullend: beeld gevuld met een uitsnede, met de spreker als focuspunt. Standaard. Zwarte balken lezen als een onafgemaakte export, dus een letterbox is geen optie.
 - blur: geblurde uitvergroting als achtergrond. Spaarzaam gebruiken; overal hetzelfde blurvlak valt op als een sjabloon.
 - origineel: geen verticale conversie, voor YouTube of als de editor zelf kadreert.
 Wissel bewust af over de clips van één video: drie clips achter elkaar in hetzelfde kader zien er als één sjabloon uit.

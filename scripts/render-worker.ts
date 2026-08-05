@@ -11,6 +11,8 @@ import { maakTekstkaarten, tekenHookKaart, kleurUitThumbnail, kaartenMap, type H
 import { lijnShotsUit } from '../src/lib/roughcut/uitlijnen';
 import { runEditAgent, beslissingenVoorClip } from '../src/lib/agents/edit';
 
+import { zorgVoorMuziekbed } from '../src/lib/muziek';
+
 const BUCKET = 'montages';
 /** Ruim onder de 50MB-limiet van de gratis opslag; grotere clips slaan we over. */
 const MAX_BYTES = 50 * 1024 * 1024;
@@ -276,12 +278,12 @@ async function verwerk(job: Job) {
       // Eigen gelicenseerde audio uit assets/: muziekbed met ducking en
       // stiltevensters, sfx op de shots die erom vragen. Ontbreekt een
       // bestand, dan wordt het stil overgeslagen.
-      muziekPad: (() => {
-        const keuze = editClip?.muziek ?? clip.muziek;
-        return keuze && keuze !== 'geen'
-          ? join(process.cwd(), 'assets', 'muziek', `${keuze}.mp3`)
-          : undefined;
-      })(),
+      muziekPad: await zorgVoorMuziekbed(editClip?.muziek ?? clip.muziek ?? 'geen', {
+        werkmap: bronmap,
+        seconden: segmenten.reduce((t, sg) => t + (sg.end - sg.start), 0),
+        beschrijving: clip.titel_intern,
+        log: (m) => console.log(`     ${m}`),
+      }),
       sfxMap: join(process.cwd(), 'assets', 'sfx'),
       ruisvloerDb: ruisvloer,
       maxBytes: MAX_BYTES,

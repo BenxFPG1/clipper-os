@@ -227,3 +227,25 @@ Providerkosten worden per call gelogd in `provider_usage`. De tracking-run geeft
 ## Scope
 
 Geen finale video-rendering (wel ruwe montages), geen auto-posting, geen multi-user, geen publieke outlier-database. Ideeën daarbuiten gaan naar `BACKLOG.md`.
+
+## Muziek onder de clips
+
+Standaard gebruikt de montage de gesynthetiseerde bedden uit `assets/muziek`
+(`scripts/maak-muziek.sh` bouwt ze opnieuw). Rechtenvrij en sober, maar het is
+geen productiemuziek.
+
+Wil je per clip een passend bed laten genereren, zet dan in `.env`:
+
+    MUZIEK_PROVIDER=elevenlabs
+    ELEVENLABS_API_KEY=...
+
+Suno heeft geen publieke API — alleen doorverkopers. Wil je die toch gebruiken:
+
+    MUZIEK_PROVIDER=suno_compat
+    MUZIEK_BASIS_URL=https://api.van-je-aanbieder.example
+    MUZIEK_API_KEY=...
+
+Gegenereerde bedden worden gecachet op sfeer + beschrijving, dus clips met
+dezelfde sfeer delen één bed en je betaalt niet per render opnieuw. Eigen
+gelicenseerde muziek als `assets/muziek/<sfeer>.mp3` wint altijd wanneer de
+provider op `lokaal` staat.
