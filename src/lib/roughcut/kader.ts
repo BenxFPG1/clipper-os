@@ -47,3 +47,46 @@ export function focusNaarX(focus?: string | null, gemeten?: number | null): numb
   // Geen scriptkeuze: gemeten gezichtspositie, anders het midden.
   return gemeten ?? 0.5;
 }
+
+/**
+ * Beeldingrepen die niets aan de lengte van een shot veranderen, en dus
+ * veilig achter de kaderketen passen. De duur-veranderende ingrepen uit de
+ * effectenvault (freeze_frame, speed_ramp, slow_motion) zitten hier bewust
+ * niet in: die verschuiven alle tijdcodes daarna, en dan kloppen de sfx,
+ * kaarten en muziekstiltes niet meer.
+ *
+ * Zoom-ingrepen (punch_in, snelle_zoom) worden al door de kaderketen zelf
+ * afgehandeld via de zoomfactor.
+ */
+export function effectKeten(effect?: string | null, duur = 0): string | null {
+  if (!effect || effect === 'geen') return null;
+
+  if (effect === 'flits_wit') {
+    // Twee frames wit aan het begin van het shot: dekt een harde tijdsprong af.
+    return "drawbox=x=0:y=0:w=iw:h=ih:color=white@1:t=fill:enable='lt(t,0.067)'";
+  }
+
+  if (effect === 'zwart_frame') {
+    // Eén ademteug zwart, vlak vóór wat er komt.
+    return "drawbox=x=0:y=0:w=iw:h=ih:color=black@1:t=fill:enable='lt(t,0.04)'";
+  }
+
+  if (effect === 'shake') {
+    // Korte trilling die uitdempt (exp), niet langer dan een fractie van een
+    // seconde — anders wordt het misselijkmakend (editcraft).
+    return (
+      'crop=iw-24:ih-24:' +
+      "'12+10*sin(t*72)*exp(-t*7)':'12+10*cos(t*61)*exp(-t*7)'," +
+      'scale=1080:1920'
+    );
+  }
+
+  if (effect === 'freeze_frame' && duur > 0) {
+    // Het laatste beeld even vasthouden zonder het shot te verlengen: de
+    // laatste 0,35s wordt bevroren door de tijd daar stil te zetten.
+    const vanaf = Math.max(0, duur - 0.35).toFixed(3);
+    return `setpts='if(gte(T\,${vanaf})\,${vanaf}/TB\,PTS)'`;
+  }
+
+  return null;
+}

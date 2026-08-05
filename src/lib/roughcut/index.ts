@@ -4,7 +4,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { resolveBinary } from '../ingest/binaries';
 import { ytdlpAuthArgs } from '../ingest/youtube';
-import { focusNaarX, kaderKeten, type Kader } from './kader';
+import { effectKeten, focusNaarX, kaderKeten, type Kader } from './kader';
 import { snapShots, verwijderDodeLucht, type SnapSegment, type Stilte } from './snap';
 
 export type Shot = {
@@ -157,8 +157,11 @@ export async function maakRuweMontage(opties: {
     }
     vorigeZoom = zoom;
     const keten = kaderKeten(kader, { focusX: focusNaarX(shot.focus, shot.focusX), zoom });
+    const effect = effectKeten(shot.beeld_effect, duur);
     invoer.push('-ss', shot.start.toFixed(3), '-t', duur.toFixed(3), '-i', bronBestand);
-    delenFilter.push(`[${i}:v]setpts=PTS-STARTPTS,fps=30,${keten},setsar=1[v${i}]`);
+    delenFilter.push(
+      `[${i}:v]setpts=PTS-STARTPTS,fps=30,${keten}${effect ? `,${effect}` : ''},setsar=1[v${i}]`,
+    );
     delenFilter.push(
       `[${i}:a]asetpts=PTS-STARTPTS,` +
         `afade=t=in:st=0:d=0.012,afade=t=out:st=${Math.max(0, duur - 0.012).toFixed(3)}:d=0.012,` +
@@ -200,17 +203,36 @@ export async function maakRuweMontage(opties: {
   let extraIndex = gesorteerd.length;
 
   if (opties.muziekPad && existsSync(opties.muziekPad)) {
-    extraInvoer.push('-stream_loop', '-1', '-i', opties.muziekPad);
+    // Het bed net zo vaak herhalen als nodig en dan hard afkappen. Met
+    // `-stream_loop -1` is de invoer oneindig; die liep in combinatie met de
+    // sidechain-ducking niet meer af en de render hing.
+    const bedDuur = await duurVan(opties.muziekPad);
+    const rondes = bedDuur > 0 ? Math.max(0, Math.ceil(totaleDuur / bedDuur)) : 0;
+    extraInvoer.push('-stream_loop', String(rondes), '-i', opties.muziekPad);
+
     const stilExpr = stilteVensters.length
       ? stilteVensters.map((v) => `between(t\,${v.van.toFixed(2)}\,${v.tot.toFixed(2)})`).join('+')
       : '0';
-    // Muziek zacht (0.18), hard op nul in de stiltevensters, en daarbovenop
-    // sidechain-ducking zodat hij onder spraak nog verder zakt.
+
+    // Ducking in twee lagen. De sidechain volgt de spraak op de voet (snel
+    // dicht, traag open, zodat hij niet tussen twee woorden omhoog pompt), en
+    // daar bovenop staat de harde nul op de payoff: dát is het moment dat
+    // groot moet worden, en een compressor alleen krijgt hem nooit ver genoeg
+    // omlaag.
     filter +=
       `;[${extraIndex}:a]aformat=sample_rates=48000:channel_layouts=stereo,` +
-      `volume='if(${stilExpr}\,0\,0.18)':eval=frame[muz]` +
-      `;[muz][${audioUit}]sidechaincompress=threshold=0.02:ratio=8:attack=40:release=400[muzged]` +
-      `;[${audioUit}][muzged]amix=inputs=2:duration=first:normalize=0[amix]`;
+      `atrim=0:${(totaleDuur + 0.5).toFixed(3)},asetpts=PTS-STARTPTS,` +
+      `afade=t=in:st=0:d=1.2,afade=t=out:st=${Math.max(0, totaleDuur - 1.2).toFixed(3)}:d=1.2,` +
+      `volume='if(${stilExpr}\,0\,0.22)':eval=frame[muz]` +
+      // De spraak wordt hier twee keer gebruikt: als stuursignaal voor de
+      // ducking én in de uiteindelijke mix. Eén filterlabel kan maar door één
+      // filter opgegeten worden, dus eerst splitsen. Zonder die split loopt de
+      // filtergraph vast — daarom kwam er tot nu toe nooit muziek uit een
+      // render met een bed.
+      `;[${audioUit}]asplit=2[sprk][stuur]` +
+      `;[muz][stuur]sidechaincompress=` +
+      `threshold=0.035:ratio=12:attack=8:release=320:makeup=1:level_sc=1.4[muzged]` +
+      `;[sprk][muzged]amix=inputs=2:duration=first:normalize=0[amix]`;
     audioUit = 'amix';
     extraIndex += 1;
   }
@@ -467,4 +489,20 @@ export async function meetRuisvloer(
   // Mediaan: één pauze waarin iemand toevallig hoest telt niet mee.
   const gesorteerd = [...metingen].sort((a, b) => a - b);
   return Math.round(gesorteerd[Math.floor(gesorteerd.length / 2)] * 10) / 10;
+}
+
+/** Lengte van een audio- of videobestand in seconden; 0 als het niet te lezen is. */
+async function duurVan(pad: string): Promise<number> {
+  try {
+    const uit = await run(resolveBinary('ffprobe'), [
+      '-v', 'error',
+      '-show_entries', 'format=duration',
+      '-of', 'default=noprint_wrappers=1:nokey=1',
+      pad,
+    ]);
+    const n = Number(uit.trim());
+    return Number.isFinite(n) ? n : 0;
+  } catch {
+    return 0;
+  }
 }
