@@ -155,7 +155,12 @@ export async function maakRuweMontage(opties: {
     // ingezoomd te worden tot het hoofd het beeld draagt.
     const ingreepZoom =
       shot.beeld_effect === 'punch_in' ? 1.12 : shot.beeld_effect === 'snelle_zoom' ? 1.18 : 1;
-    let zoom = Math.max(ingreepZoom, vulZoom(shot.paneel && shot.focusW ? shot.focusW / (shot.paneel[1] - shot.paneel[0]) : shot.focusW));
+    // Beweegt de spreker door het beeld of staan er meerdere mensen, dan niet
+    // inzoomen: dan loopt hij binnen het shot de uitsnede uit en kijk je naar
+    // een lege muur.
+    const gemetenBreedte =
+      shot.paneel && shot.focusW ? shot.focusW / (shot.paneel[1] - shot.paneel[0]) : shot.focusW;
+    let zoom = shot.breed ? 1 : Math.max(ingreepZoom, vulZoom(gemetenBreedte));
     // Jump-cut afdekken (editcraft): een knip binnen dezelfde opname is
     // zichtbaar als een sprong. Wissel daarom van schaal (>10% verschil) op
     // elke dode-luchtknip, zodat de sprong als bewuste punch-in leest.

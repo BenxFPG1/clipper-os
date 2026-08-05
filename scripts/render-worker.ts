@@ -480,7 +480,15 @@ async function vulGezichtsFocus(bronPad: string, segmenten: Shot[]): Promise<voi
   const zonderScriptFocus = segmenten;
   if (zonderScriptFocus.length === 0) return;
 
-  const tijden = zonderScriptFocus.map((s) => (s.start + s.end) / 2);
+  // Drie momenten per shot in plaats van alleen het midden. Een shot van tien
+  // seconden verandert onderweg: de camera wisselt, iemand leunt weg, of het
+  // split screen springt om. Eén meting op het midden gaf dan een kadrering die
+  // de rest van het shot nergens op sloeg — letterlijk een uitsnede van de
+  // boekenkast.
+  const MOMENTEN = [0.25, 0.5, 0.75];
+  const tijden = zonderScriptFocus.flatMap((s) =>
+    MOMENTEN.map((f) => s.start + (s.end - s.start) * f),
+  );
   try {
     const uit = await new Promise<string>((klaar, fout) => {
       const kind = spawn(pythonMetOpenCV(), ['scripts/gezichten.py', bronPad, JSON.stringify(tijden)]);
@@ -513,23 +521,38 @@ async function vulGezichtsFocus(bronPad: string, segmenten: Shot[]): Promise<voi
 
     let breedGeteld = 0;
     zonderScriptFocus.forEach((s, i) => {
-      const m = posities[i];
-      if (!m) return;
-      s.focusX = m.x;
-      s.focusW = m.breedte;
-      if (m.paneel) s.paneel = m.paneel;
-      // Twee mensen ver uit elkaar zonder duidelijke spreker: niet inzoomen en
-      // niet strak kadreren, anders staat de uitsnede tussen twee hoofden in.
-      if (m.breed) {
+      const groep = posities.slice(i * MOMENTEN.length, (i + 1) * MOMENTEN.length).filter(Boolean) as Meting[];
+      if (groep.length === 0) return;
+
+      const xs = groep.map((m) => m.x).sort((a, b) => a - b);
+      s.focusX = xs[Math.floor(xs.length / 2)];
+      const ws = groep.map((m) => m.breedte).sort((a, b) => a - b);
+      s.focusW = ws[Math.floor(ws.length / 2)];
+
+      // Beweegt de spreker flink door het beeld, dan is strak inzoomen
+      // gevaarlijk: hij loopt de uitsnede uit. Dan liever ruim kadreren.
+      const spreiding = xs[xs.length - 1] - xs[0];
+      if (spreiding > 0.15) {
         s.breed = true;
         breedGeteld++;
       }
+
+      // Alleen binnen een paneel kadreren als alle metingen het eens zijn; is
+      // het beeld halverwege omgesprongen, dan klopt de uitsnede maar de helft
+      // van de tijd.
+      const panelen = groep.map((m) => (m.paneel ? m.paneel.join(',') : ''));
+      if (panelen[0] && panelen.every((p) => p === panelen[0])) {
+        s.paneel = groep[0].paneel ?? undefined;
+      }
+      if (groep.some((m) => m.breed)) {
+        s.breed = true;
+      }
     });
-    const gevonden = posities.filter((x) => x !== null).length;
-    const panelen = posities.filter((m) => m?.paneel).length;
+    const gevonden = zonderScriptFocus.filter((s) => typeof s.focusX === 'number').length;
+    const panelen = zonderScriptFocus.filter((s) => s.paneel).length;
     console.log(
-      `     spreker in beeld: ${gevonden}/${posities.length} segmenten` +
-        (breedGeteld ? `, ${breedGeteld}x meerdere personen` : '') +
+      `     spreker in beeld: ${gevonden}/${zonderScriptFocus.length} segmenten` +
+        (breedGeteld ? `, ${breedGeteld}x ruim gekadreerd (spreker beweegt of meerdere personen)` : '') +
         (panelen ? `, ${panelen}x split screen in de bron (binnen het paneel gekadreerd)` : ''),
     );
   } catch (e) {
