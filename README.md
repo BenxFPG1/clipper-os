@@ -255,3 +255,23 @@ Gegenereerde bedden worden gecachet op sfeer + beschrijving, dus clips met
 dezelfde sfeer delen één bed en je betaalt niet per render opnieuw. Eigen
 gelicenseerde muziek als `assets/muziek/<sfeer>.mp3` wint altijd wanneer de
 provider op `lokaal` staat.
+
+## ClipArmy automatisch ophalen
+
+Zet in `.env` (lokaal) en als GitHub-secret (voor de uurlijkse cloudjob):
+
+    CLIPARMY_EMAIL=...
+    CLIPARMY_WACHTWOORD=...
+
+De job logt daarmee bij elke run zelf in en leest de campagnelijst die jij ook
+ziet. Dit is de enige opzet die blijft werken zonder handwerk: een token uit de
+browser leeft ongeveer een uur, en botst bovendien met je eigen sessie zodra je
+de site zelf opent.
+
+Het wachtwoord staat alleen in je `.env` en in je GitHub-secrets — niet in de
+database, niet in logregels. Wil je het intrekken: haal het secret weg en
+verander je wachtwoord bij ClipArmy.
+
+De url en publieke sleutel van de campagne-query komen nog steeds uit het
+eenmalig geplakte verzoek (dashboard → "Nieuwe ClipArmy-campagnes automatisch
+ophalen"); die verandert alleen als ClipArmy zijn API omgooit.

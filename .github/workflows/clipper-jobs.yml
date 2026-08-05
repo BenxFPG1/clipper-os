@@ -105,5 +105,9 @@ jobs:
           CLAUDE_MODEL: claude-opus-5
           SCRAPECREATORS_API_KEY: ${{ secrets.SCRAPECREATORS_API_KEY }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          # Eigen ClipArmy-account, zodat het uurlijks ophalen zelf inlogt in
+          # plaats van te leunen op een token dat na een uur verloopt.
+          CLIPARMY_EMAIL: ${{ secrets.CLIPARMY_EMAIL }}
+          CLIPARMY_WACHTWOORD: ${{ secrets.CLIPARMY_WACHTWOORD }}
           COST_ALERT_EUR: '20'
         run: npx tsx scripts/job.ts ${{ steps.kies.outputs.job }}

@@ -6,6 +6,42 @@ import type { Verzoek } from './curl';
 type Vernieuwing = { projectUrl: string; apikey: string; refresh_token: string };
 
 /**
+ * Inloggen met je eigen accountgegevens uit de omgevingsvariabelen.
+ *
+ * Dit is de enige manier die blijvend werkt zonder handwerk: een token uit de
+ * browser leeft een uur en botst bovendien met je eigen sessie zodra jij de
+ * site ook opent. Met inloggen begint elke run met een vers token.
+ *
+ * Bewust uit env en niet uit de database: het wachtwoord staat dan alleen in je
+ * .env en in je GitHub-secrets, nergens in data die we rondsturen of loggen.
+ * Er wordt precies één ding mee gedaan — inloggen om de campagnelijst te lezen
+ * die jij zelf ook ziet.
+ */
+async function logIn(projectUrl: string, apikey: string): Promise<string | null> {
+  const email = process.env.CLIPARMY_EMAIL;
+  const wachtwoord = process.env.CLIPARMY_WACHTWOORD;
+  if (!email || !wachtwoord) return null;
+
+  const res = await fetch(`${projectUrl.replace(/\/$/, '')}/auth/v1/token?grant_type=password`, {
+    method: 'POST',
+    headers: { apikey, 'content-type': 'application/json' },
+    body: JSON.stringify({ email, password: wachtwoord }),
+    signal: AbortSignal.timeout(20_000),
+  });
+  if (!res.ok) {
+    const detail = (await res.text()).slice(0, 120);
+    throw new Error(
+      res.status === 400
+        ? `inloggen geweigerd (${detail}) — klopt CLIPARMY_EMAIL/CLIPARMY_WACHTWOORD, en staat er geen tweestapsverificatie op?`
+        : `inloggen gaf ${res.status}: ${detail}`,
+    );
+  }
+
+  const j = (await res.json()) as { access_token?: string };
+  return j.access_token ?? null;
+}
+
+/**
  * Haalt nieuwe ClipArmy-campagnes op in de cloud door het verzoek te herhalen
  * dat jouw eigen browser doet — url, headers en token, één keer geplakt via
  * "Copy as cURL" (Instellingen -> ClipArmy automatisch ophalen).
@@ -42,7 +78,21 @@ export async function haalClipArmyCampagnes(): Promise<{
   // kansloos: tegen de tijd dat hij draait is het al verlopen. Met het
   // vernieuwingstoken halen we zelf een vers token op, precies zoals de site
   // zelf doet, en bewaren we het nieuwe vernieuwingstoken voor de volgende keer.
-  if (verzoek.auth?.refresh_token) {
+  // Eerst proberen in te loggen: dat geeft altijd een vers token en botst niet
+  // met je eigen browsersessie. Lukt dat niet (geen gegevens ingesteld), dan
+  // valt hij terug op het vernieuwingstoken uit de koppeling.
+  const project = verzoek.auth?.projectUrl ?? veiligeOrigin(verzoek.url);
+  const sleutel = verzoek.auth?.apikey ?? verzoek.headers.apikey;
+  if (project && sleutel) {
+    try {
+      const token = await logIn(project, sleutel);
+      if (token) verzoek.headers.authorization = `Bearer ${token}`;
+    } catch (e) {
+      return { nieuw: [], bekeken: 0, fout: await noteer(`ClipArmy: ${(e as Error).message}`) };
+    }
+  }
+
+  if (!process.env.CLIPARMY_WACHTWOORD && verzoek.auth?.refresh_token) {
     try {
       const vers = await vernieuwToken(verzoek.auth);
       verzoek.headers.authorization = `Bearer ${vers.access_token}`;
@@ -109,6 +159,15 @@ export async function haalClipArmyCampagnes(): Promise<{
     .eq('platform', 'cliparmy');
 
   return { nieuw, bekeken: blokken.length };
+}
+
+/** De basis-URL van het project uit de campagne-URL halen. */
+function veiligeOrigin(url: string): string | null {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return null;
+  }
 }
 
 /**
