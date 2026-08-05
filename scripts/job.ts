@@ -76,6 +76,14 @@ async function main() {
       for (const c of r.nieuw) console.log(`  + ${c.naam}`);
       break;
     }
+    case 'kijken': {
+      const { bekijkTopVondsten } = await import('../src/lib/agents/kijken');
+      const r = await metRetry(() => bekijkTopVondsten());
+      console.log(`${stamp} kijken: ${r.gedaan.length} clip(s) visueel geanalyseerd`);
+      for (const g of r.gedaan) console.log(`  + ${g}`);
+      for (const f of r.fouten.slice(0, 3)) console.log(`  fout: ${f}`);
+      break;
+    }
     case 'kennis': {
       const { runKennisAgent } = await import('../src/lib/agents/kennis');
       const r = await metRetry(() => runKennisAgent());
@@ -92,7 +100,7 @@ async function main() {
       break;
     }
     default:
-      console.error('Gebruik: npx tsx scripts/job.ts <tracking|scout|retro|kanaal|kennis|cliparmy>');
+      console.error('Gebruik: npx tsx scripts/job.ts <tracking|scout|retro|kanaal|kennis|cliparmy|kijken>');
       process.exit(1);
   }
 }

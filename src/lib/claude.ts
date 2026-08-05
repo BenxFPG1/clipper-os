@@ -48,6 +48,12 @@ type StructuredOptions<T extends z.ZodTypeAny> = {
    * generatiecalls horen deterministisch op hun invoer te werken.
    */
   webResearch?: boolean;
+  /**
+   * Paden naar beeldframes die het model mag bekijken. Alleen dan krijgt de
+   * CLI leestoegang, en alleen tot deze bestanden: zonder beeld verzint een
+   * model alles wat visueel is.
+   */
+  beeldPaden?: string[];
 };
 
 /**
@@ -170,7 +176,14 @@ async function claudeCodeStructuredCall<T extends z.ZodTypeAny>(opts: Structured
   const jsonSchema = zodToJsonSchema(opts.schema, { target: 'openApi3' }) as Record<string, unknown>;
   delete jsonSchema.$schema;
 
-  const basePrompt = `${opts.user}
+  const beeldBlok =
+    opts.beeldPaden && opts.beeldPaden.length > 0
+      ? `\n\n=== BEELD ===\nBekijk deze frames met de Read-tool vóór je antwoordt; ze staan op volgorde van tijd:\n${opts.beeldPaden
+          .map((p) => `- ${p}`)
+          .join('\n')}\n`
+      : '';
+
+  const basePrompt = `${opts.user}${beeldBlok}
 
 === OUTPUTFORMAAT ===
 ${opts.toolDescription}
@@ -186,6 +199,7 @@ ${JSON.stringify(jsonSchema)}`;
       cliEffort(opts.effort),
       opts.model ?? CLAUDE_MODEL,
       opts.webResearch ?? false,
+      (opts.beeldPaden?.length ?? 0) > 0,
     );
 
     void logProviderUsage('claude-code', opts.operation, tokens, costUsd * 0.92).catch(() => undefined);
@@ -239,6 +253,7 @@ async function runClaudeCli(
   effort: string,
   model: string,
   webResearch = false,
+  magLezen = false,
 ): Promise<{ result: string; costUsd: number; tokens: number }> {
   // Voorbijgaande streamfouten (stalled, overloaded, 5xx) mogen geen hele
   // plannerrun weggooien: tot twee keer opnieuw proberen met korte pauze.
@@ -246,7 +261,7 @@ async function runClaudeCli(
   for (let attempt = 0; attempt < 3; attempt++) {
     if (attempt > 0) await new Promise((r) => setTimeout(r, attempt * 15_000));
     try {
-      return await runClaudeCliOnce(system, prompt, effort, model, webResearch);
+      return await runClaudeCliOnce(system, prompt, effort, model, webResearch, magLezen);
     } catch (err) {
       lastErr = err as Error;
       const transient =
@@ -267,6 +282,7 @@ function runClaudeCliOnce(
   effort: string,
   model: string,
   webResearch = false,
+  magLezen = false,
 ): Promise<{ result: string; costUsd: number; tokens: number }> {
   const env: NodeJS.ProcessEnv = { ...process.env };
   for (const key of Object.keys(env)) {
@@ -293,13 +309,16 @@ function runClaudeCliOnce(
     '--no-session-persistence',
     // Dit is pure generatie; de agent-tools van Claude Code blijven uit.
     '--disallowed-tools',
-    webResearch
-      ? 'Bash,Edit,Write,Read,Glob,Grep,Task,NotebookEdit,TodoWrite'
-      : 'Bash,Edit,Write,Read,Glob,Grep,WebFetch,WebSearch,Task,NotebookEdit,TodoWrite',
+    [
+      'Bash', 'Edit', 'Write', 'Glob', 'Grep', 'Task', 'NotebookEdit', 'TodoWrite',
+      ...(magLezen ? [] : ['Read']),
+      ...(webResearch ? [] : ['WebFetch', 'WebSearch']),
+    ].join(','),
     // Zonder expliciete toestemming vraagt de CLI erom en krijgt hij in een
     // automatische run geen antwoord: de kennis-agent kwam zo met lege handen
     // terug ("WebSearch en WebFetch zijn geblokkeerd").
     ...(webResearch ? ['--allowed-tools', 'WebSearch', 'WebFetch'] : []),
+    ...(magLezen ? ['--allowed-tools', 'Read'] : []),
   ];
 
   return new Promise((resolve, reject) => {
