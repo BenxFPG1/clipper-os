@@ -36,17 +36,34 @@ export async function pakFrames(
 
   const duur = await probeDuur(video);
 
-  // Tijdstippen kiezen: een derde van de frames in de hook, de rest verspreid
-  // over de rest van de video.
-  const inHook = Math.min(4, Math.floor(maxFrames / 3));
+  // Waar verandert het beeld écht? Vaste intervallen bemonsteren een statische
+  // talking head te vaak en een snel geknipte reel te weinig. Daarom eerst de
+  // scènewissels opzoeken; vaste intervallen zijn de vangnetlaag zodat er ook
+  // bij weinig wissels genoeg te zien valt (dichtheidsvloer).
+  const wissels = await zoekScenewissels(video);
   const tijden: number[] = [];
+
+  // Hook altijd dicht bemonsterd: daar valt de kijkbeslissing.
+  const inHook = Math.min(4, Math.max(2, Math.floor(maxFrames / 3)));
   for (let i = 0; i < inHook; i++) tijden.push((hookSeconden / inHook) * i + 0.4);
+
+  // Daarna de scènewissels (die tonen de knippen), aangevuld met een
+  // gelijkmatige spreiding als er te weinig wissels zijn.
+  const naHook = wissels.filter((t) => t > hookSeconden);
+  const ruimte = maxFrames - tijden.length;
+  const stap = Math.max(1, Math.ceil(naHook.length / Math.max(1, Math.floor(ruimte * 0.7))));
+  for (let i = 0; i < naHook.length && tijden.length < maxFrames * 0.85; i += stap) {
+    tijden.push(naHook[i]);
+  }
   if (duur && duur > hookSeconden) {
-    const rest = maxFrames - inHook;
-    for (let i = 0; i < rest; i++) {
-      tijden.push(hookSeconden + ((duur - hookSeconden) / (rest + 1)) * (i + 1));
+    const tekort = maxFrames - tijden.length;
+    for (let i = 0; i < tekort; i++) {
+      const t = hookSeconden + ((duur - hookSeconden) / (tekort + 1)) * (i + 1);
+      // Niet vlak naast een frame dat we al hebben.
+      if (!tijden.some((x) => Math.abs(x - t) < 1.5)) tijden.push(t);
     }
   }
+  tijden.sort((a, b) => a - b);
 
   for (const [i, t] of tijden.entries()) {
     const naam = join(map, `f${String(i).padStart(2, '0')}-${Math.round(t)}s.jpg`);
@@ -75,6 +92,37 @@ export async function pakFrames(
     })),
     duur,
   };
+}
+
+/**
+ * Zoekt de momenten waarop het beeld wezenlijk verandert. De drempel is laag
+ * gezet (0,06): bij talking-head-materiaal, waar alleen de kadrering en de
+ * spreker wisselen, vindt 0,25 vrijwel niets terwijl er wel degelijk geknipt
+ * wordt. Faalt de detectie, dan is de lijst leeg en vallen we terug op de
+ * gelijkmatige spreiding.
+ */
+async function zoekScenewissels(pad: string): Promise<number[]> {
+  try {
+    const uit = await new Promise<string>((klaar) => {
+      const kind = spawn(resolveBinary('ffmpeg'), [
+        '-nostdin', '-i', pad,
+        '-filter:v', "select='gt(scene,0.06)',showinfo",
+        '-f', 'null', '-',
+      ]);
+      let alles = '';
+      kind.stdout.on('data', (d) => (alles += d));
+      kind.stderr.on('data', (d) => (alles += d));
+      kind.on('error', () => klaar(''));
+      kind.on('close', () => klaar(alles));
+    });
+
+    return [...uit.matchAll(/pts_time:([\d.]+)/g)]
+      .map((m) => Number(m[1]))
+      .filter((t) => Number.isFinite(t))
+      .sort((a, b) => a - b);
+  } catch {
+    return [];
+  }
 }
 
 async function probeDuur(pad: string): Promise<number | null> {
