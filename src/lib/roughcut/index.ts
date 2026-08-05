@@ -393,7 +393,12 @@ export async function zorgVoorBron(
  */
 export function bepaalSegmenten(
   shots: Shot[],
-  opties: { transcript?: SnapSegment[]; stiltes?: Stilte[]; uitgelijnd?: boolean },
+  opties: {
+    transcript?: SnapSegment[];
+    stiltes?: Stilte[];
+    uitgelijnd?: boolean;
+    woordgrenzen?: number[];
+  },
 ): (Shot & { subKnip?: boolean })[] {
   // Na citaat-uitlijning zitten de grenzen al op het woord; dan mag de
   // stilte-snap alleen nog micro-corrigeren, niet naar een andere zin springen.
@@ -401,6 +406,7 @@ export function bepaalSegmenten(
     stiltes: opties.stiltes,
     venster: opties.uitgelijnd ? 0.35 : undefined,
     alleenVerruimen: opties.uitgelijnd,
+    woordgrenzen: opties.woordgrenzen,
   });
   const zonderDodeLucht = verwijderDodeLucht(gesnapt, opties.stiltes ?? []);
   return [...zonderDodeLucht].sort((a, b) => (a.volgorde ?? 0) - (b.volgorde ?? 0)).filter((s) => s.end > s.start);

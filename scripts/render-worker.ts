@@ -219,13 +219,16 @@ async function verwerk(job: Job) {
     // Eerst het citaat terugvinden op woordniveau: dat legt de grenzen op de
     // zin die het plan bedoelt, in plaats van op de dichtstbijzijnde stilte
     // (die kan van de verkeerde zin zijn). Daarna pas segmenteren.
-    const { shots: uitgelijnd, uitgelijnd: aantalUitgelijnd } = await lijnShotsUit(bronPad, clip.shots, {
-      log: (m) => console.log(`     ${m}`),
-    });
+    const { shots: uitgelijnd, uitgelijnd: aantalUitgelijnd, woordgrenzen } = await lijnShotsUit(
+      bronPad,
+      clip.shots,
+      { log: (m) => console.log(`     ${m}`) },
+    );
     const segmenten = bepaalSegmenten(uitgelijnd, {
       transcript: (videoRij?.transcript as never) ?? undefined,
       stiltes: stiltes ?? undefined,
       uitgelijnd: aantalUitgelijnd > 0,
+      woordgrenzen,
     });
 
     // Gezichtsfocus per segment (alleen waar het script geen focus opgeeft).

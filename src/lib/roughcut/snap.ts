@@ -37,6 +37,12 @@ export function snapShots<T extends SnapShot>(
      * hoort het script letterlijk te volgen.
      */
     alleenVerruimen?: boolean;
+    /**
+     * Woordgrenzen uit de uitlijning. Terugval als er in de buurt geen
+     * spraakpauze ligt: iemand die onafgebroken doorpraat heeft geen stilte om
+     * op te knippen, maar tussen twee woorden zit altijd ruimte.
+     */
+    woordgrenzen?: number[];
   } = {},
 ): T[] {
   const stiltes = opties.stiltes ?? [];
@@ -67,9 +73,18 @@ export function snapShots<T extends SnapShot>(
   // wel.
   const zoekVenster = opties.alleenVerruimen ? Math.max(venster, 1.6) : venster;
 
+  const woorden = opties.woordgrenzen ?? [];
+
   return shots.map((shot) => {
-    const start = dichtstbij(starts, shot.start, zoekVenster, 'eerder', opties.alleenVerruimen);
-    const eind = dichtstbij(einden, shot.end, zoekVenster, 'later', opties.alleenVerruimen);
+    // Eerst een echte spraakpauze zoeken; die klinkt het schoonst. Lukt dat
+    // niet, dan de dichtstbijzijnde woordgrens — nog altijd oneindig veel beter
+    // dan midden in een lettergreep.
+    const start =
+      dichtstbij(starts, shot.start, zoekVenster, 'eerder', opties.alleenVerruimen) ??
+      dichtstbij(woorden, shot.start, 0.6, 'eerder', opties.alleenVerruimen);
+    const eind =
+      dichtstbij(einden, shot.end, zoekVenster, 'later', opties.alleenVerruimen) ??
+      dichtstbij(woorden, shot.end, 0.6, 'later', opties.alleenVerruimen);
 
     let nieuweStart = Math.max(0, (start ?? shot.start) - inloop);
     let nieuwEind = Math.min(maxDuur, (eind ?? shot.end) + uitloop);

@@ -27,13 +27,19 @@ export async function lijnShotsUit(
   bronPad: string,
   shots: (Shot & { transcript_fragment?: string })[],
   opties: { marge?: number; model?: string; log?: (m: string) => void } = {},
-): Promise<{ shots: Shot[]; uitgelijnd: number }> {
+): Promise<{ shots: Shot[]; uitgelijnd: number; woordgrenzen: number[] }> {
   const marge = opties.marge ?? 4;
   const model = opties.model ?? process.env.WHISPER_ALIGN_MODEL ?? 'base';
   const log = opties.log ?? (() => {});
 
   const werkmap = await mkdtemp(join(tmpdir(), 'clipper-align-'));
   let uitgelijnd = 0;
+
+  // Alle woordgrenzen die we onderweg tegenkomen bewaren we. Praat iemand
+  // onafgebroken door, dan is er geen stilte om op te knippen — maar de ruimte
+  // tússen twee woorden is er altijd. Daar knippen klinkt schoon; middenin een
+  // woord klinkt kapot.
+  const woordgrenzen: number[] = [];
 
   try {
     const uit: Shot[] = [];
@@ -61,6 +67,10 @@ export async function lijnShotsUit(
           continue;
         }
 
+        for (const w of woorden) {
+          woordgrenzen.push(spanStart + w.s, spanStart + w.e);
+        }
+
         const grenzen = zoekCitaat(woorden, fragment);
         if (!grenzen || (grenzen.start === null && grenzen.end === null)) {
           uit.push(shot);
@@ -86,7 +96,7 @@ export async function lijnShotsUit(
     }
 
     if (uitgelijnd > 0) log(`citaat-uitlijning: ${uitgelijnd}/${shots.length} shots op woordniveau`);
-    return { shots: uit, uitgelijnd };
+    return { shots: uit, uitgelijnd, woordgrenzen: [...new Set(woordgrenzen)].sort((a, b) => a - b) };
   } finally {
     await rm(werkmap, { recursive: true, force: true });
   }
