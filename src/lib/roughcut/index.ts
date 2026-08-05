@@ -26,6 +26,12 @@ export type Shot = {
    * naad op.
    */
   paneel?: [number, number];
+  /** Verticale plek van het uitsnedemidden (0..1); regelt de hoofdruimte. */
+  focusY?: number;
+  /** Door de kadercontrole vastgestelde zoom; overschrijft de effect-zoom. */
+  zoom?: number;
+  /** Gemeten gezichtsvak, waartegen de kadercontrole toetst. */
+  gezicht?: { x: number; breedte: number; top: number; hoogte: number };
   /**
    * Meerdere mensen ver uit elkaar in beeld, zonder duidelijke spreker. Dan mag
    * er niet strak gekadreerd of ingezoomd worden: dan valt de uitsnede precies
@@ -160,7 +166,9 @@ export async function maakRuweMontage(opties: {
     // een lege muur.
     const gemetenBreedte =
       shot.paneel && shot.focusW ? shot.focusW / (shot.paneel[1] - shot.paneel[0]) : shot.focusW;
-    let zoom = shot.breed ? 1 : Math.max(ingreepZoom, vulZoom(gemetenBreedte));
+    // Heeft de kadercontrole een zoom vastgesteld, dan wint die: hij is
+    // getoetst tegen het werkelijke gezichtsvak.
+    let zoom = shot.zoom ?? (shot.breed ? 1 : Math.max(ingreepZoom, vulZoom(gemetenBreedte)));
     // Jump-cut afdekken (editcraft): een knip binnen dezelfde opname is
     // zichtbaar als een sprong. Wissel daarom van schaal (>10% verschil) op
     // elke dode-luchtknip, zodat de sprong als bewuste punch-in leest.
@@ -183,7 +191,11 @@ export async function maakRuweMontage(opties: {
     const breedteInPaneel =
       paneel && shot.focusW ? shot.focusW / (paneel[1] - paneel[0]) : shot.focusW;
 
-    const keten = kaderKeten(kader, { focusX: focusNaarX(shot.focus, focusInPaneel), zoom });
+    const keten = kaderKeten(kader, {
+      focusX: focusNaarX(shot.focus, focusInPaneel),
+      zoom,
+      focusY: shot.focusY,
+    });
     const effect = effectKeten(shot.beeld_effect, duur);
     invoer.push('-ss', shot.start.toFixed(3), '-t', duur.toFixed(3), '-i', bronBestand);
     delenFilter.push(

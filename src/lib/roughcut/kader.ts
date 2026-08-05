@@ -16,7 +16,7 @@ export type Kader = (typeof KADERS)[number];
  */
 export function kaderKeten(
   kader: Kader,
-  opties: { focusX?: number; zoom?: number } = {},
+  opties: { focusX?: number; zoom?: number; focusY?: number } = {},
 ): string {
   const zoom = opties.zoom ?? 1;
   // Focus 0..1: waar de uitsnede horizontaal op richt (0 = links, 1 = rechts).
@@ -32,9 +32,13 @@ export function kaderKeten(
   // het focuspunt leggen. De klem in de x-expressie voorkomt dat de uitsnede
   // buiten beeld schuift bij focus hard links of rechts.
   const hoogte = Math.round((1920 * zoom) / 2) * 2;
+  // Verticaal: standaard het midden, maar met een focusY leggen we de ogen op
+  // ongeveer een derde van boven. Een sprekend hoofd hoort daar; precies
+  // gecentreerd geeft te veel lucht boven en een kin tegen de onderrand.
+  const fy = Math.min(1, Math.max(0, opties.focusY ?? 0.5)).toFixed(3);
   return (
     `scale=-2:${hoogte},` +
-    `crop=1080:1920:min(max((iw-1080)*${f}\\,0)\\,iw-1080):(ih-1920)/2,` +
+    `crop=1080:1920:min(max((iw-1080)*${f}\\,0)\\,iw-1080):min(max(ih*${fy}-960\\,0)\\,ih-1920),` +
     'format=yuv420p'
   );
 }

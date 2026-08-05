@@ -14,6 +14,13 @@ import { runEditAgent, beslissingenVoorClip } from '../src/lib/agents/edit';
 import { zorgVoorMuziekbed } from '../src/lib/muziek';
 
 import { kiesHuisstijl } from '../src/lib/agents/huisstijl';
+import { controleerKaderVisueel } from '../src/lib/agents/kadercheck';
+import {
+  corrigeerKadrering,
+  maakControlebeelden,
+  pasVisueleCorrectieToe,
+} from '../src/lib/roughcut/kadercontrole';
+import type { Kader } from '../src/lib/roughcut/kader';
 import { pakFrames } from '../src/lib/roughcut/frames';
 
 const BUCKET = 'montages';
@@ -286,6 +293,58 @@ async function verwerk(job: Job) {
       overlays.unshift({ pad: hookPad, start: 0, end: hookTot });
     }
 
+    // Kadercontrole in twee fases, met een lus eromheen. Fase 1 rekent uit wat
+    // er werkelijk in beeld valt en corrigeert wat aantoonbaar fout is. Fase 2
+    // laat de agent kijken naar precies het beeld dat de kijker straks ziet, en
+    // stuurt bij wat je niet kunt uitrekenen: een uitsnede zonder mens erin,
+    // een zichtbare split-screen-naad, een benauwd kader.
+    {
+      const kaderKeuze = (editClip?.kader ?? clip.kader ?? 'vullend') as Kader;
+      const eerste = corrigeerKadrering(segmenten);
+      for (const c of eerste) console.log(`     kadercontrole shot ${c.volgorde}: ${c.wat}`);
+
+      const RONDES = Number(process.env.KADER_RONDES ?? 2);
+      for (let ronde = 1; ronde <= RONDES; ronde++) {
+        const beelden = await maakControlebeelden(bronPad, segmenten, kaartMap, kaderKeuze);
+        if (beelden.length === 0) break;
+
+        let oordeel;
+        try {
+          oordeel = await controleerKaderVisueel(beelden);
+        } catch (e) {
+          console.log(`     visuele kadercontrole overgeslagen (${(e as Error).message.slice(0, 70)})`);
+          break;
+        }
+
+        const fout = oordeel.shots.filter((o) => !o.goed);
+        if (fout.length === 0) {
+          console.log(`     kadercontrole ronde ${ronde}: alle ${beelden.length} shots goed`);
+          break;
+        }
+
+        let aangepast = 0;
+        for (const o of fout) {
+          const seg = segmenten.find((sg) => sg.volgorde === o.volgorde);
+          if (!seg) continue;
+          const wat = pasVisueleCorrectieToe(seg, o.correctie, o.sterkte);
+          if (wat) {
+            aangepast++;
+            console.log(`     ronde ${ronde} shot ${o.volgorde}: ${o.probleem.slice(0, 70)} → ${wat}`);
+          }
+        }
+
+        // Niets meer kunnen bijstellen? Dan is doorgaan zinloos; nog een ronde
+        // levert hetzelfde oordeel op en kost alleen tokens.
+        if (aangepast === 0) {
+          console.log(`     ronde ${ronde}: ${fout.length} klacht(en) niet oplosbaar met een kaderingreep`);
+          break;
+        }
+        // Na het verschuiven opnieuw rekenkundig toetsen: een handmatige duw
+        // mag het gezicht niet alsnog uit beeld schuiven.
+        corrigeerKadrering(segmenten);
+      }
+    }
+
     // De uiteindelijke knippunten loggen. Zonder dit is achteraf niet na te
     // gaan of een knip midden in een woord viel of netjes in een pauze — en
     // dat was nu juist de hardnekkigste klacht.
@@ -505,6 +564,8 @@ async function vulGezichtsFocus(bronPad: string, segmenten: Shot[]): Promise<voi
       personen: number;
       breed: boolean;
       paneel: [number, number] | null;
+      top: number;
+      hoogte: number;
     };
     // OpenCV schrijft zelf ook naar stdout (waarschuwingen over bindings), dus
     // niet blind de hele uitvoer parsen: pak de laatste regel die JSON is.
@@ -528,6 +589,16 @@ async function vulGezichtsFocus(bronPad: string, segmenten: Shot[]): Promise<voi
       s.focusX = xs[Math.floor(xs.length / 2)];
       const ws = groep.map((m) => m.breedte).sort((a, b) => a - b);
       s.focusW = ws[Math.floor(ws.length / 2)];
+
+      // Het volledige gezichtsvak bewaren: daar toetst de kadercontrole tegen.
+      const tops = groep.map((m) => m.top).sort((a, b) => a - b);
+      const hs = groep.map((m) => m.hoogte).sort((a, b) => a - b);
+      s.gezicht = {
+        x: s.focusX,
+        breedte: s.focusW,
+        top: tops[Math.floor(tops.length / 2)],
+        hoogte: hs[Math.floor(hs.length / 2)],
+      };
 
       // Beweegt de spreker flink door het beeld, dan is strak inzoomen
       // gevaarlijk: hij loopt de uitsnede uit. Dan liever ruim kadreren.

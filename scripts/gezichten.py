@@ -184,11 +184,14 @@ for t in tijden:
                     g["ws"].append(w / beeldbreedte)
                     g["ogen"].append(oog)
                     g["kijkt"].append(kijkt)
+                    g["tops"].append(y / beeldhoogte)
+                    g["hs"].append(h / beeldhoogte)
                     g["mid"] = sum(g["xs"]) / len(g["xs"])
                     break
             else:
                 groepen.append({
                     "xs": [mid], "ws": [w / beeldbreedte], "mid": mid,
+                    "tops": [y / beeldhoogte], "hs": [h / beeldhoogte],
                     "ogen": [oog], "kijkt": [kijkt],
                     "mond": mond or (x, y + int(h * 0.55), w, max(1, int(h * 0.45))),
                 })
@@ -228,17 +231,30 @@ for t in tijden:
     naad = zoekNaad(frames)
     paneel = None
     if naad is not None and 0.15 < naad < 0.85:
-        paneel = [0.0, naad] if x_mediaan < naad else [naad, 1.0]
-        breed = False
+        # Kiezen op basis van het hele gezichtsvak, niet op het middelpunt. Ligt
+        # het hoofd óp de naad, dan valt de halve kop buiten welk paneel je ook
+        # kiest — dan is niet kadreren beter dan half kadreren.
+        links = x_mediaan - breedte / 2
+        rechts = x_mediaan + breedte / 2
+        if rechts <= naad - 0.01:
+            paneel = [0.0, naad]
+        elif links >= naad + 0.01:
+            paneel = [naad, 1.0]
+        if paneel is not None:
+            breed = False
 
     ogen = sorted(spreker["ogen"])
     kijkt = sorted(spreker["kijkt"])
+    tops = sorted(spreker["tops"])
+    hoogtes = sorted(spreker["hs"])
 
     uit.append({
         "x": round(x_mediaan, 3),
         "breedte": round(breedte, 3),
         "oog": round(ogen[len(ogen) // 2], 3),
         "kijkt": round(kijkt[len(kijkt) // 2], 3),
+        "top": round(tops[len(tops) // 2], 3),
+        "hoogte": round(hoogtes[len(hoogtes) // 2], 3),
         "personen": len(echt),
         "breed": breed,
         "paneel": paneel,
