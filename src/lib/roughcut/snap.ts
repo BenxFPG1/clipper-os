@@ -45,7 +45,13 @@ export function snapShots<T extends SnapShot>(
     woordgrenzen?: number[];
   } = {},
 ): T[] {
-  const stiltes = opties.stiltes ?? [];
+  // Alleen pauzes die er echt één zijn. De meting staat op 0,1s minimum, en die
+  // korte dipjes zijn geen adempauze maar de sluiting van een medeklinker
+  // midden in een woord ("volatiliteit" heeft er drie). Daar knippen klinkt
+  // exact als een half afgekapt woord — dit was de oorzaak, niet het zoeken
+  // zelf: hij vond keurig een stilte, alleen was het er geen.
+  const MIN_PAUZE = 0.25;
+  const stiltes = (opties.stiltes ?? []).filter((st) => st.end - st.start >= MIN_PAUZE);
   if (transcript.length === 0 && stiltes.length === 0) return shots;
 
   const venster = opties.venster ?? 2.0;
