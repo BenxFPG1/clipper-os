@@ -419,11 +419,17 @@ alter table agent_runs add constraint agent_runs_agent_check
 create table if not exists platform_sessies (
   id uuid primary key default gen_random_uuid(),
   platform text not null unique,
-  cookie text not null,
+  cookie text,
   laatste_check timestamptz,
   laatste_fout text,
   created_at timestamptz not null default now()
 );
+
+-- Het volledige verzoek dat de campagnepagina ophaalt (url + headers), geplakt
+-- als cURL uit de browser. Nodig omdat ClipArmy een SPA is: de campagnes staan
+-- niet in de HTML maar komen uit een API-call met een bearer-token.
+alter table platform_sessies alter column cookie drop not null;
+alter table platform_sessies add column if not exists verzoek jsonb;
 
 -- Montagebeslissingen van de edit-agent, bewaard bij het plan zodat een
 -- herrender geen nieuwe Claude-call kost.

@@ -4,13 +4,13 @@ import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 
 /**
- * ClipArmy-sessie instellen zodat de cloud zelf nieuwe campagnes ophaalt —
- * ook als je laptop dicht is.
+ * ClipArmy automatisch laten ophalen zodat de cloud zelf nieuwe campagnes
+ * binnenhaalt — ook als je laptop dicht is.
  *
- * Waarom een cookie en niet je wachtwoord: een wachtwoord geeft volledige
- * toegang tot je account (aankopen, wachtwoord wijzigen) en zou in onze
- * database staan. Een sessiecookie is beperkt tot lezen wat jij ook ziet,
- * verloopt vanzelf, en je trekt hem in door op ClipArmy uit te loggen.
+ * Je plakt hier het verzoek dat je eigen browser doet ("Copy as cURL"), niet je
+ * wachtwoord. Een wachtwoord geeft volledige toegang tot je account en zou in
+ * onze database staan; dit token leest alleen wat jij zelf ook ziet, verloopt
+ * vanzelf, en je trekt het in door op ClipArmy uit te loggen.
  */
 export function ClipArmySessie({
   ingesteld,
@@ -22,7 +22,7 @@ export function ClipArmySessie({
   laatsteFout: string | null;
 }) {
   const router = useRouter();
-  const [cookie, setCookie] = useState('');
+  const [curl, setCurl] = useState('');
   const [busy, setBusy] = useState(false);
   const [melding, setMelding] = useState<string | null>(null);
 
@@ -32,48 +32,66 @@ export function ClipArmySessie({
     const res = await fetch('/api/platform-sessie', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ platform: 'cliparmy', cookie: waarde }),
+      body: JSON.stringify({ platform: 'cliparmy', curl: waarde }),
     });
+    const uit = (await res.json()) as { error?: string; verzoek?: string };
     setBusy(false);
-    setMelding(res.ok ? (waarde ? 'Sessie bewaard. De cloud checkt vanaf nu elk uur.' : 'Sessie gewist.') : 'Opslaan mislukt');
-    setCookie('');
+    if (!res.ok) {
+      setMelding(uit.error ?? 'Opslaan mislukt');
+      return;
+    }
+    setMelding(waarde ? `Bewaard (${uit.verzoek}). De cloud checkt vanaf nu elk uur.` : 'Sessie gewist.');
+    setCurl('');
     router.refresh();
   }
 
   return (
-    <details className="rounded border border-neutral-800 p-4">
-      <summary className="cursor-pointer text-sm text-neutral-400">
-        ClipArmy automatisch ophalen {ingesteld ? '(aan)' : '(uit)'}
+    <details
+      open={!ingesteld}
+      className={`rounded border p-4 ${ingesteld ? 'border-neutral-800' : 'border-amber-700/60 bg-amber-950/20'}`}
+    >
+      <summary className="cursor-pointer text-sm font-medium">
+        Nieuwe ClipArmy-campagnes automatisch ophalen{' '}
+        <span className={ingesteld ? 'text-emerald-400' : 'text-amber-400'}>
+          {ingesteld ? '(staat aan)' : '(staat uit — eenmalig instellen)'}
+        </span>
       </summary>
       <div className="mt-3 space-y-3 text-sm">
         <p className="text-neutral-400">
-          Met een sessiecookie haalt de cloud elk uur nieuwe campagnes op — je laptop hoeft niet aan te staan en
-          je hoeft de site niet te bezoeken.
+          De cloud haalt dan elk uur nieuwe campagnes op: je laptop hoeft niet aan te staan en je hoeft de site
+          niet te bezoeken.
+        </p>
+        <p className="text-xs text-neutral-400">
+          ClipArmy laadt zijn campagnes via een API-call, niet in de pagina zelf. Daarom plak je hier het
+          verzoek dat je browser doet — mét het token dat erbij hoort.
         </p>
         <ol className="list-inside list-decimal space-y-1 text-xs text-neutral-400">
-          <li>Open cliparmy.nl in Chrome terwijl je ingelogd bent.</li>
-          <li>Druk op F12 (of Cmd+Option+I) → tabblad <span className="text-neutral-300">Network</span>.</li>
-          <li>Ververs de pagina, klik de bovenste regel aan.</li>
+          <li>Open de campagnepagina op ClipArmy terwijl je ingelogd bent.</li>
           <li>
-            Zoek bij <span className="text-neutral-300">Request Headers</span> de regel{' '}
-            <code className="text-neutral-300">cookie:</code> en kopieer de hele waarde erachter.
+            Druk op F12 (of Cmd+Option+I) → tabblad <span className="text-neutral-300">Netwerk</span> → filter{' '}
+            <span className="text-neutral-300">Fetch/XHR</span>.
           </li>
-          <li>Plak hem hieronder.</li>
+          <li>Ververs de pagina. Klik de regels langs tot je er een ziet met de campagnes erin (tab Preview/Respons).</li>
+          <li>
+            Rechtermuisknop op die regel →{' '}
+            <span className="text-neutral-300">Kopiëren → Kopiëren als cURL</span>.
+          </li>
+          <li>Plak hem hieronder en bewaar.</li>
         </ol>
         <textarea
-          value={cookie}
-          onChange={(e) => setCookie(e.target.value)}
-          rows={3}
-          placeholder="sb-access-token=…; sb-refresh-token=…"
+          value={curl}
+          onChange={(e) => setCurl(e.target.value)}
+          rows={4}
+          placeholder="curl 'https://…/rest/v1/campaigns?select=*' -H 'authorization: Bearer …' …"
           className="w-full rounded border border-neutral-700 bg-neutral-900 px-3 py-2 font-mono text-xs"
         />
         <div className="flex flex-wrap items-center gap-3">
           <button
-            onClick={() => bewaar(cookie)}
-            disabled={busy || !cookie.trim()}
+            onClick={() => bewaar(curl)}
+            disabled={busy || !curl.trim()}
             className="rounded border border-neutral-700 px-3 py-1.5 disabled:opacity-40"
           >
-            {busy ? 'Bezig…' : 'Sessie bewaren'}
+            {busy ? 'Bezig…' : 'Verzoek bewaren'}
           </button>
           {ingesteld && (
             <button onClick={() => bewaar('')} disabled={busy} className="text-xs text-neutral-500 hover:text-neutral-300">
@@ -89,8 +107,8 @@ export function ClipArmySessie({
           </p>
         )}
         <p className="text-xs text-neutral-500">
-          Een sessiecookie verloopt vanzelf (meestal na een paar weken). Werkt het niet meer, dan zie je dat
-          hierboven en plak je een verse.
+          Het token verloopt vanzelf. Werkt het niet meer, dan zie je dat hierboven staan en plak je een vers
+          verzoek.
         </p>
       </div>
     </details>
