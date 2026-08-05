@@ -74,7 +74,20 @@ def detecteer(frame):
                 hoog = max(16, int(breed * 0.6))
                 cx, cy = (mx1 + mx2) // 2, (my1 + my2) // 2
                 mond = (cx - breed // 2, cy - hoog // 2, breed, hoog)
-            uit.append(((x, y, w, hh), mond))
+            # Kijkrichting uit de landmarks: staat de neus links van het midden
+            # tussen de ogen, dan draait het hoofd naar links. Nodig voor de
+            # kijkruimte-regel: iemand hoort ruimte te hebben in de richting
+            # waarin hij kijkt, anders "praat hij tegen de rand".
+            kijkt = 0.0
+            ooghoogte = None
+            if len(g) >= 10:
+                ox1, oy1, ox2, oy2 = [float(v) for v in g[4:8]]
+                nx = float(g[8])
+                oogmid = (ox1 + ox2) / 2
+                ooghoogte = (oy1 + oy2) / 2
+                if w > 0:
+                    kijkt = max(-1.0, min(1.0, (nx - oogmid) / (w * 0.25)))
+            uit.append(((x, y, w, hh), mond, kijkt, ooghoogte))
         return uit
 
     grijs = cv2.equalizeHist(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY))
@@ -83,8 +96,12 @@ def detecteer(frame):
     breedte = grijs.shape[1]
     for (x, y, w, h) in profiel.detectMultiScale(cv2.flip(grijs, 1), 1.2, 5, minSize=(60, 60)):
         gevonden.append((breedte - x - w, y, w, h))
-    # Zonder landmarks nemen we de onderste helft van het gezicht als mondzone.
-    return [((x, y, w, h), (x, y + int(h * 0.55), w, int(h * 0.45))) for (x, y, w, h) in gevonden]
+    # Zonder landmarks nemen we de onderste helft van het gezicht als mondzone,
+    # en weten we niets over de kijkrichting.
+    return [
+        ((x, y, w, h), (x, y + int(h * 0.55), w, int(h * 0.45)), 0.0, y + h * 0.38)
+        for (x, y, w, h) in gevonden
+    ]
 
 
 def zoekNaad(frames):
@@ -154,20 +171,25 @@ for t in tijden:
 
     # Detecties uit alle frames groeperen per persoon: staat een gezicht steeds
     # op ongeveer dezelfde plek, dan is dat één persoon.
+    beeldhoogte = frames[0].shape[0]
     groepen = []
     for frame in frames:
-        for (vak, mond) in detecteer(frame):
+        for (vak, mond, kijkt, ooghoogte) in detecteer(frame):
             x, y, w, h = vak
             mid = (x + w / 2) / beeldbreedte
+            oog = (ooghoogte if ooghoogte is not None else y + h * 0.38) / beeldhoogte
             for g in groepen:
                 if abs(g["mid"] - mid) < SAMEN:
                     g["xs"].append(mid)
                     g["ws"].append(w / beeldbreedte)
+                    g["ogen"].append(oog)
+                    g["kijkt"].append(kijkt)
                     g["mid"] = sum(g["xs"]) / len(g["xs"])
                     break
             else:
                 groepen.append({
                     "xs": [mid], "ws": [w / beeldbreedte], "mid": mid,
+                    "ogen": [oog], "kijkt": [kijkt],
                     "mond": mond or (x, y + int(h * 0.55), w, max(1, int(h * 0.45))),
                 })
 
@@ -209,9 +231,14 @@ for t in tijden:
         paneel = [0.0, naad] if x_mediaan < naad else [naad, 1.0]
         breed = False
 
+    ogen = sorted(spreker["ogen"])
+    kijkt = sorted(spreker["kijkt"])
+
     uit.append({
         "x": round(x_mediaan, 3),
         "breedte": round(breedte, 3),
+        "oog": round(ogen[len(ogen) // 2], 3),
+        "kijkt": round(kijkt[len(kijkt) // 2], 3),
         "personen": len(echt),
         "breed": breed,
         "paneel": paneel,

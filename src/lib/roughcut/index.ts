@@ -245,15 +245,18 @@ export async function maakRuweMontage(opties: {
       `;[${extraIndex}:a]aformat=sample_rates=48000:channel_layouts=stereo,` +
       `atrim=0:${(totaleDuur + 0.5).toFixed(3)},asetpts=PTS-STARTPTS,` +
       `afade=t=in:st=0:d=1.2,afade=t=out:st=${Math.max(0, totaleDuur - 1.2).toFixed(3)}:d=1.2,` +
-      `volume='if(${stilExpr}\,0\,0.22)':eval=frame[muz]` +
+      `volume='if(${stilExpr}\,0\,0.34)':eval=frame[muz]` +
       // De spraak wordt hier twee keer gebruikt: als stuursignaal voor de
       // ducking én in de uiteindelijke mix. Eén filterlabel kan maar door één
       // filter opgegeten worden, dus eerst splitsen. Zonder die split loopt de
       // filtergraph vast — daarom kwam er tot nu toe nooit muziek uit een
       // render met een bed.
       `;[${audioUit}]asplit=2[sprk][stuur]` +
+      // Milde ducking: het bed zakt onder de spraak maar verdwijnt niet. Met
+      // ratio 12 werd er in een clip waarin bijna onafgebroken gepraat wordt
+      // helemaal niets meer van gehoord — dan kun je het net zo goed weglaten.
       `;[muz][stuur]sidechaincompress=` +
-      `threshold=0.035:ratio=12:attack=8:release=320:makeup=1:level_sc=1.4[muzged]` +
+      `threshold=0.06:ratio=4:attack=15:release=450:makeup=1:level_sc=1[muzged]` +
       `;[sprk][muzged]amix=inputs=2:duration=first:normalize=0[amix]`;
     audioUit = 'amix';
     extraIndex += 1;
@@ -272,9 +275,11 @@ export async function maakRuweMontage(opties: {
           extraInvoer.push('-i', bestand);
           filter +=
             `;[${extraIndex}:a]aformat=sample_rates=48000:channel_layouts=stereo,` +
-            // 0,35 boven een bestand dat al op -14 dBFS staat: het effect
-            // ondersteunt het moment en overstemt de stem niet.
-            `volume=0.35,adelay=${Math.round(cursor * 1000)}|${Math.round(cursor * 1000)}[fx${extraIndex}]` +
+            // 0,18 boven een bestand dat al op -14 dBFS staat. Gesynthetiseerde
+            // effecten hebben een plafond in klankkwaliteit; het minste wat we
+            // kunnen doen is ze niet naar de voorgrond duwen. Eigen bestanden
+            // met dezelfde slug in assets/sfx winnen hiervan.
+            `volume=0.18,adelay=${Math.round(cursor * 1000)}|${Math.round(cursor * 1000)}[fx${extraIndex}]` +
             `;[${audioUit}][fx${extraIndex}]amix=inputs=2:duration=first:normalize=0[am${extraIndex}]`;
           audioUit = `am${extraIndex}`;
           extraIndex += 1;

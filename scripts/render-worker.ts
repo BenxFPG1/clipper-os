@@ -283,6 +283,21 @@ async function verwerk(job: Job) {
       overlays.unshift({ pad: hookPad, start: 0, end: hookTot });
     }
 
+    // De uiteindelijke knippunten loggen. Zonder dit is achteraf niet na te
+    // gaan of een knip midden in een woord viel of netjes in een pauze — en
+    // dat was nu juist de hardnekkigste klacht.
+    {
+      let tijdlijn = 0;
+      for (const sg of segmenten) {
+        const lengte = sg.end - sg.start;
+        console.log(
+          `     knip ${sg.volgorde}: bron ${sg.start.toFixed(2)}-${sg.end.toFixed(2)}` +
+            ` → tijdlijn ${tijdlijn.toFixed(2)}-${(tijdlijn + lengte).toFixed(2)}`,
+        );
+        tijdlijn += lengte;
+      }
+    }
+
     const montage = await maakRuweMontage({
       sourceUrl: video.source_url,
       shots: segmenten,

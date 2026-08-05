@@ -59,9 +59,17 @@ export function snapShots<T extends SnapShot>(
   const starts = [...startGrenzen].sort((a, b) => a - b);
   const einden = [...eindGrenzen].sort((a, b) => a - b);
 
+  // Na citaat-uitlijning staan de grenzen op het woord, maar dat is niet
+  // hetzelfde als op een stílte. Zit de dichtstbijzijnde pauze net buiten het
+  // krappe venster, dan bleef de knip midden in de spraak staan — en dat hoor
+  // je als een half afgekapt woord. Daarom mag hij nu véél verder zoeken zolang
+  // hij alleen maar verruimt: extra ademruimte kost niets, een afgekapt woord
+  // wel.
+  const zoekVenster = opties.alleenVerruimen ? Math.max(venster, 1.6) : venster;
+
   return shots.map((shot) => {
-    const start = dichtstbij(starts, shot.start, venster, 'eerder');
-    const eind = dichtstbij(einden, shot.end, venster, 'later');
+    const start = dichtstbij(starts, shot.start, zoekVenster, 'eerder', opties.alleenVerruimen);
+    const eind = dichtstbij(einden, shot.end, zoekVenster, 'later', opties.alleenVerruimen);
 
     let nieuweStart = Math.max(0, (start ?? shot.start) - inloop);
     let nieuwEind = Math.min(maxDuur, (eind ?? shot.end) + uitloop);
@@ -89,6 +97,8 @@ function dichtstbij(
   doel: number,
   venster: number,
   voorkeur: 'eerder' | 'later',
+  /** Alleen grenzen accepteren die de kant op liggen die het shot verruimt. */
+  alleenRichting = false,
 ): number | null {
   let beste: number | null = null;
   let besteAfstand = Infinity;
@@ -96,6 +106,7 @@ function dichtstbij(
   for (const g of grenzen) {
     const afstand = Math.abs(g - doel);
     if (afstand > venster) continue;
+    if (alleenRichting && (voorkeur === 'eerder' ? g > doel : g < doel)) continue;
     const isBeter =
       afstand < besteAfstand - 0.001 ||
       (Math.abs(afstand - besteAfstand) <= 0.001 &&
