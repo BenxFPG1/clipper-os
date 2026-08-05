@@ -9,10 +9,61 @@ export type Huisstijl = { accent?: string | null; font?: string | null };
  * Merk-fonts (OFL-licentie, meegeleverd in assets/fonts). Eén keer registreren;
  * daarna kiest de huisstijl van de campagne welke gebruikt wordt.
  */
-const FONTS: Record<string, { bestand: string; familie: string; gewicht: string }> = {
-  archivo: { bestand: 'ArchivoBlack-Regular.ttf', familie: 'Archivo Black', gewicht: '400' },
-  bebas: { bestand: 'BebasNeue-Regular.ttf', familie: 'Bebas Neue', gewicht: '400' },
-  inter: { bestand: 'Inter-Variable.ttf', familie: 'Inter', gewicht: '800' },
+export const FONTS: Record<string, { bestand: string; familie: string; gewicht: string; karakter: string }> = {
+  archivo: {
+    bestand: 'ArchivoBlack-Regular.ttf',
+    familie: 'Archivo Black',
+    gewicht: '400',
+    karakter: 'Vet en breed, schreefloos. Neutraal-krachtig; past bij nieuws, zaken en alles wat gewicht moet hebben.',
+  },
+  anton: {
+    bestand: 'Anton-Regular.ttf',
+    familie: 'Anton',
+    gewicht: '400',
+    karakter: 'Extreem vet en smal. Schreeuwerig in de goede zin; past bij entertainment, sport en harde hooks.',
+  },
+  bebas: {
+    bestand: 'BebasNeue-Regular.ttf',
+    familie: 'Bebas Neue',
+    gewicht: '400',
+    karakter: 'Smal, hoog, alleen kapitalen. Modern en sportief; past bij lifestyle, fitness en jonge merken.',
+  },
+  oswald: {
+    bestand: 'Oswald-Variable.ttf',
+    familie: 'Oswald',
+    gewicht: '600',
+    karakter: 'Smal en zakelijk, iets klassieker dan Bebas. Past bij journalistiek, documentaire en analyse.',
+  },
+  montserrat: {
+    bestand: 'Montserrat-Variable.ttf',
+    familie: 'Montserrat',
+    gewicht: '800',
+    karakter: 'Rond en vriendelijk geometrisch. Past bij consumentenmerken, food, reizen en alles luchtigs.',
+  },
+  inter: {
+    bestand: 'Inter-Variable.ttf',
+    familie: 'Inter',
+    gewicht: '800',
+    karakter: 'Neutraal en schermgericht. Past bij tech, software en fintech.',
+  },
+  space_grotesk: {
+    bestand: 'SpaceGrotesk-Variable.ttf',
+    familie: 'Space Grotesk',
+    gewicht: '700',
+    karakter: 'Eigenzinnig schreefloos met technische inslag. Past bij startups, crypto en design.',
+  },
+  playfair: {
+    bestand: 'PlayfairDisplay-Variable.ttf',
+    familie: 'Playfair Display',
+    gewicht: '700',
+    karakter: 'Schreef met sterk contrast. Past bij luxe, mode, interieur en cultuur.',
+  },
+  dm_serif: {
+    bestand: 'DMSerifDisplay-Regular.ttf',
+    familie: 'DM Serif Display',
+    gewicht: '400',
+    karakter: 'Warme, redactionele schreef. Past bij media, opinie en persoonlijke verhalen.',
+  },
 };
 
 let fontsGeladen = false;

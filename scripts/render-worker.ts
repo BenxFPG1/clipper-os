@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { readFile, stat } from 'node:fs/promises';
+import { readFile, rm, stat } from 'node:fs/promises';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -12,6 +12,9 @@ import { lijnShotsUit } from '../src/lib/roughcut/uitlijnen';
 import { runEditAgent, beslissingenVoorClip } from '../src/lib/agents/edit';
 
 import { zorgVoorMuziekbed } from '../src/lib/muziek';
+
+import { kiesHuisstijl } from '../src/lib/agents/huisstijl';
+import { pakFrames } from '../src/lib/roughcut/frames';
 
 const BUCKET = 'montages';
 /** Ruim onder de 50MB-limiet van de gratis opslag; grotere clips slaan we over. */
@@ -264,7 +267,17 @@ async function verwerk(job: Job) {
     if (hookTekst) {
       const hookPad = join(kaartMap, `c${nummer}-hook.png`);
       await tekenHookKaart(hookTekst, hookPad, stijl);
-      overlays.unshift({ pad: hookPad, start: 0, end: 2.6 });
+      const hookTot = 2.6;
+      // Twee kaarten tegelijk in beeld is één te veel: de hook ís de belofte
+      // en moet die eerste seconden alleen staan. Kaarten die eronder zouden
+      // vallen schuiven erachteraan, of vervallen als er niets van overblijft.
+      for (let k = overlays.length - 1; k >= 0; k--) {
+        if (overlays[k].start < hookTot) {
+          if (overlays[k].end - hookTot < 0.7) overlays.splice(k, 1);
+          else overlays[k] = { ...overlays[k], start: hookTot };
+        }
+      }
+      overlays.unshift({ pad: hookPad, start: 0, end: hookTot });
     }
 
     const montage = await maakRuweMontage({
@@ -358,15 +371,50 @@ async function bepaalHuisstijl(
   if (!v?.campaign_id) return { font: 'archivo' };
   const { data: c } = await supabase.from('campaigns').select('huisstijl').eq('id', v.campaign_id).single();
   const bestaand = (c?.huisstijl as { accent?: string; font?: string } | null) ?? {};
-  if (bestaand.accent) return { accent: bestaand.accent, font: bestaand.font ?? 'archivo' };
+  // Al bepaald? Dan niet opnieuw: de huisstijl hoort over alle clips van een
+  // campagne hetzelfde te zijn, en dit scheelt een call per render.
+  if (bestaand.accent && bestaand.font) return { accent: bestaand.accent, font: bestaand.font };
 
-  const kleur = await kleurUitThumbnail(sourceUrl);
+  const kleur = bestaand.accent ?? (await kleurUitThumbnail(sourceUrl));
+
+  // Laat de huisstijl-agent kijken naar het materiaal in plaats van alleen de
+  // dominante kleur uit te rekenen. Het lettertype draagt minstens zoveel merk
+  // als de kleur, en dat valt niet uit pixels te berekenen.
+  let map: string | null = null;
+  try {
+    const { data: camp } = await supabase
+      .from('campaigns')
+      .select('name, briefing')
+      .eq('id', v.campaign_id)
+      .single();
+
+    const frames = await pakFrames(sourceUrl, { maxFrames: 4 });
+    map = frames.map;
+    if (frames.frames.length > 0) {
+      const keuze = await kiesHuisstijl({
+        campagneNaam: (camp?.name as string) ?? 'onbekend',
+        briefing: (camp?.briefing as string | null) ?? null,
+        beeldPaden: frames.frames.map((f) => f.pad),
+        gemetenAccent: kleur,
+      });
+      await supabase
+        .from('campaigns')
+        .update({ huisstijl: { accent: keuze.accent, font: keuze.font, bron: 'gezien', waarom: keuze.waarom } })
+        .eq('id', v.campaign_id);
+      console.log(`  huisstijl gezien: ${keuze.accent} + ${keuze.font} — ${keuze.waarom}`);
+      return { accent: keuze.accent, font: keuze.font };
+    }
+  } catch (e) {
+    console.log(`  huisstijl-agent niet gelukt (${(e as Error).message.slice(0, 90)}); kleur uit thumbnail`);
+  } finally {
+    if (map) await rm(map, { recursive: true, force: true });
+  }
+
   if (kleur) {
     await supabase
       .from('campaigns')
       .update({ huisstijl: { ...bestaand, accent: kleur, bron: 'thumbnail' } })
       .eq('id', v.campaign_id);
-    console.log(`  huisstijl bepaald uit thumbnail: ${kleur}`);
   }
   return { accent: kleur, font: bestaand.font ?? 'archivo' };
 }
