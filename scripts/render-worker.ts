@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { db } from '../src/lib/supabase';
 import { requireEnv } from '../src/lib/env';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { Shot, maakRuweMontage, detecteerStiltes, meetRuisvloer, bepaalSegmenten, zorgVoorBron, type BurnOverlay } from '../src/lib/roughcut';
 import { maakTekstkaarten, tekenHookKaart, kleurUitThumbnail, kaartenMap, type Huisstijl } from '../src/lib/roughcut/tekstkaarten';
 import { lijnShotsUit } from '../src/lib/roughcut/uitlijnen';
@@ -372,18 +372,48 @@ async function bepaalHuisstijl(
 }
 
 /**
- * Meet per segment waar het grootste gezicht staat en zet dat als focusX,
+ * Welke python heeft OpenCV én numpy? Op een machine met meerdere
+ * installaties wees `python3` niet per se naar dezelfde als waar pip in
+ * installeerde, en dan viel de sprekerdetectie stil terug op het midden zonder
+ * dat iemand het merkte.
+ */
+let pythonKeuze: string | null = null;
+function pythonMetOpenCV(): string {
+  if (pythonKeuze) return pythonKeuze;
+  const kandidaten = [
+    process.env.PYTHON_BIN,
+    'python3',
+    '/usr/local/bin/python3',
+    '/opt/homebrew/bin/python3',
+    'python',
+  ].filter(Boolean) as string[];
+
+  for (const kandidaat of kandidaten) {
+    const proef = spawnSync(kandidaat, ['-c', 'import cv2, numpy'], { stdio: 'ignore' });
+    if (proef.status === 0) {
+      pythonKeuze = kandidaat;
+      return kandidaat;
+    }
+  }
+  pythonKeuze = 'python3';
+  return pythonKeuze;
+}
+
+/**
+ * Meet per segment waar de spreker staat en zet dat als focusX,
  * zodat de verticale uitsnede de spreker volgt in plaats van blind het midden
  * te pakken. Draait via OpenCV (python); ontbreekt dat, dan blijft het midden.
  */
 async function vulGezichtsFocus(bronPad: string, segmenten: Shot[]): Promise<void> {
-  const zonderScriptFocus = segmenten.filter((s) => !s.focus);
+  // Alle segmenten meten, ook die waar het plan al een focus opgaf: de meting
+  // is betrouwbaarder dan de gok van een agent die de beelden niet ziet.
+  const zonderScriptFocus = segmenten;
   if (zonderScriptFocus.length === 0) return;
 
   const tijden = zonderScriptFocus.map((s) => (s.start + s.end) / 2);
   try {
     const uit = await new Promise<string>((klaar, fout) => {
-      const kind = spawn('python3', ['scripts/gezichten.py', bronPad, JSON.stringify(tijden)]);
+      const kind = spawn(pythonMetOpenCV(), ['scripts/gezichten.py', bronPad, JSON.stringify(tijden)]);
       let stdout = '';
       let stderr = '';
       kind.stdout.on('data', (d) => (stdout += d));
@@ -392,8 +422,18 @@ async function vulGezichtsFocus(bronPad: string, segmenten: Shot[]): Promise<voi
       kind.on('close', (code) => (code === 0 ? klaar(stdout) : fout(new Error(stderr.slice(-150)))));
     });
     type Meting = { x: number; breedte: number; personen: number; breed: boolean };
-    const posities = JSON.parse(uit.trim() || '[]') as (Meting | null)[];
-    if (posities.length === 0) return;
+    // OpenCV schrijft zelf ook naar stdout (waarschuwingen over bindings), dus
+    // niet blind de hele uitvoer parsen: pak de laatste regel die JSON is.
+    const regel = uit
+      .split('\n')
+      .map((r) => r.trim())
+      .reverse()
+      .find((r) => r.startsWith('['));
+    const posities = JSON.parse(regel || '[]') as (Meting | null)[];
+    if (posities.length === 0) {
+      console.log(`     LET OP: sprekerdetectie leverde niets op (${uit.trim().slice(0, 100)})`);
+      return;
+    }
 
     let breedGeteld = 0;
     zonderScriptFocus.forEach((s, i) => {
@@ -412,8 +452,11 @@ async function vulGezichtsFocus(bronPad: string, segmenten: Shot[]): Promise<voi
       `     spreker in beeld: ${gevonden}/${posities.length} segmenten` +
         (breedGeteld ? `, ${breedGeteld}x meerdere personen (niet ingezoomd)` : ''),
     );
-  } catch {
-    // Geen OpenCV of geen leesbare video: het midden is de nette terugval.
+  } catch (e) {
+    // Geen OpenCV of geen leesbare video. Dat is geen ramp — het midden is de
+    // terugval — maar het moet wél zichtbaar zijn: de detectie faalde eerder
+    // maandenlang stil, en dan kadreert de hele tool blind.
+    console.log(`     LET OP: sprekerdetectie mislukt (${(e as Error).message.slice(0, 120)})`);
   }
 }
 

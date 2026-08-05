@@ -51,7 +51,7 @@ jobs:
 
       # Gezichtsdetectie voor het kadreren van de verticale uitsnede.
       - name: Installeer OpenCV en faster-whisper
-        run: pip3 install --quiet opencv-python-headless faster-whisper
+        run: pip3 install --quiet "opencv-python-headless<5" "numpy<2.3" faster-whisper
 
       - name: Dependencies
         run: npm ci

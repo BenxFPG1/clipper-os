@@ -39,13 +39,23 @@ export function kaderKeten(
   );
 }
 
-/** Zet het focus-veld uit het plan om naar een horizontale positie. */
+/**
+ * Waar de uitsnede horizontaal op richt.
+ *
+ * De gemeten gezichtspositie wint van wat het plan of de edit-agent opgeeft.
+ * Die agents zien de video niet — ze leiden "links" of "rechts" af uit de
+ * tekst, en zaten er in de praktijk zo vaak naast dat de spreker helemaal
+ * buiten beeld viel. De meting is echte data uit het beeld zelf.
+ *
+ * De opgegeven focus blijft wel meetellen als er niets te meten viel (geen
+ * gezicht gevonden, bijvoorbeeld bij een shot van een grafiek of een hand).
+ */
 export function focusNaarX(focus?: string | null, gemeten?: number | null): number {
+  if (typeof gemeten === 'number') return gemeten;
   if (focus === 'links') return 0.18;
   if (focus === 'rechts') return 0.82;
   if (focus === 'midden') return 0.5;
-  // Geen scriptkeuze: gemeten gezichtspositie, anders het midden.
-  return gemeten ?? 0.5;
+  return 0.5;
 }
 
 /**
