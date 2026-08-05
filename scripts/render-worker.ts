@@ -9,6 +9,7 @@ import { spawn } from 'node:child_process';
 import { Shot, maakRuweMontage, detecteerStiltes, bepaalSegmenten, zorgVoorBron, type BurnOverlay } from '../src/lib/roughcut';
 import { maakTekstkaarten, tekenHookKaart, kleurUitThumbnail, kaartenMap, type Huisstijl } from '../src/lib/roughcut/tekstkaarten';
 import { lijnShotsUit } from '../src/lib/roughcut/uitlijnen';
+import { runEditAgent, beslissingenVoorClip } from '../src/lib/agents/edit';
 
 const BUCKET = 'montages';
 /** Ruim onder de 50MB-limiet van de gratis opslag; grotere clips slaan we over. */
@@ -95,7 +96,7 @@ async function verwerk(job: Job) {
 
   const { data: plan, error } = await supabase
     .from('clip_plans')
-    .select('plan')
+    .select('plan, edit_beslissingen')
     .eq('video_id', job.video_id)
     .order('created_at', { ascending: false })
     .limit(1)
@@ -146,6 +147,20 @@ async function verwerk(job: Job) {
   const stijl = await bepaalHuisstijl(supabase, job.video_id, video.source_url);
   const kaartMap = await kaartenMap(werkmap);
 
+  // De edit-agent bepaalt hoe er gemonteerd wordt: kader, focus, ingrepen,
+  // kaarten en muziek per shot. Eén call voor alle clips, bewaard bij het
+  // plan — een herrender kost dus niets extra.
+  let editPlan = (plan.edit_beslissingen as Awaited<ReturnType<typeof runEditAgent>> | null) ?? null;
+  if (!editPlan) {
+    try {
+      console.log('  edit-agent ontwerpt de montage…');
+      editPlan = await runEditAgent(job.video_id, { onVoortgang: (m) => console.log(`  ${m}`) });
+      console.log(`  montagebeslissingen voor ${editPlan.clips.length} clip(s)`);
+    } catch (e) {
+      console.log(`  edit-agent niet beschikbaar (${(e as Error).message.slice(0, 80)}); standaardregels`);
+    }
+  }
+
   // Bron en stiltes vóór de eerste clip klaarzetten: anders mist clip 1 de
   // spraakpauze-knippen en de gezichtsfocus die de rest wel krijgt.
   const bronPad = await zorgVoorBron(video.source_url, bronmap, (m) => console.log(`  ${m}`));
@@ -194,6 +209,30 @@ async function verwerk(job: Job) {
     // Gezichtsfocus per segment (alleen waar het script geen focus opgeeft).
     await vulGezichtsFocus(bronPad, segmenten);
 
+    // Beslissingen van de edit-agent op de segmenten leggen. Subsegmenten
+    // (ontstaan door dode lucht weg te knippen) erven van hun bronshot, maar
+    // krijgen de tegenovergestelde schaal zodat de naad als nadruk leest.
+    const editClip = beslissingenVoorClip(editPlan, nummer);
+    if (editClip) {
+      let vorigeZoom: string | undefined;
+      for (const seg of segmenten) {
+        const besluit = editClip.shots.find((sh) => sh.volgorde === seg.volgorde)
+          ?? editClip.shots[Math.min(editClip.shots.length - 1, (seg.volgorde ?? 1) - 1)];
+        if (!besluit) continue;
+        if (besluit.focus !== 'auto') seg.focus = besluit.focus;
+        seg.beeld_effect = besluit.beeld_effect;
+        seg.sfx = besluit.sfx;
+        if (besluit.tekstkaart) {
+          seg.edit_notitie = `${seg.edit_notitie ?? ''} "${besluit.tekstkaart}"`.trim();
+          seg.beeld_effect = 'tekstkaart';
+        }
+        if ((seg as { subKnip?: boolean }).subKnip && besluit.beeld_effect === vorigeZoom) {
+          seg.beeld_effect = besluit.beeld_effect === 'punch_in' ? 'geen' : 'punch_in';
+        }
+        vorigeZoom = seg.beeld_effect;
+      }
+    }
+
     // Kaarten en hook: subsegmenten (uit de dode-luchtsplitsing) krijgen geen
     // eigen kaart, anders staat dezelfde kaart er twee keer.
     const kaartSegmenten = segmenten.map((sgm) =>
@@ -218,15 +257,17 @@ async function verwerk(job: Job) {
       alGesegmenteerd: true,
       outputPad: lokaal,
       werkmap: bronmap,
-      kader: clip.kader ?? 'vullend',
+      kader: editClip?.kader ?? clip.kader ?? 'vullend',
       overlays,
       // Eigen gelicenseerde audio uit assets/: muziekbed met ducking en
       // stiltevensters, sfx op de shots die erom vragen. Ontbreekt een
       // bestand, dan wordt het stil overgeslagen.
-      muziekPad:
-        clip.muziek && clip.muziek !== 'geen'
-          ? join(process.cwd(), 'assets', 'muziek', `${clip.muziek}.mp3`)
-          : undefined,
+      muziekPad: (() => {
+        const keuze = editClip?.muziek ?? clip.muziek;
+        return keuze && keuze !== 'geen'
+          ? join(process.cwd(), 'assets', 'muziek', `${keuze}.mp3`)
+          : undefined;
+      })(),
       sfxMap: join(process.cwd(), 'assets', 'sfx'),
       maxBytes: MAX_BYTES,
       onVoortgang: (m) => console.log(`     ${m}`),

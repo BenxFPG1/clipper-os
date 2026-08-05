@@ -424,3 +424,8 @@ create table if not exists platform_sessies (
   laatste_fout text,
   created_at timestamptz not null default now()
 );
+
+-- Montagebeslissingen van de edit-agent, bewaard bij het plan zodat een
+-- herrender geen nieuwe Claude-call kost.
+alter table clip_plans add column if not exists edit_beslissingen jsonb;
+alter table clip_plans add column if not exists edit_prompt_versie text;

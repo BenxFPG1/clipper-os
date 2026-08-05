@@ -249,9 +249,11 @@ async function runClaudeCli(
       return await runClaudeCliOnce(system, prompt, effort, model, webResearch);
     } catch (err) {
       lastErr = err as Error;
-      const transient = /stalled|overloaded|rate.?limit|50[0-9]|timed? ?out|ECONNRESET|socket hang up/i.test(
-        lastErr.message,
-      );
+      const transient =
+        /stalled|overloaded|rate.?limit|50[0-9]|timed? ?out|ECONNRESET|socket hang up/i.test(lastErr.message) ||
+        // Grote structured outputs breken soms halverwege af; dat is netwerk,
+        // geen inhoudelijke fout, dus opnieuw proberen loont.
+        /Connection closed mid-response|incomplete/i.test(lastErr.message);
       if (!transient) throw lastErr;
       console.warn(`[claude-cli] tijdelijke fout (poging ${attempt + 1}/3): ${lastErr.message.slice(0, 160)}`);
     }

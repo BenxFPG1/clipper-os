@@ -87,4 +87,46 @@ Think Media (talking-head):
 - De laatste take is bijna altijd de beste: skim de waveform, gooi alles vóór de laatste take weg, en verfijn daarna pas de naden.
 - Vier manieren om een jump-cut te verbergen, in volgorde van voorkeur: b-roll eroverheen, crop-in/crop-out (midden in de zin croppen leest als één take), een morph/flow-overgang bij weinig beweging, en als basis: zelfde houding en stemvolume aanhouden zodat de naad klein blijft.
 
+=== DE WERKWIJZE: HOE JE EEN CLIP DAADWERKELIJK MONTEERT ===
+
+Volgorde is niet vrijblijvend. Elke stap gaat uit van de vorige; door elkaar werken levert mooie beelden bij een slecht verhaal.
+
+STAP 1 — AUDIO-EDIT (het skelet)
+- Knip het gesprek zoals het moet KLINKEN, met je ogen dicht. Behoud alleen zinnen die de belofte opbouwen of inlossen.
+- Haal dode lucht weg: denkpauzes, "eh", herhaalde aanloopjes. Alles boven 0,8s zonder functie wordt 0,3s.
+- Laat staan: de ademteug vóór een onthulling, de valstilte ná een klap, en de tweede helft van een lach.
+- Toets: klopt het verhaal als je alleen luistert? Zo nee, dan is geen enkel beeld een oplossing.
+
+STAP 2 — DE NADEN AFDEKKEN (het beeld volgt de audio)
+- Elke audioknip binnen dezelfde opname geeft een zichtbare sprong. Dek elke sprong af, in deze volgorde van voorkeur:
+  1. Insert/b-roll van 2-5s die toont waar het over gaat (beeld bewijst de zin).
+  2. Kaderwissel: punch-in of uitzoomen met minstens 10% verschil — dan leest de sprong als bedoelde nadruk.
+  3. Wissel naar de reactie van de ander (bij twee personen bijna altijd de sterkste keuze).
+  4. Morph/flow-overgang als er nauwelijks beweging is.
+- Nooit twee dezelfde kadreringen achter elkaar plakken: dat is de sprong die je juist wilde verbergen.
+
+STAP 3 — J- EN L-CUTS (het geluid trekt de kijker over de knip)
+- Laat de audio van het volgende shot 3-4 frames vóór het beeld beginnen (J-cut). Bij een reactie: laat het beeld juist doorlopen over de nieuwe audio (L-cut).
+- Nooit een gat zonder spraak op een naad. Waar het even stil moet zijn (vóór de payoff), is dat een besluit, geen restant.
+
+STAP 4 — KADER EN FOCUS
+- Wie praat staat in beeld; is de reactie sterker dan de tekst, dan wint de reactie.
+- Kies per shot een focuspunt en een schaal. Belangrijkste zin = dichtst op het gezicht.
+- Houd de sprekende persoon uit de onderste 20% (platformknoppen) en respecteer eye-tracing: leg de volgende belangrijke informatie waar het oog al keek.
+
+STAP 5 — TEKST IN BEELD
+- Hook-overlay staat vanaf frame 1 en verdwijnt zodra de spanning zelf overneemt (rond 2,5s).
+- Elke tijdsprong krijgt een kaart met de sprong erop; zonder kaart denkt de kijker aan een montagefout.
+- Kernwoorden in de ondertiteling krijgen nadruk, hooguit één of twee per zin.
+
+STAP 6 — GELUID
+- Sfx alleen waar ze een functie hebben, zacht (rond de helft van het spraakniveau).
+- Muziek is een bed met ducking, start pas ná de hook, en valt volledig weg op de payoff of op een vragende beat. De stilte ná geluid is het sterkste effect dat je hebt.
+
+STAP 7 — DE EINDCONTROLE (met verse ogen, als kijker)
+- Kijk de clip één keer op geluid uit: begrijp je hem via ondertiteling en beeld alleen?
+- Kijk hem één keer met ogen dicht: klopt het verhaal op geluid alleen?
+- Zit er ergens 5 seconden zonder verandering? Dat is je uitstapmoment; los het op.
+- Kun je de clip in één zin navertellen? Zo niet, dan mist hij een rode draad — niet nog een effect.
+
 BRONNEN: Forbes-interview Hayden Hillier-Smith (2023) en zijn Edit Like an Artist-materiaal; talking-head/b-roll-praktijkgidsen (captions.ai, jryze); short-form retentie-editing (AIR Media-Tech, Schedulala); Ryan Herrick short-form/tekstanimatie-materiaal; caption-stijlonderzoek (OpusClip, VocalLab, Blitzcut, Hormozi-stijlgidsen); beat-sync/keyframe-praktijk (CapCut-gidsen, Motion Design School, Toolfarm). Plus de eigen tutorialvideo's van Hillier-Smith, Finzar, Ryan Herrick en Think Media (transcripten, aug 2026); Learn by Leo en Skai Generated leverden geen bruikbaar lesmateriaal op. Verzameld aug 2026.`;
