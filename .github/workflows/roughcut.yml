@@ -18,6 +18,13 @@ jobs:
     timeout-minutes: 60
     env:
       YTDLP_COOKIES_B64: ${{ secrets.YTDLP_COOKIES_B64 }}
+      # De montage roept zelf ook Claude aan (edit-agent en huisstijl-agent).
+      # Zonder deze vars viel dat stil terug op standaardregels: alle campagnes
+      # kregen hetzelfde lettertype.
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      CLAUDE_BACKEND: claude-code
+      CLAUDE_MODEL: claude-opus-5
+      CLAUDE_LICHT_MODEL: claude-sonnet-5
     steps:
       - uses: actions/checkout@v4
 
@@ -53,6 +60,9 @@ jobs:
       - name: Installeer OpenCV en faster-whisper
         run: pip3 install --quiet "opencv-python-headless<5" "numpy<2.3" faster-whisper
 
+      - name: Installeer Claude Code CLI
+        run: npm install -g @anthropic-ai/claude-code
+
       - name: Dependencies
         run: npm ci
 
@@ -67,4 +77,8 @@ jobs:
         env:
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          CLAUDE_BACKEND: claude-code
+          CLAUDE_MODEL: claude-opus-5
+          CLAUDE_LICHT_MODEL: claude-sonnet-5
         run: npx tsx scripts/render-worker.ts
