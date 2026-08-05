@@ -121,8 +121,13 @@ export function verwijderDodeLucht<T extends SnapShot & { volgorde?: number }>(
   stiltes: Stilte[],
   opties: { maxStilte?: number; laat?: number } = {},
 ): (T & { subKnip?: boolean })[] {
-  const maxStilte = opties.maxStilte ?? 0.8;
-  const laat = opties.laat ?? 0.3;
+  // Ruimer dan eerst (0,8s en 0,3s marge). De stiltemeting staat op -32 dB, en
+  // een uitklinkende medeklinker of een zachte laatste lettergreep zakt daar
+  // al onder. Knipte je dan strak op die grens, dan verdween het staartje van
+  // een woord — precies de klacht dat er middenin een woord geknipt wordt.
+  // Alleen echt lange pauzes wegnemen, en ruim ademruimte laten staan.
+  const maxStilte = opties.maxStilte ?? 1.1;
+  const laat = opties.laat ?? 0.55;
   if (stiltes.length === 0) return shots;
 
   const uit: (T & { subKnip?: boolean })[] = [];
@@ -136,7 +141,7 @@ export function verwijderDodeLucht<T extends SnapShot & { volgorde?: number }>(
     // Stiltes die ruim bínnen het shot vallen; de randen zijn al door het
     // snappen afgehandeld.
     const binnen = stiltes
-      .filter((st) => st.start > shot.start + 0.4 && st.end < shot.end - 0.4 && st.end - st.start > maxStilte)
+      .filter((st) => st.start > shot.start + 0.6 && st.end < shot.end - 0.6 && st.end - st.start > maxStilte)
       .sort((a, b) => a.start - b.start);
 
     if (binnen.length === 0) {

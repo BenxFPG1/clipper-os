@@ -492,6 +492,7 @@ async function vulGezichtsFocus(bronPad: string, segmenten: Shot[]): Promise<voi
       const m = posities[i];
       if (!m) return;
       s.focusX = m.x;
+      s.focusW = m.breedte;
       // Twee mensen ver uit elkaar zonder duidelijke spreker: niet inzoomen en
       // niet strak kadreren, anders staat de uitsnede tussen twee hoofden in.
       if (m.breed) {

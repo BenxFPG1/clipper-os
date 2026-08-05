@@ -18,6 +18,8 @@ export type Shot = {
   focus?: 'links' | 'midden' | 'rechts';
   /** Gemeten gezichtspositie (0..1) uit de gezichtsdetectie. */
   focusX?: number;
+  /** Gemeten gezichtsbreedte als fractie van het beeld; begrenst de zoom. */
+  focusW?: number;
   /**
    * Meerdere mensen ver uit elkaar in beeld, zonder duidelijke spreker. Dan mag
    * er niet strak gekadreerd of ingezoomd worden: dan valt de uitsnede precies
@@ -141,14 +143,13 @@ export async function maakRuweMontage(opties: {
   let vorigeZoom = 1;
   gesorteerd.forEach((shot, i) => {
     const duur = shot.end - shot.start;
-    let zoom =
-      shot.breed
-        ? 1
-        : shot.beeld_effect === 'punch_in'
-          ? 1.12
-          : shot.beeld_effect === 'snelle_zoom'
-            ? 1.18
-            : 1;
+    // Basis-zoom uit de gekozen ingreep, plus een correctie als de spreker
+    // klein in beeld staat. Bij een tweeshot of een wijd camerastandpunt vult
+    // een 1:1 uitsnede het verticale kader met vooral decor; dan hoort er
+    // ingezoomd te worden tot het hoofd het beeld draagt.
+    const ingreepZoom =
+      shot.beeld_effect === 'punch_in' ? 1.12 : shot.beeld_effect === 'snelle_zoom' ? 1.18 : 1;
+    let zoom = Math.max(ingreepZoom, vulZoom(shot.focusW));
     // Jump-cut afdekken (editcraft): een knip binnen dezelfde opname is
     // zichtbaar als een sprong. Wissel daarom van schaal (>10% verschil) op
     // elke dode-luchtknip, zodat de sprong als bewuste punch-in leest.
@@ -250,7 +251,9 @@ export async function maakRuweMontage(opties: {
           extraInvoer.push('-i', bestand);
           filter +=
             `;[${extraIndex}:a]aformat=sample_rates=48000:channel_layouts=stereo,` +
-            `volume=0.5,adelay=${Math.round(cursor * 1000)}|${Math.round(cursor * 1000)}[fx${extraIndex}]` +
+            // 0,35 boven een bestand dat al op -14 dBFS staat: het effect
+            // ondersteunt het moment en overstemt de stem niet.
+            `volume=0.35,adelay=${Math.round(cursor * 1000)}|${Math.round(cursor * 1000)}[fx${extraIndex}]` +
             `;[${audioUit}][fx${extraIndex}]amix=inputs=2:duration=first:normalize=0[am${extraIndex}]`;
           audioUit = `am${extraIndex}`;
           extraIndex += 1;
@@ -259,6 +262,14 @@ export async function maakRuweMontage(opties: {
       cursor += duur;
     }
   }
+
+  // Tot slot de hele mix op één luidheid zetten. Social-platforms mikken rond
+  // -14 LUFS; zit je daaronder dan klinkt je clip zwak naast de rest van de
+  // feed, zit je erboven dan draaien ze hem zelf terug. De limiter houdt de
+  // ware piek onder -1,5 dBFS zodat de omzetting naar AAC bij het platform
+  // niet alsnog gaat klippen.
+  filter += `;[${audioUit}]loudnorm=I=-14:TP=-1.5:LRA=9,alimiter=limit=0.86:level=disabled[aklaar]`;
+  audioUit = 'aklaar';
 
   invoer.push(...extraInvoer);
 
@@ -489,6 +500,23 @@ export async function meetRuisvloer(
   // Mediaan: één pauze waarin iemand toevallig hoest telt niet mee.
   const gesorteerd = [...metingen].sort((a, b) => a - b);
   return Math.round(gesorteerd[Math.floor(gesorteerd.length / 2)] * 10) / 10;
+}
+
+/**
+ * Hoeveel er ingezoomd moet worden om de spreker het beeld te laten dragen.
+ *
+ * De uitsnede van 16:9 naar 9:16 pakt ongeveer een derde van de breedte. Staat
+ * een hoofd op 8% van het beeld, dan wordt dat in de uitsnede zo'n 24% — dat
+ * leest nog als een totaalshot. We mikken op ongeveer een derde van de
+ * uitsnedebreedte: groot genoeg om de blik te lezen, niet zo groot dat het
+ * hoofd de randen raakt. Boven 1,7 stoppen we: verder inzoomen kost te veel
+ * scherpte.
+ */
+function vulZoom(focusW?: number): number {
+  if (!focusW || focusW <= 0) return 1;
+  const inUitsnede = focusW * 3; // 1080 van 1920 breed is grofweg een derde
+  const gewenst = 0.33;
+  return Math.min(1.7, Math.max(1, gewenst / inUitsnede));
 }
 
 /** Lengte van een audio- of videobestand in seconden; 0 als het niet te lezen is. */

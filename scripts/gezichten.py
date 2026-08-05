@@ -158,9 +158,10 @@ for t in tijden:
     x_mediaan = xs[len(xs) // 2]
     breedte = sorted(spreker["ws"])[len(spreker["ws"]) // 2]
 
-    # Meerdere mensen ver uit elkaar én niemand duidelijk aan het woord: dan is
-    # strak kadreren juist fout — je snijdt de ander weg en belandt met een
-    # punch-in tussen twee hoofden in.
+    # Meerdere mensen in beeld? Dan kadreren we juist wél op de spreker. Het
+    # gemiddelde nemen leverde precies de mislukte uitsnede op die je in een
+    # tweeshot ziet: twee halve mensen en niemand in focus. Nu de mond de
+    # spreker aanwijst, is die keuze betrouwbaar genoeg om op te durven staan.
     posities = sorted(g["mid"] for g in echt)
     spreiding = posities[-1] - posities[0] if len(posities) > 1 else 0.0
     bewegingen = sorted((g["beweging"] for g in echt), reverse=True)
@@ -168,7 +169,7 @@ for t in tijden:
     breed = spreiding > 0.30 and not duidelijk
 
     uit.append({
-        "x": round(sum(posities) / len(posities) if breed else x_mediaan, 3),
+        "x": round(x_mediaan, 3),
         "breedte": round(breedte, 3),
         "personen": len(echt),
         "breed": breed,

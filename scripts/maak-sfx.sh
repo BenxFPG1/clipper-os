@@ -23,21 +23,28 @@ ffmpeg -y -v error -f lavfi -i "anoisesrc=d=1.6:c=white:a=0.8:r=48000" \
   -af "asendcmd='0.0 bandpass frequency 300;0.4 bandpass frequency 900;0.8 bandpass frequency 1800;1.2 bandpass frequency 3200;1.45 bandpass frequency 5200',bandpass=f=300:width_type=q:w=1.2,volume=0.5,afade=t=in:st=0:d=1.2:curve=exp,afade=t=out:st=1.5:d=0.1" \
   -ac 1 "$map/riser.wav"
 
-# impact — de klap onder het moment dat de aanname breekt.
+# impact — de klap onder het moment dat de aanname breekt. Bewust niet één
+# lage sinus: dat klinkt precies als een microfoon die verschoven wordt. Een
+# korte aanslag in de midden plus een strak uitdempende bodem leest wél als een
+# gemaakt effect.
 ffmpeg -y -v error \
-  -f lavfi -i "sine=frequency=62:duration=0.7:sample_rate=48000" \
-  -f lavfi -i "anoisesrc=d=0.09:c=white:a=0.7:r=48000" \
-  -filter_complex "[0:a]volume=0.9,afade=t=out:st=0.03:d=0.62:curve=exp[laag];[1:a]highpass=f=1200,volume=0.35,afade=t=out:st=0:d=0.09[tik];[laag][tik]amix=inputs=2:duration=longest:normalize=0,volume=1.2" \
+  -f lavfi -i "sine=frequency=95:duration=0.35:sample_rate=48000" \
+  -f lavfi -i "sine=frequency=190:duration=0.25:sample_rate=48000" \
+  -f lavfi -i "anoisesrc=d=0.07:c=white:a=0.7:r=48000" \
+  -filter_complex "[0:a]volume=0.8,afade=t=out:st=0.01:d=0.34:curve=exp[laag];[1:a]volume=0.3,afade=t=out:st=0:d=0.25:curve=exp[mid];[2:a]bandpass=f=2200:width_type=q:w=1.2,volume=0.4,afade=t=out:st=0:d=0.07[tik];[laag][mid][tik]amix=inputs=3:duration=longest:normalize=0,highpass=f=70" \
   -ac 1 "$map/impact.wav"
 
-# bass_drop — dezelfde klap maar dieper en langer, onder een visuele payoff.
-ffmpeg -y -v error -f lavfi -i "sine=frequency=48:duration=1.2:sample_rate=48000" \
-  -af "volume=1.0,afade=t=in:st=0:d=0.01,afade=t=out:st=0.1:d=1.1:curve=exp,lowpass=f=140" \
+# bass_drop — dieper en langer, onder een visuele payoff. Met een dalende toon
+# in plaats van een vaste: dat hoor je als een bewuste drop en niet als stoten.
+ffmpeg -y -v error -f lavfi -i "anoisesrc=d=1.0:c=brown:a=0.8:r=48000" \
+  -af "asendcmd='0.0 lowpass frequency 400;0.2 lowpass frequency 240;0.5 lowpass frequency 150;0.8 lowpass frequency 90',lowpass=f=400,volume=0.9,afade=t=in:st=0:d=0.02,afade=t=out:st=0.15:d=0.85:curve=exp,highpass=f=45" \
   -ac 1 "$map/bass_drop.wav"
 
-# sub_boom — korte lage klap onder een tekstkaart die binnenkomt.
-ffmpeg -y -v error -f lavfi -i "sine=frequency=54:duration=0.55:sample_rate=48000" \
-  -af "volume=0.95,afade=t=out:st=0.02:d=0.53:curve=exp,lowpass=f=170" \
+# sub_boom — korte klap onder een tekstkaart die binnenkomt.
+ffmpeg -y -v error \
+  -f lavfi -i "sine=frequency=88:duration=0.4:sample_rate=48000" \
+  -f lavfi -i "anoisesrc=d=0.05:c=white:a=0.6:r=48000" \
+  -filter_complex "[0:a]volume=0.8,afade=t=out:st=0.01:d=0.39:curve=exp[laag];[1:a]bandpass=f=1800:width_type=q:w=1.2,volume=0.3[tik];[laag][tik]amix=inputs=2:duration=longest:normalize=0,highpass=f=65" \
   -ac 1 "$map/sub_boom.wav"
 
 # ding — bevestigt een goed antwoord of een punt; grondtoon plus kwint.
@@ -65,13 +72,13 @@ ffmpeg -y -v error -f lavfi -i "anoisesrc=d=0.45:c=brown:a=0.9:r=48000" \
 echo "sfx opnieuw gebouwd:"
 ls -la "$map" | tail -n +2
 
-# Alles op hetzelfde piekniveau zetten (-4 dBFS). Anders is de ene tik
-# onhoorbaar onder de spraak en knalt de andere eroverheen; de montage regelt
-# alleen nog de gemeenschappelijke mixverhouding.
+# Alles op hetzelfde piekniveau zetten (-14 dBFS). Eerder stond dit op -4, en
+# met de mixfactor erbij kwamen de effecten harder binnen dan de stem: dat hoor
+# je niet als sound design maar als iemand die tegen de microfoon stoot.
 for f in "$map"/*.wav; do
   piek=$(ffmpeg -i "$f" -af volumedetect -f null - 2>&1 | sed -n 's/.*max_volume: \(-*[0-9.]*\) dB.*/\1/p')
-  winst=$(python3 -c "print(round(-4 - ($piek), 2))")
+  winst=$(python3 -c "print(round(-14 - ($piek), 2))")
   ffmpeg -y -v error -i "$f" -af "volume=${winst}dB" "${f%.wav}-n.wav"
   mv "${f%.wav}-n.wav" "$f"
 done
-echo "genormaliseerd op -4 dBFS piek"
+echo "genormaliseerd op -14 dBFS piek"

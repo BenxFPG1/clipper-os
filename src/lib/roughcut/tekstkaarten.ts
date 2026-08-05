@@ -76,6 +76,42 @@ function laadFonts(): void {
   }
 }
 
+/**
+ * Maakt tekst veilig voor het gekozen lettertype.
+ *
+ * Displayfonts dekken vaak alleen de Latijnse basis. Een pijl, een gedachtestreep
+ * of een typografisch aanhalingsteken valt dan terug op een leeg blokje in
+ * beeld — en dat is precies wat een kijker als "kapot" leest. We vervangen die
+ * tekens door wat ze bedoelen in plaats van te hopen dat het goed gaat.
+ */
+export function veiligeTekst(tekst: string): string {
+  const vervang: [RegExp, string][] = [
+    [/[\u2192\u27A1\u2794\u279C]/g, ' naar '],   // pijlen
+    [/[\u2190]/g, ' terug naar '],
+    [/[\u2191]/g, ' omhoog '],
+    [/[\u2193]/g, ' omlaag '],
+    [/[\u2014\u2013]/g, '-'],                      // em- en en-streepje
+    [/[\u2018\u2019\u201B]/g, "'"],
+    [/[\u201C\u201D\u201E]/g, '"'],
+    [/[\u2026]/g, '...'],
+    [/[\u00A0\u202F\u2009]/g, ' '],               // vaste en smalle spaties
+    [/[\u2212]/g, '-'],
+    [/[\u00D7]/g, 'x'],
+    [/[\u2264]/g, '<='],
+    [/[\u2265]/g, '>='],
+    [/[\u2022\u00B7]/g, '-'],
+    [/[\u20BF]/g, 'BTC'],
+    [/[\u2122]/g, ''],
+  ];
+  let uit = tekst.normalize('NFC');
+  for (const [van, naar] of vervang) uit = uit.replace(van, naar);
+
+  // Wat hierna nog buiten Latijn-1 plus euro valt, halen we eruit: liever een
+  // tekst zonder dat teken dan een blokje in beeld.
+  uit = uit.replace(/[^\u0020-\u024F\u20AC\n]/g, '');
+  return uit.replace(/\s{2,}/g, ' ').trim();
+}
+
 function fontVoor(stijl?: Huisstijl | null): { familie: string; gewicht: string } {
   laadFonts();
   const keuze = FONTS[stijl?.font ?? 'archivo'] ?? FONTS.archivo;
@@ -188,7 +224,8 @@ function kaartkleuren(stijl?: Huisstijl | null): { vlak: string; tekst: string; 
   return { vlak: accent, tekst: tekstOp(accent), rand: tekstOp(accent) === '#FFFFFF' ? null : 'rgba(0,0,0,0.25)' };
 }
 
-async function tekenKaart(tekst: string, pad: string, stijl?: Huisstijl | null): Promise<void> {
+async function tekenKaart(ruweTekst: string, pad: string, stijl?: Huisstijl | null): Promise<void> {
+  const tekst = veiligeTekst(ruweTekst);
   const accent = stijl?.accent ?? undefined;
   const font = fontVoor(stijl);
   const B = 1080;
@@ -236,7 +273,8 @@ async function tekenKaart(tekst: string, pad: string, stijl?: Huisstijl | null):
  * hoger dan een tijdkaart, want dit ís de belofte van de clip. Meerdere regels
  * worden zelf afgebroken.
  */
-export async function tekenHookKaart(tekst: string, pad: string, stijl?: Huisstijl | null): Promise<void> {
+export async function tekenHookKaart(ruweTekst: string, pad: string, stijl?: Huisstijl | null): Promise<void> {
+  const tekst = veiligeTekst(ruweTekst);
   const accent = stijl?.accent ?? undefined;
   const font = fontVoor(stijl);
   const B = 1080;
