@@ -23,8 +23,35 @@ export function ClipArmySessie({
 }) {
   const router = useRouter();
   const [curl, setCurl] = useState('');
+  const [sleutel, setSleutel] = useState('');
   const [busy, setBusy] = useState(false);
   const [melding, setMelding] = useState<string | null>(null);
+
+  const site = typeof window !== 'undefined' ? window.location.origin : '';
+  // De bladwijzer leest de sessie uit de opslag van je browser. Het
+  // vernieuwingstoken staat namelijk nergens in een netwerkverzoek — je kunt het
+  // dus niet kopiëren, alleen op de pagina zelf ophalen. En juist dát token is
+  // wat het uurlijks ophalen laat werken zonder dat jij er nog iets voor doet.
+  const koppelCode = sleutel
+    ? `javascript:(async()=>{try{` +
+      `let a=null,ref=null;` +
+      `for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);if(!/auth-token/.test(k))continue;` +
+      `try{const v=JSON.parse(localStorage.getItem(k));const t=v&&(v.access_token?v:v.currentSession);` +
+      `if(t&&t.access_token){a=t;ref=(k.match(/sb-([a-z0-9]+)-auth-token/)||[])[1];}}catch(e){}}` +
+      `if(!a)return alert('Geen sessie gevonden. Ben je ingelogd op ClipArmy?');` +
+      `let key=null;` +
+      `for(const s of document.querySelectorAll('script[src]')){try{const t=await (await fetch(s.src)).text();` +
+      `const m=t.match(/eyJ[A-Za-z0-9_-]+\\.eyJ[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+/g)||[];` +
+      `for(const c of m){try{const p=JSON.parse(atob(c.split('.')[1].replace(/-/g,'+').replace(/_/g,'/')));` +
+      `if(p.role==='anon'){key=c;break;}}catch(e){}}}catch(e){}if(key)break;}` +
+      `if(!key)return alert('Publieke sleutel niet gevonden op de pagina.');` +
+      `const r=await fetch('${site}/api/platform-sessie/extern',{method:'POST',` +
+      `headers:{'content-type':'application/json','x-clipper-sleutel':'${sleutel.replace(/'/g, '')}'},` +
+      `body:JSON.stringify({projectUrl:'https://'+ref+'.supabase.co',apikey:key,` +
+      `access_token:a.access_token,refresh_token:a.refresh_token})});` +
+      `const j=await r.json();alert(r.ok?'Gekoppeld. Clipper OS haalt vanaf nu elk uur zelf nieuwe campagnes op.':'Mislukt: '+(j.error||r.status));` +
+      `}catch(e){alert('Mislukt: '+e)}})()`
+    : '';
 
   async function bewaar(waarde: string) {
     setBusy(true);
@@ -61,9 +88,38 @@ export function ClipArmySessie({
           De cloud haalt dan elk uur nieuwe campagnes op: je laptop hoeft niet aan te staan en je hoeft de site
           niet te bezoeken.
         </p>
-        <p className="text-xs text-neutral-400">
-          ClipArmy laadt zijn campagnes via een API-call, niet in de pagina zelf. Daarom plak je hier het
-          verzoek dat je browser doet — mét het token dat erbij hoort.
+        <div className="rounded border border-neutral-800 bg-neutral-900/60 p-3">
+          <p className="mb-2 text-sm font-medium">Aanbevolen: koppelen met één klik</p>
+          <p className="mb-2 text-xs text-neutral-400">
+            Een toegangstoken verloopt na ongeveer een uur. Alleen het vernieuwingstoken houdt de koppeling
+            in de lucht, en dat staat in geen enkel netwerkverzoek — het is niet te kopiëren, alleen vanaf de
+            pagina uit te lezen. Deze bladwijzer doet dat.
+          </p>
+          <input
+            type="password"
+            value={sleutel}
+            onChange={(e) => setSleutel(e.target.value)}
+            placeholder="Clipper OS-wachtwoord"
+            className="mb-2 w-56 rounded border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-xs"
+          />
+          {sleutel && (
+            <p className="text-xs text-neutral-400">
+              <a
+                href={koppelCode}
+                onClick={(e) => e.preventDefault()}
+                className="mr-3 inline-block cursor-grab rounded bg-neutral-100 px-3 py-1.5 font-medium text-neutral-900"
+                title="Sleep mij naar je bladwijzerbalk"
+              >
+                → ClipArmy koppelen
+              </a>
+              sleep naar je bladwijzerbalk, ga naar cliparmy.nl en klik hem daar aan
+            </p>
+          )}
+        </div>
+
+        <p className="text-xs text-neutral-500">
+          Of handmatig, als de bladwijzer niet lukt: plak het verzoek dat je browser doet. Werkt, maar het
+          token daarin verloopt na een uur — dan moet je opnieuw plakken.
         </p>
         <ol className="list-inside list-decimal space-y-1 text-xs text-neutral-400">
           <li>Open de campagnepagina op ClipArmy terwijl je ingelogd bent.</li>

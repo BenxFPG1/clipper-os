@@ -2,6 +2,9 @@ import { db } from './supabase';
 import { importeerCampagneTekst } from './campagne-import';
 import type { Verzoek } from './curl';
 
+/** Wat er nodig is om zelf een vers toegangstoken te halen. */
+type Vernieuwing = { projectUrl: string; apikey: string; refresh_token: string };
+
 /**
  * Haalt nieuwe ClipArmy-campagnes op in de cloud door het verzoek te herhalen
  * dat jouw eigen browser doet — url, headers en token, één keer geplakt via
@@ -27,9 +30,31 @@ export async function haalClipArmyCampagnes(): Promise<{
     .eq('platform', 'cliparmy')
     .maybeSingle();
 
-  const verzoek = (sessie?.verzoek as Verzoek | null) ?? maakVerzoekVanCookie(sessie?.cookie as string | null);
+  const verzoek: (Verzoek & { auth?: Vernieuwing }) | null =
+    (sessie?.verzoek as (Verzoek & { auth?: Vernieuwing }) | null) ??
+    maakVerzoekVanCookie(sessie?.cookie as string | null);
   if (!verzoek) {
     return { nieuw: [], bekeken: 0, fout: 'Geen ClipArmy-sessie ingesteld.' };
+  }
+
+  // Een toegangstoken van dit soort platforms leeft ongeveer een uur. Een
+  // uurlijkse cron met een handmatig geplakt token is dus per definitie
+  // kansloos: tegen de tijd dat hij draait is het al verlopen. Met het
+  // vernieuwingstoken halen we zelf een vers token op, precies zoals de site
+  // zelf doet, en bewaren we het nieuwe vernieuwingstoken voor de volgende keer.
+  if (verzoek.auth?.refresh_token) {
+    try {
+      const vers = await vernieuwToken(verzoek.auth);
+      verzoek.headers.authorization = `Bearer ${vers.access_token}`;
+      await supabase
+        .from('platform_sessies')
+        .update({
+          verzoek: { ...verzoek, auth: { ...verzoek.auth, refresh_token: vers.refresh_token } },
+        })
+        .eq('platform', 'cliparmy');
+    } catch (e) {
+      return { nieuw: [], bekeken: 0, fout: await noteer(`Token vernieuwen mislukt: ${(e as Error).message.slice(0, 120)}`) };
+    }
   }
 
   let res: Response;
@@ -84,6 +109,25 @@ export async function haalClipArmyCampagnes(): Promise<{
     .eq('platform', 'cliparmy');
 
   return { nieuw, bekeken: blokken.length };
+}
+
+/**
+ * Ruilt het vernieuwingstoken in voor een vers toegangstoken. Dit is hetzelfde
+ * verzoek dat de site zelf elk uur doet; wij doen het alleen vanaf de server,
+ * waar geen CORS geldt.
+ */
+async function vernieuwToken(auth: Vernieuwing): Promise<{ access_token: string; refresh_token: string }> {
+  const res = await fetch(`${auth.projectUrl.replace(/\/$/, '')}/auth/v1/token?grant_type=refresh_token`, {
+    method: 'POST',
+    headers: { apikey: auth.apikey, 'content-type': 'application/json' },
+    body: JSON.stringify({ refresh_token: auth.refresh_token }),
+    signal: AbortSignal.timeout(20_000),
+  });
+  if (!res.ok) throw new Error(`${res.status} ${(await res.text()).slice(0, 80)}`);
+
+  const j = (await res.json()) as { access_token?: string; refresh_token?: string };
+  if (!j.access_token || !j.refresh_token) throw new Error('antwoord zonder tokens');
+  return { access_token: j.access_token, refresh_token: j.refresh_token };
 }
 
 /** Oude opzet: alleen een cookie bewaard. Blijft werken voor pure HTML-pagina's. */
