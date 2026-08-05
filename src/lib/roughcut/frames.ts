@@ -16,23 +16,35 @@ import { ytdlpAuthArgs } from '../ingest/youtube';
  */
 export async function pakFrames(
   bronUrl: string,
-  opties: { maxFrames?: number; hookSeconden?: number; werkmap?: string } = {},
+  opties: {
+    maxFrames?: number;
+    hookSeconden?: number;
+    werkmap?: string;
+    /**
+     * Al gedownload bestand. Zonder dit haalt hij de video zelf op, en dat is
+     * bij een bron van tien minuten al gauw een paar minuten wachten — zonde
+     * als de montage hem net al op schijf had staan.
+     */
+    bronBestand?: string;
+  } = {},
 ): Promise<{ map: string; frames: { pad: string; seconde: number }[]; duur: number | null }> {
   const maxFrames = opties.maxFrames ?? 12;
   const hookSeconden = opties.hookSeconden ?? 6;
 
   const map = opties.werkmap ?? (await mkdtemp(join(tmpdir(), 'clipper-frames-')));
-  const video = join(map, 'bron.mp4');
+  const video = opties.bronBestand ?? join(map, 'bron.mp4');
 
-  await run(resolveBinary('yt-dlp'), [
-    ...ytdlpAuthArgs(),
-    '--no-warnings',
-    '--extractor-args', 'youtube:player_client=default,tv',
-    '-f', 'bv*[height<=1080]+ba/b[height<=1080]/b',
-    '--merge-output-format', 'mp4',
-    '-o', video,
-    bronUrl,
-  ]);
+  if (!opties.bronBestand) {
+    await run(resolveBinary('yt-dlp'), [
+      ...ytdlpAuthArgs(),
+      '--no-warnings',
+      '--extractor-args', 'youtube:player_client=default,tv',
+      '-f', 'bv*[height<=1080]+ba/b[height<=1080]/b',
+      '--merge-output-format', 'mp4',
+      '-o', video,
+      bronUrl,
+    ]);
+  }
 
   const duur = await probeDuur(video);
 

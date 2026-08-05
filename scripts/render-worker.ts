@@ -149,7 +149,6 @@ async function verwerk(job: Job) {
 
   // Huisstijl van de campagne: eenmalig de accentkleur uit de thumbnail halen
   // en bewaren, zodat kaarten en hook bij het merk horen.
-  const stijl = await bepaalHuisstijl(supabase, job.video_id, video.source_url);
   const kaartMap = await kaartenMap(werkmap);
 
   // De edit-agent bepaalt hoe er gemonteerd wordt: kader, focus, ingrepen,
@@ -169,6 +168,10 @@ async function verwerk(job: Job) {
   // Bron en stiltes vóór de eerste clip klaarzetten: anders mist clip 1 de
   // spraakpauze-knippen en de gezichtsfocus die de rest wel krijgt.
   const bronPad = await zorgVoorBron(video.source_url, bronmap, (m) => console.log(`  ${m}`));
+
+  // Huisstijl pas hier: de agent kijkt naar frames uit de bron, en die staat nu
+  // op schijf. Eerder zou hij de hele video een tweede keer downloaden.
+  const stijl = await bepaalHuisstijl(supabase, job.video_id, video.source_url, bronPad);
   if (!stiltes) {
     try {
       stiltes = await detecteerStiltes(bronPad);
@@ -366,6 +369,7 @@ async function bepaalHuisstijl(
   supabase: ReturnType<typeof db>,
   videoId: string,
   sourceUrl: string,
+  bronBestand?: string,
 ): Promise<Huisstijl> {
   const { data: v } = await supabase.from('videos').select('campaign_id').eq('id', videoId).single();
   if (!v?.campaign_id) return { font: 'archivo' };
@@ -388,7 +392,7 @@ async function bepaalHuisstijl(
       .eq('id', v.campaign_id)
       .single();
 
-    const frames = await pakFrames(sourceUrl, { maxFrames: 4 });
+    const frames = await pakFrames(sourceUrl, { maxFrames: 4, bronBestand });
     map = frames.map;
     if (frames.frames.length > 0) {
       const keuze = await kiesHuisstijl({
