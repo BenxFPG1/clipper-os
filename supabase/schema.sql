@@ -396,3 +396,31 @@ alter table render_jobs add column if not exists hartslag timestamptz default no
 
 -- Huisstijl per campagne (v1: accentkleur uit de thumbnail van de bron).
 alter table campaigns add column if not exists huisstijl jsonb;
+
+-- === v1.8: zelflerende kennisvault ===
+-- De basisteksten (storycraft, editcraft, onderzoek) staan in de code; deze
+-- tabel bevat de aanvullingen die de wekelijkse kennis-agent zelf bijleert
+-- via webresearch. Elke aanvulling is zichtbaar en uitzetbaar in de UI.
+create table if not exists vault_kennis (
+  id uuid primary key default gen_random_uuid(),
+  categorie text not null check (categorie in ('storycraft', 'editcraft', 'onderzoek')),
+  titel text not null,
+  inhoud text not null,
+  bron text,
+  actief boolean not null default true,
+  created_at timestamptz not null default now()
+);
+alter table agent_runs drop constraint if exists agent_runs_agent_check;
+alter table agent_runs add constraint agent_runs_agent_check
+  check (agent in ('retro', 'scout', 'eval', 'kennis'));
+
+-- Sessietoken voor het ophalen van ClipArmy-campagnes in de cloud. Bewust een
+-- token dat jij zelf plakt en zelf kunt intrekken, geen wachtwoord.
+create table if not exists platform_sessies (
+  id uuid primary key default gen_random_uuid(),
+  platform text not null unique,
+  cookie text not null,
+  laatste_check timestamptz,
+  laatste_fout text,
+  created_at timestamptz not null default now()
+);

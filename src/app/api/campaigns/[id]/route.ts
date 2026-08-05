@@ -7,6 +7,9 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 
   const update: Record<string, unknown> = {};
   if (typeof body.name === 'string' && body.name.trim()) update.name = body.name.trim().slice(0, 120);
+  // 'ended' is ons archief: de campagne blijft bestaan met al zijn video's,
+  // plannen en cijfers, maar verdwijnt uit de werklijst en uit de
+  // kanaalcheck. Terugzetten is één klik.
   if (body.status && ['active', 'paused', 'ended'].includes(body.status)) update.status = body.status;
   if (typeof body.cpm_eur === 'number' && body.cpm_eur >= 0) update.cpm_eur = body.cpm_eur;
 

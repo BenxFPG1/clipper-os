@@ -43,6 +43,11 @@ type StructuredOptions<T extends z.ZodTypeAny> = {
    * (plannen, scripts) blijft op het hoofdmodel.
    */
   model?: string;
+  /**
+   * Sta WebSearch/WebFetch toe in de CLI-call. Alleen voor de kennis-agent:
+   * generatiecalls horen deterministisch op hun invoer te werken.
+   */
+  webResearch?: boolean;
 };
 
 /**
@@ -180,6 +185,7 @@ ${JSON.stringify(jsonSchema)}`;
       prompt,
       cliEffort(opts.effort),
       opts.model ?? CLAUDE_MODEL,
+      opts.webResearch ?? false,
     );
 
     void logProviderUsage('claude-code', opts.operation, tokens, costUsd * 0.92).catch(() => undefined);
@@ -232,6 +238,7 @@ async function runClaudeCli(
   prompt: string,
   effort: string,
   model: string,
+  webResearch = false,
 ): Promise<{ result: string; costUsd: number; tokens: number }> {
   // Voorbijgaande streamfouten (stalled, overloaded, 5xx) mogen geen hele
   // plannerrun weggooien: tot twee keer opnieuw proberen met korte pauze.
@@ -239,7 +246,7 @@ async function runClaudeCli(
   for (let attempt = 0; attempt < 3; attempt++) {
     if (attempt > 0) await new Promise((r) => setTimeout(r, attempt * 15_000));
     try {
-      return await runClaudeCliOnce(system, prompt, effort, model);
+      return await runClaudeCliOnce(system, prompt, effort, model, webResearch);
     } catch (err) {
       lastErr = err as Error;
       const transient = /stalled|overloaded|rate.?limit|50[0-9]|timed? ?out|ECONNRESET|socket hang up/i.test(
@@ -257,6 +264,7 @@ function runClaudeCliOnce(
   prompt: string,
   effort: string,
   model: string,
+  webResearch = false,
 ): Promise<{ result: string; costUsd: number; tokens: number }> {
   const env: NodeJS.ProcessEnv = { ...process.env };
   for (const key of Object.keys(env)) {
@@ -283,7 +291,9 @@ function runClaudeCliOnce(
     '--no-session-persistence',
     // Dit is pure generatie; de agent-tools van Claude Code blijven uit.
     '--disallowed-tools',
-    'Bash,Edit,Write,Read,Glob,Grep,WebFetch,WebSearch,Task,NotebookEdit,TodoWrite',
+    webResearch
+      ? 'Bash,Edit,Write,Read,Glob,Grep,Task,NotebookEdit,TodoWrite'
+      : 'Bash,Edit,Write,Read,Glob,Grep,WebFetch,WebSearch,Task,NotebookEdit,TodoWrite',
   ];
 
   return new Promise((resolve, reject) => {

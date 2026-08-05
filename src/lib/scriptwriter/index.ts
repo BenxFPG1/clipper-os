@@ -8,6 +8,7 @@ import { STORYSTIJLEN } from '../vault/storystijlen';
 import { ONDERZOEK } from '../vault/onderzoek';
 import { EFFECTEN } from '../vault/effecten';
 import { EDITCRAFT } from '../vault/editcraft';
+import { geleerdeKennis } from '../vault/kennis';
 
 export const SCRIPT_SCHEMA_VERSION = '1.0';
 export const SCRIPT_PROMPT_VERSION = 'script-3.1';
@@ -168,8 +169,10 @@ export async function generateScript(
           .join('\n')}`
       : '';
 
+  const bijgeleerd = await geleerdeKennis();
+
   const concept = await structuredCall({
-    system: SCRIPT_SYSTEM,
+    system: SCRIPT_SYSTEM + bijgeleerd,
     user: `=== BRIEFING ===
 Titel: ${brief.titel}
 Platform: ${brief.platform ?? 'nog niet bepaald'}
@@ -198,7 +201,7 @@ ${STORYCRAFT}\n\n${STORYSTIJLEN}\n\n${ONDERZOEK}\n\n${EFFECTEN}\n\n${EDITCRAFT}$
   // calls, maar het concept ongezien doorsturen is precies hoe je opsommingen
   // in plaats van verhalen krijgt.
   const script = await structuredCall({
-    system: EXAMEN_SYSTEM,
+    system: EXAMEN_SYSTEM + bijgeleerd,
     user: `=== CONCEPTSCRIPT (te verhoren en verbeteren) ===
 ${JSON.stringify(concept, null, 2)}
 

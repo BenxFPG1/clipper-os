@@ -19,7 +19,7 @@ async function loadDashboard() {
   const supabase = db();
 
   const [campaigns, clips, topClip, videoTellingen, briefTellingen] = await Promise.all([
-    supabase.from('campaigns').select('id, name, cpm_eur, status, platform_rules, created_at').eq('status', 'active'),
+    supabase.from('campaigns').select('id, name, cpm_eur, status, platform_rules, created_at').neq('status', 'ended'),
     supabase.from('clips').select('id, status, titel_intern, clip_performance(views_7d, outlier_score)'),
     supabase
       .from('clip_performance')
@@ -41,6 +41,12 @@ async function loadDashboard() {
   const videosPer = perCampagne(videoTellingen.data);
   const briefsPer = perCampagne(briefTellingen.data);
 
+  const { data: sessie } = await supabase
+    .from('platform_sessies')
+    .select('laatste_check, laatste_fout')
+    .eq('platform', 'cliparmy')
+    .maybeSingle();
+
   const perStatus = { planned: 0, edited: 0, posted: 0, rejected: 0 } as Record<string, number>;
   let totalViews = 0;
   for (const clip of clips.data ?? []) {
@@ -52,14 +58,15 @@ async function loadDashboard() {
   // Omzet berekenen we bewust niet: dat staat al op het dashboard van ClipArmy.
   const campaignList = (campaigns.data ?? []) as CampaignSummary[];
 
-  return { campaigns: campaignList, perStatus, totalViews, topClip: topClip.data, videosPer, briefsPer };
+  return { campaigns: campaignList, perStatus, totalViews, topClip: topClip.data, videosPer, briefsPer, sessie };
 }
 
 import { ImportCampaignForm } from './import-campaign-form';
 import { ClipArmyBookmarklet } from './cliparmy-bookmarklet';
+import { ClipArmySessie } from './cliparmy-sessie';
 
 export default async function DashboardPage() {
-  const [{ campaigns, perStatus, totalViews, topClip, videosPer, briefsPer }, werk] = await Promise.all([
+  const [{ campaigns, perStatus, totalViews, topClip, videosPer, briefsPer, sessie }, werk] = await Promise.all([
     loadDashboard(),
     laadWerkStatus(),
   ]);
@@ -131,6 +138,11 @@ export default async function DashboardPage() {
         <h2 className="mb-3 text-lg font-medium">Actieve campagnes</h2>
         <div className="mb-3 space-y-2">
           <ImportCampaignForm />
+          <ClipArmySessie
+            ingesteld={Boolean(sessie)}
+            laatsteCheck={(sessie?.laatste_check as string | null) ?? null}
+            laatsteFout={(sessie?.laatste_fout as string | null) ?? null}
+          />
           <ClipArmyBookmarklet />
         </div>
         {campaigns.length === 0 ? (

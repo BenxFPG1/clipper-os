@@ -1,5 +1,6 @@
 import { structuredCall } from '../claude';
 import { CHARMAP_EFFORT, PLAN_EFFORT, PLAN_EXAMEN_EFFORT, PLAN_MAX_CLIPS } from '../env';
+import { geleerdeKennis } from '../vault/kennis';
 import { TranscriptSegment, renderTranscript, transcriptDuration } from '../ingest/transcript';
 import { VaultSnapshot, renderVaultForPrompt } from '../vault';
 import {
@@ -52,8 +53,11 @@ export async function generateCharacterMap(input: {
 export async function generateClipPlan(
   input: PlannerInput & { characterMap: CharacterMap },
 ): Promise<ClipPlan> {
+  // De zelflerende laag komt achter de vaste kaders aan.
+  const bijgeleerd = await geleerdeKennis();
+
   const plan = await structuredCall({
-    system: planSystem(PLAN_MAX_CLIPS),
+    system: planSystem(PLAN_MAX_CLIPS) + bijgeleerd,
     user: buildPlanUser({
       title: input.title,
       durationSeconds: input.durationSeconds,
@@ -80,7 +84,7 @@ export async function generateClipPlan(
     // sleutelmomenten) en het plan zelf nodig. Het hele transcript meesturen
     // verdubbelt de wachttijd zonder het oordeel te verbeteren.
     examined = await structuredCall({
-      system: planExamenSystem(PLAN_MAX_CLIPS),
+      system: planExamenSystem(PLAN_MAX_CLIPS) + bijgeleerd,
       user: `Video: ${input.title}
 Duur: ${input.durationSeconds ? `${input.durationSeconds} seconden` : 'onbekend'}
 

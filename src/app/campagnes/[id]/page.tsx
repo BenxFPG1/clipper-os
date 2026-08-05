@@ -7,6 +7,7 @@ import { NewBriefForm } from '@/app/opdrachten/new-brief-form';
 import { NameEditor } from './name-editor';
 import { BatchKnoppen } from './batch-knoppen';
 import { KanaalForm } from './kanaal-form';
+import { ArchiveerCampagne } from './archiveer-knop';
 
 export const dynamic = 'force-dynamic';
 
@@ -66,12 +67,15 @@ export default async function CampagnePage({ params }: { params: { id: string } 
 
   return (
     <div className="space-y-8">
-      <div>
-        <NameEditor campaignId={campagne.id} naam={campagne.name} />
-        <p className="mt-1 text-sm text-neutral-400">
-          CPM €{Number(campagne.cpm_eur).toFixed(2)} · {campagne.status} · aangemaakt{' '}
-          {datumTijd(campagne.created_at)}
-        </p>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <NameEditor campaignId={campagne.id} naam={campagne.name} />
+          <p className="mt-1 text-sm text-neutral-400">
+            CPM €{Number(campagne.cpm_eur).toFixed(2)} · {campagne.status} · aangemaakt{' '}
+            {datumTijd(campagne.created_at)}
+          </p>
+        </div>
+        <ArchiveerCampagne campaignId={campagne.id} status={campagne.status as string} />
       </div>
 
       <section className="space-y-3">

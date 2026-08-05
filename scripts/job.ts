@@ -66,6 +66,23 @@ async function main() {
       );
       break;
     }
+    case 'cliparmy': {
+      const { haalClipArmyCampagnes } = await import('../src/lib/cliparmy');
+      const r = await metRetry(() => haalClipArmyCampagnes());
+      console.log(
+        `${stamp} cliparmy: ${r.nieuw.length} nieuwe campagne(s) uit ${r.bekeken} blok(ken)` +
+          (r.fout ? ` — ${r.fout}` : ''),
+      );
+      for (const c of r.nieuw) console.log(`  + ${c.naam}`);
+      break;
+    }
+    case 'kennis': {
+      const { runKennisAgent } = await import('../src/lib/agents/kennis');
+      const r = await metRetry(() => runKennisAgent());
+      console.log(`${stamp} kennis: ${r.voorstellen.length} aanvulling(en) — ${r.samenvatting.slice(0, 160)}`);
+      for (const v of r.voorstellen) console.log(`  + [${v.categorie}] ${v.titel}`);
+      break;
+    }
     case 'kanaal': {
       const { haalNieuweBronvideos } = await import('../src/lib/ingest/kanaal');
       const r = await metRetry(() => haalNieuweBronvideos());
@@ -75,7 +92,7 @@ async function main() {
       break;
     }
     default:
-      console.error('Gebruik: npx tsx scripts/job.ts <tracking|scout|retro|kanaal>');
+      console.error('Gebruik: npx tsx scripts/job.ts <tracking|scout|retro|kanaal|kennis|cliparmy>');
       process.exit(1);
   }
 }
