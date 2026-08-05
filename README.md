@@ -234,7 +234,13 @@ Standaard gebruikt de montage de gesynthetiseerde bedden uit `assets/muziek`
 (`scripts/maak-muziek.sh` bouwt ze opnieuw). Rechtenvrij en sober, maar het is
 geen productiemuziek.
 
-Wil je per clip een passend bed laten genereren, zet dan in `.env`:
+Dit kost niets en is de standaard: zonder `MUZIEK_PROVIDER` in je `.env` wordt
+er nooit een betaalde dienst aangeroepen. Wil je betere muziek zonder kosten,
+zet dan zelf rechtenvrije tracks als `assets/muziek/spanningsbed.mp3`,
+`opbouw.mp3` en `luchtig.mp3` neer — die winnen automatisch van de
+gesynthetiseerde versies.
+
+Wil je per clip een passend bed laten genereren (betaald), zet dan in `.env`:
 
     MUZIEK_PROVIDER=elevenlabs
     ELEVENLABS_API_KEY=...
