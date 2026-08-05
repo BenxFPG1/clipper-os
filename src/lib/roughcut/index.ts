@@ -21,6 +21,12 @@ export type Shot = {
   /** Gemeten gezichtsbreedte als fractie van het beeld; begrenst de zoom. */
   focusW?: number;
   /**
+   * De bron is hier zelf een split screen; dit is het deel [van, tot] waar de
+   * spreker in staat. Daarbuiten kadreren levert een halve persoon plus een
+   * naad op.
+   */
+  paneel?: [number, number];
+  /**
    * Meerdere mensen ver uit elkaar in beeld, zonder duidelijke spreker. Dan mag
    * er niet strak gekadreerd of ingezoomd worden: dan valt de uitsnede precies
    * tussen twee hoofden in.
@@ -149,7 +155,7 @@ export async function maakRuweMontage(opties: {
     // ingezoomd te worden tot het hoofd het beeld draagt.
     const ingreepZoom =
       shot.beeld_effect === 'punch_in' ? 1.12 : shot.beeld_effect === 'snelle_zoom' ? 1.18 : 1;
-    let zoom = Math.max(ingreepZoom, vulZoom(shot.focusW));
+    let zoom = Math.max(ingreepZoom, vulZoom(shot.paneel && shot.focusW ? shot.focusW / (shot.paneel[1] - shot.paneel[0]) : shot.focusW));
     // Jump-cut afdekken (editcraft): een knip binnen dezelfde opname is
     // zichtbaar als een sprong. Wissel daarom van schaal (>10% verschil) op
     // elke dode-luchtknip, zodat de sprong als bewuste punch-in leest.
@@ -157,11 +163,26 @@ export async function maakRuweMontage(opties: {
       zoom = vorigeZoom > 1.05 ? 1 : 1.11;
     }
     vorigeZoom = zoom;
-    const keten = kaderKeten(kader, { focusX: focusNaarX(shot.focus, shot.focusX), zoom });
+    // Is de bron hier een split screen, dan eerst het paneel met de spreker
+    // uitsnijden; daarna doet de rest van de keten alsof dat het hele beeld is.
+    const paneel = shot.paneel;
+    const paneelKnip = paneel
+      ? `crop=iw*${(paneel[1] - paneel[0]).toFixed(4)}:ih:iw*${paneel[0].toFixed(4)}:0,`
+      : '';
+    const focusInPaneel =
+      paneel && typeof shot.focusX === 'number'
+        ? Math.min(1, Math.max(0, (shot.focusX - paneel[0]) / (paneel[1] - paneel[0])))
+        : shot.focusX;
+    // In een half zo breed paneel is hetzelfde hoofd twee keer zo groot; de
+    // vulzoom moet dus met die schaal meerekenen.
+    const breedteInPaneel =
+      paneel && shot.focusW ? shot.focusW / (paneel[1] - paneel[0]) : shot.focusW;
+
+    const keten = kaderKeten(kader, { focusX: focusNaarX(shot.focus, focusInPaneel), zoom });
     const effect = effectKeten(shot.beeld_effect, duur);
     invoer.push('-ss', shot.start.toFixed(3), '-t', duur.toFixed(3), '-i', bronBestand);
     delenFilter.push(
-      `[${i}:v]setpts=PTS-STARTPTS,fps=30,${keten}${effect ? `,${effect}` : ''},setsar=1[v${i}]`,
+      `[${i}:v]setpts=PTS-STARTPTS,fps=30,${paneelKnip}${keten}${effect ? `,${effect}` : ''},setsar=1[v${i}]`,
     );
     delenFilter.push(
       `[${i}:a]asetpts=PTS-STARTPTS,` +

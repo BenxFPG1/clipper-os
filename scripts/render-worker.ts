@@ -473,7 +473,13 @@ async function vulGezichtsFocus(bronPad: string, segmenten: Shot[]): Promise<voi
       kind.on('error', fout);
       kind.on('close', (code) => (code === 0 ? klaar(stdout) : fout(new Error(stderr.slice(-150)))));
     });
-    type Meting = { x: number; breedte: number; personen: number; breed: boolean };
+    type Meting = {
+      x: number;
+      breedte: number;
+      personen: number;
+      breed: boolean;
+      paneel: [number, number] | null;
+    };
     // OpenCV schrijft zelf ook naar stdout (waarschuwingen over bindings), dus
     // niet blind de hele uitvoer parsen: pak de laatste regel die JSON is.
     const regel = uit
@@ -493,6 +499,7 @@ async function vulGezichtsFocus(bronPad: string, segmenten: Shot[]): Promise<voi
       if (!m) return;
       s.focusX = m.x;
       s.focusW = m.breedte;
+      if (m.paneel) s.paneel = m.paneel;
       // Twee mensen ver uit elkaar zonder duidelijke spreker: niet inzoomen en
       // niet strak kadreren, anders staat de uitsnede tussen twee hoofden in.
       if (m.breed) {
@@ -501,9 +508,11 @@ async function vulGezichtsFocus(bronPad: string, segmenten: Shot[]): Promise<voi
       }
     });
     const gevonden = posities.filter((x) => x !== null).length;
+    const panelen = posities.filter((m) => m?.paneel).length;
     console.log(
       `     spreker in beeld: ${gevonden}/${posities.length} segmenten` +
-        (breedGeteld ? `, ${breedGeteld}x meerdere personen (niet ingezoomd)` : ''),
+        (breedGeteld ? `, ${breedGeteld}x meerdere personen` : '') +
+        (panelen ? `, ${panelen}x split screen in de bron (binnen het paneel gekadreerd)` : ''),
     );
   } catch (e) {
     // Geen OpenCV of geen leesbare video. Dat is geen ramp — het midden is de

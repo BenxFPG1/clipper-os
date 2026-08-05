@@ -87,6 +87,39 @@ def detecteer(frame):
     return [((x, y, w, h), (x, y + int(h * 0.55), w, int(h * 0.45))) for (x, y, w, h) in gevonden]
 
 
+def zoekNaad(frames):
+    """Zit er een verticale scheiding in beeld (split screen in de bron zelf)?
+
+    Sommige interviews worden als twee camera's naast elkaar geleverd. Kadreer
+    je daar blind een verticale uitsnede uit, dan krijg je een halve persoon,
+    de naad, en een halve andere persoon — precies het beeld dat er niet uitziet.
+    Door de naad te vinden kunnen we binnen één paneel blijven.
+
+    Geeft de positie 0..1 terug, of None als er geen duidelijke naad is.
+    """
+    scores = None
+    for f in frames[:3]:
+        grijs = cv2.cvtColor(f, cv2.COLOR_BGR2GRAY).astype("float32")
+        # Verschil tussen buurkolommen, gemiddeld over alle rijen: een naad
+        # loopt over de volle hoogte en springt er dan bovenuit.
+        kolom = np.mean(np.abs(np.diff(grijs, axis=1)), axis=0)
+        scores = kolom if scores is None else scores + kolom
+    if scores is None or scores.size < 20:
+        return None
+
+    b = scores.size
+    rand = int(b * 0.18)          # buitenranden negeren
+    midden = scores[rand:b - rand]
+    if midden.size == 0:
+        return None
+
+    piek = int(np.argmax(midden)) + rand
+    mediaan = float(np.median(scores))
+    if mediaan <= 0 or scores[piek] < mediaan * 6:
+        return None
+    return round(piek / b, 4)
+
+
 def mondbeweging(frames, vak):
     """Hoeveel verandert de mondzone over de frames? Veel = deze persoon praat."""
     x, y, w, h = [max(0, int(v)) for v in vak]
@@ -168,11 +201,20 @@ for t in tijden:
     duidelijk = len(bewegingen) < 2 or bewegingen[0] > bewegingen[1] * 1.6
     breed = spreiding > 0.30 and not duidelijk
 
+    # Zit er een naad in beeld, dan kadreren we binnen het paneel waar de
+    # spreker staat, en rekenen we zijn positie om naar dat paneel.
+    naad = zoekNaad(frames)
+    paneel = None
+    if naad is not None and 0.15 < naad < 0.85:
+        paneel = [0.0, naad] if x_mediaan < naad else [naad, 1.0]
+        breed = False
+
     uit.append({
         "x": round(x_mediaan, 3),
         "breedte": round(breedte, 3),
         "personen": len(echt),
         "breed": breed,
+        "paneel": paneel,
         "model": "yunet" if yunet is not None else "haar",
     })
 
