@@ -294,6 +294,10 @@ function runClaudeCliOnce(
     webResearch
       ? 'Bash,Edit,Write,Read,Glob,Grep,Task,NotebookEdit,TodoWrite'
       : 'Bash,Edit,Write,Read,Glob,Grep,WebFetch,WebSearch,Task,NotebookEdit,TodoWrite',
+    // Zonder expliciete toestemming vraagt de CLI erom en krijgt hij in een
+    // automatische run geen antwoord: de kennis-agent kwam zo met lege handen
+    // terug ("WebSearch en WebFetch zijn geblokkeerd").
+    ...(webResearch ? ['--allowed-tools', 'WebSearch', 'WebFetch'] : []),
   ];
 
   return new Promise((resolve, reject) => {
