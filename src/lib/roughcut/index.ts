@@ -4,7 +4,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { resolveBinary } from '../ingest/binaries';
 import { ytdlpAuthArgs } from '../ingest/youtube';
-import { effectKeten, focusNaarX, kaderKeten, type Kader } from './kader';
+import { effectKeten, focusNaarX, kaderKeten, spoorExpressie, type Kader } from './kader';
 import { snapShots, verwijderDodeLucht, type SnapSegment, type Stilte } from './snap';
 
 export type Shot = {
@@ -23,6 +23,12 @@ export type Shot = {
   /** Hoe ver de spreker binnen dit shot horizontaal beweegt (fractie). */
   spreiding?: number;
   /**
+   * Meelopend focuspunt: waar de spreker staat op welk moment binnen dit shot,
+   * al gladgestreken. Is dit gezet, dan beweegt de uitsnede mee in plaats van
+   * uit te zoomen tot alles past.
+   */
+  spoor?: { t: number; x: number }[];
+  /**
    * De bron is hier zelf een split screen; dit is het deel [van, tot] waar de
    * spreker in staat. Daarbuiten kadreren levert een halve persoon plus een
    * naad op.
@@ -32,6 +38,13 @@ export type Shot = {
   focusY?: number;
   /** Door de kadercontrole vastgestelde zoom; overschrijft de effect-zoom. */
   zoom?: number;
+  /**
+   * De knip valt onvermijdelijk middenin spraak (er is geen pauze in de buurt).
+   * Dan een langere audiofade: dat leest als een bewuste zachte overgang in
+   * plaats van een afgebroken woord.
+   */
+  zachtBegin?: boolean;
+  zachtEind?: boolean;
   /** Gemeten gezichtsvak, waartegen de kadercontrole toetst. */
   gezicht?: { x: number; breedte: number; top: number; hoogte: number };
   /**
@@ -173,7 +186,12 @@ export async function maakRuweMontage(opties: {
     // uitloopt. "Bij twijfel wijd" leverde een slotshot op waarin hij klein
     // wegviel tussen het decor.
     let zoom = shot.zoom ?? Math.max(ingreepZoom, vulZoom(gemetenBreedte));
-    zoom = Math.max(1, Math.min(zoom, bewegingsPlafond(shot.spreiding, gemetenBreedte)));
+    // Beweegt de uitsnede mee, dan hoeft hij de hele bewegingsruimte niet in één
+    // kader te vangen en mag de zoom gewoon op maat blijven.
+    if (!shot.spoor?.length) {
+      zoom = Math.min(zoom, bewegingsPlafond(shot.spreiding, gemetenBreedte));
+    }
+    zoom = Math.max(1, zoom);
     // Jump-cut afdekken (editcraft): een knip binnen dezelfde opname is
     // zichtbaar als een sprong. Wissel daarom van schaal (>10% verschil) op
     // elke dode-luchtknip, zodat de sprong als bewuste punch-in leest.
@@ -196,8 +214,15 @@ export async function maakRuweMontage(opties: {
     const breedteInPaneel =
       paneel && shot.focusW ? shot.focusW / (paneel[1] - paneel[0]) : shot.focusW;
 
+    // Volgt de uitsnede de spreker? Dan de tijdsafhankelijke expressie
+    // gebruiken; het spoor staat in shot-tijd, dus vanaf 0.
+    const spoorInPaneel = shot.spoor?.map((punt) => ({
+      t: punt.t,
+      x: paneel ? (punt.x - paneel[0]) / (paneel[1] - paneel[0]) : punt.x,
+    }));
     const keten = kaderKeten(kader, {
       focusX: focusNaarX(shot.focus, focusInPaneel),
+      focusExpr: spoorInPaneel && !shot.focus ? (spoorExpressie(spoorInPaneel) ?? undefined) : undefined,
       zoom,
       focusY: shot.focusY,
     });
@@ -206,9 +231,15 @@ export async function maakRuweMontage(opties: {
     delenFilter.push(
       `[${i}:v]setpts=PTS-STARTPTS,fps=30,${paneelKnip}${keten}${effect ? `,${effect}` : ''},setsar=1[v${i}]`,
     );
+    // Naadfades. Normaal 12ms — net genoeg om een klik te voorkomen. Kon de
+    // knipcontrole geen pauze vinden, dan valt de knip middenin spraak en helpt
+    // een langere fade: 70ms klinkt als een zachte overgang in plaats van een
+    // afgebroken woord.
+    const fadeIn = shot.zachtBegin ? 0.07 : 0.012;
+    const fadeUit = shot.zachtEind ? 0.07 : 0.012;
     delenFilter.push(
       `[${i}:a]asetpts=PTS-STARTPTS,` +
-        `afade=t=in:st=0:d=0.012,afade=t=out:st=${Math.max(0, duur - 0.012).toFixed(3)}:d=0.012,` +
+        `afade=t=in:st=0:d=${fadeIn},afade=t=out:st=${Math.max(0, duur - fadeUit).toFixed(3)}:d=${fadeUit},` +
         `aformat=sample_rates=48000:channel_layouts=stereo[a${i}]`,
     );
   });

@@ -16,11 +16,17 @@ export type Kader = (typeof KADERS)[number];
  */
 export function kaderKeten(
   kader: Kader,
-  opties: { focusX?: number; zoom?: number; focusY?: number } = {},
+  opties: {
+    focusX?: number;
+    zoom?: number;
+    focusY?: number;
+    /** Meelopend focuspunt (ffmpeg-expressie in t); wint van focusX. */
+    focusExpr?: string;
+  } = {},
 ): string {
   const zoom = opties.zoom ?? 1;
   // Focus 0..1: waar de uitsnede horizontaal op richt (0 = links, 1 = rechts).
-  const f = Math.min(1, Math.max(0, opties.focusX ?? 0.5)).toFixed(3);
+  const f = opties.focusExpr ?? Math.min(1, Math.max(0, opties.focusX ?? 0.5)).toFixed(3);
 
   if (kader === 'origineel') return 'null';
 
@@ -103,4 +109,82 @@ export function effectKeten(effect?: string | null, duur = 0): string | null {
   }
 
   return null;
+}
+
+/**
+ * Bouwt een ffmpeg-expressie die het focuspunt over de tijd laat meelopen met
+ * de spreker.
+ *
+ * Waarom volgen en niet uitzoomen: beweegt iemand door het beeld, of neemt de
+ * ander halverwege het woord over, dan is de keuze anders "zo ver uitzoomen dat
+ * beide uitersten passen" — en dan staat er niemand meer groot in beeld. Een
+ * meelopende uitsnede houdt de spreker groot én in beeld.
+ *
+ * Tussen de meetpunten wordt lineair geïnterpoleerd; de punten zelf zijn al
+ * gladgestreken en in snelheid begrensd, zodat de beweging vloeiend is en niet
+ * schokt op elke meetfout.
+ */
+export function spoorExpressie(spoor: { t: number; x: number }[]): string | null {
+  if (spoor.length < 2) return null;
+
+  const p = [...spoor].sort((a, b) => a.t - b.t);
+  const v = (n: number) => n.toFixed(4);
+
+  // Van achter naar voren opbouwen: de laatste waarde is de terugval, en elke
+  // stap zet er een "voor dit tijdvak geldt deze lijn" omheen.
+  let expr = v(p[p.length - 1].x);
+  for (let i = p.length - 2; i >= 0; i--) {
+    const a = p[i];
+    const b = p[i + 1];
+    const duur = Math.max(0.001, b.t - a.t);
+    const lijn = `(${v(a.x)}+(${v(b.x - a.x)})*(t-${v(a.t)})/${v(duur)})`;
+    expr = `if(lt(t\\,${v(b.t)})\\,${lijn}\\,${expr})`;
+  }
+  return expr;
+}
+
+/**
+ * Maakt van ruwe metingen een bruikbaar spoor: gaten opvullen, gladstrijken en
+ * de snelheid begrenzen.
+ *
+ * De snelheidslimiet is het verschil tussen een camera die meebeweegt en een
+ * beeld dat heen en weer springt. Neemt de gesprekspartner het woord over, dan
+ * is dat een sprong van een halve beeldbreedte; die wordt hier een pan van een
+ * seconde of twee in plaats van een schok van één frame.
+ */
+export function maakSpoor(
+  metingen: { t: number; x: number | null }[],
+  opties: { maxSnelheid?: number; demping?: number } = {},
+): { t: number; x: number }[] {
+  const maxSnelheid = opties.maxSnelheid ?? 0.22; // fractie beeldbreedte per seconde
+  const demping = opties.demping ?? 0.45;
+
+  // Gaten opvullen met de laatst bekende positie; blijft het begin leeg, dan
+  // pakken we de eerste meting die er wel is.
+  const eerste = metingen.find((m) => m.x !== null)?.x ?? 0.5;
+  let vorige = eerste;
+  const gevuld = metingen.map((m) => {
+    if (m.x !== null) vorige = m.x;
+    return { t: m.t, x: vorige };
+  });
+
+  // Gladstrijken met een lopend gemiddelde over drie punten: haalt de ruis van
+  // de detectie eruit zonder de beweging zelf plat te slaan.
+  const glad = gevuld.map((m, i) => {
+    const buren = [gevuld[i - 1], m, gevuld[i + 1]].filter(Boolean) as { t: number; x: number }[];
+    return { t: m.t, x: buren.reduce((som, b) => som + b.x, 0) / buren.length };
+  });
+
+  // Volgen met demping en een snelheidsplafond.
+  const uit: { t: number; x: number }[] = [];
+  let positie = glad[0].x;
+  for (const [i, punt] of glad.entries()) {
+    const dt = i === 0 ? 0 : punt.t - glad[i - 1].t;
+    const doel = punt.x;
+    const stap = (doel - positie) * demping;
+    const plafond = maxSnelheid * Math.max(dt, 0.001);
+    positie += Math.max(-plafond, Math.min(plafond, stap));
+    uit.push({ t: punt.t, x: Math.min(1, Math.max(0, positie)) });
+  }
+  return uit;
 }

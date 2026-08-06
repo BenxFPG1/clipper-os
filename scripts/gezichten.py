@@ -30,13 +30,19 @@ except ImportError:
     print("[]")
     sys.exit(0)
 
-MONSTERS = 5          # frames per shot
+MONSTERS = 5          # frames per tijdstip
 SPREIDING = 0.5       # seconden rond het middelpunt
 SAMEN = 0.14          # detecties dichter dan dit horen bij dezelfde persoon
 DREMPEL = 0.7         # zekerheid waarboven YuNet-detecties meetellen
 
 pad = sys.argv[1]
 tijden = json.loads(sys.argv[2])
+# Optioneel derde argument: hoeveel frames per tijdstip. Voor het volgen van een
+# spreker vragen we véél tijdstippen met één frame elk (snel en fijnmazig); voor
+# het bepalen van de kadrering juist weinig tijdstippen met vijf frames (robuust
+# tegen één ongelukkig frame).
+if len(sys.argv) > 3:
+    MONSTERS = max(1, int(sys.argv[3]))
 cap = cv2.VideoCapture(pad)
 
 MODEL = os.path.join(

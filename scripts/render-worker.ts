@@ -20,7 +20,13 @@ import {
   maakControlebeelden,
   pasVisueleCorrectieToe,
 } from '../src/lib/roughcut/kadercontrole';
-import type { Kader } from '../src/lib/roughcut/kader';
+import { maakSpoor, type Kader } from '../src/lib/roughcut/kader';
+import {
+  beoordeelKnippen,
+  controleerEindmontage,
+  verschuifNaarPauze,
+  zoekStilstePunt,
+} from '../src/lib/roughcut/knipcontrole';
 import { pakFrames } from '../src/lib/roughcut/frames';
 
 const BUCKET = 'montages';
@@ -241,6 +247,11 @@ async function verwerk(job: Job) {
     // Gezichtsfocus per segment (alleen waar het script geen focus opgeeft).
     await vulGezichtsFocus(bronPad, segmenten);
 
+    // Beweegt de spreker binnen een shot, of neemt de ander halverwege het
+    // woord over? Dan de uitsnede laten meelopen in plaats van uitzoomen.
+    const gevolgd = await meetSpoor(bronPad, segmenten);
+    if (gevolgd > 0) console.log(`     ${gevolgd} shot(s) met meelopende uitsnede (face tracking)`);
+
     // Beslissingen van de edit-agent op de segmenten leggen. Subsegmenten
     // (ontstaan door dode lucht weg te knippen) erven van hun bronshot, maar
     // krijgen de tegenovergestelde schaal zodat de naad als nadruk leest.
@@ -347,6 +358,71 @@ async function verwerk(job: Job) {
       }
     }
 
+    // Knipcontrole: luisteren of elke knip werkelijk in een pauze valt, en
+    // net zo lang naar buiten opschuiven tot dat zo is. Elke stap vóór deze
+    // (uitlijning, dode lucht, in- en uitloop) kan het punt een fractie
+    // verschuiven, en één fractie is genoeg om middenin een lettergreep te
+    // eindigen. Meten is de enige harde toets.
+    {
+      const geprobeerd = new Map<string, number[]>();
+      // De oorspronkelijke grenzen onthouden: het knippunt mag in totaal niet
+      // verder dan anderhalve seconde opschuiven, hoeveel rondes we ook doen.
+      const origineel = new Map(segmenten.map((sg) => [sg.volgorde, { start: sg.start, end: sg.end }]));
+      for (let ronde = 1; ronde <= 2; ronde++) {
+        const oordeel = await beoordeelKnippen(bronPad, segmenten);
+        const fout = oordeel.filter((o) => !o.goed);
+        if (fout.length === 0) {
+          console.log(`     knipcontrole: alle ${oordeel.length} knippen in een pauze`);
+          break;
+        }
+
+        let verzet = 0;
+        for (const o of fout) {
+          const seg = segmenten.find((sg) => sg.volgorde === o.volgorde);
+          if (!seg) continue;
+          const sleutel = `${o.volgorde}-${o.kant}`;
+          const eerder = geprobeerd.get(sleutel) ?? [];
+          const basis = origineel.get(o.volgorde);
+          const anker = o.kant === 'begin' ? basis?.start ?? o.seconde : basis?.end ?? o.seconde;
+          const ruimte = Math.max(0, 1.5 - Math.abs(o.seconde - anker));
+          const nieuwPunt =
+            ruimte < 0.05 ? null : verschuifNaarPauze(o.seconde, o.kant, stiltes ?? [], eerder, Math.min(1.2, ruimte));
+          if (nieuwPunt === null) {
+            // Geen echte pauze in de buurt. Dan alsnog het stilste moment in de
+            // golfvorm zoeken: het dal tussen twee woorden klinkt hoorbaar beter
+            // dan een knip midden op een klinker.
+            const dal = await zoekStilstePunt(bronPad, o.seconde, o.kant);
+            if (dal) {
+              if (o.kant === 'begin') seg.start = dal.seconde;
+              else seg.end = dal.seconde;
+              verzet++;
+              console.log(
+                `     knip ${o.volgorde} ${o.kant}: geen pauze, wel een dal → ${dal.seconde.toFixed(2)}s (${dal.db} dB)`,
+              );
+              continue;
+            }
+
+            // Ook geen dal: dan blijft de knip staan, maar krijgt hij een
+            // langere fade zodat hij niet als een afgebroken woord klinkt.
+            if (o.kant === 'begin') seg.zachtBegin = true;
+            else seg.zachtEind = true;
+            console.log(
+              `     knip ${o.volgorde} ${o.kant} blijft op ${o.seconde.toFixed(2)}s (${o.db} dB): geen pauze binnen de marge, zachte overgang`,
+            );
+            continue;
+          }
+          geprobeerd.set(sleutel, [...eerder, nieuwPunt]);
+          if (o.kant === 'begin') seg.start = nieuwPunt;
+          else seg.end = nieuwPunt;
+          verzet++;
+          console.log(
+            `     knip ${o.volgorde} ${o.kant}: ${o.db} dB op ${o.seconde.toFixed(2)}s → ${nieuwPunt.toFixed(2)}s`,
+          );
+        }
+        if (verzet === 0) break;
+      }
+    }
+
     // De uiteindelijke knippunten loggen. Zonder dit is achteraf niet na te
     // gaan of een knip midden in een woord viel of netjes in een pauze — en
     // dat was nu juist de hardnekkigste klacht.
@@ -384,6 +460,23 @@ async function verwerk(job: Job) {
       maxBytes: MAX_BYTES,
       onVoortgang: (m) => console.log(`     ${m}`),
     });
+
+    // Sluitstuk: het gerenderde bestand zelf nameten. De controles hiervóór
+    // kijken naar de bron; deze kijkt naar wat je daadwerkelijk krijgt. Blijkt
+    // hier iets mis, dan zit de fout in de keten erna (fades, ducking) en niet
+    // in de keuze van het knippunt.
+    try {
+      const eind = await controleerEindmontage(montage.pad, segmenten);
+      if (eind.slecht.length === 0) {
+        console.log(`     eindcontrole: alle ${eind.naden} naden schoon`);
+      } else {
+        for (const s of eind.slecht) {
+          console.log(`     eindcontrole: naad op ${s.seconde.toFixed(2)}s meet ${s.db} dB (spraak)`);
+        }
+      }
+    } catch (e) {
+      console.log(`     eindcontrole overgeslagen (${(e as Error).message.slice(0, 60)})`);
+    }
 
     // Gemeten broneigenschappen bewaren: daarmee genereert de site het
     // Premiere-projectbestand met de juiste framerate.
@@ -534,6 +627,61 @@ function pythonMetOpenCV(): { cmd: string; voor: string[] } {
   }
   pythonKeuze = { cmd: 'python3', voor: [] };
   return pythonKeuze;
+}
+
+/**
+ * Meet fijnmazig waar de spreker staat gedurende een shot, zodat de uitsnede
+ * hem kan volgen in plaats van uit te zoomen tot alle uitersten passen.
+ *
+ * Alleen voor shots waar het nodig is: het kost een meting per driekwart
+ * seconde, en op een statische talking head verandert er toch niets.
+ */
+async function meetSpoor(bronPad: string, segmenten: Shot[]): Promise<number> {
+  const teVolgen = segmenten.filter((s) => (s.spreiding ?? 0) > 0.08 && !s.focus);
+  if (teVolgen.length === 0) return 0;
+
+  const STAP = 0.75;
+  const opdrachten: { seg: Shot; tijden: number[] }[] = teVolgen.map((seg) => {
+    const tijden: number[] = [];
+    for (let t = seg.start; t < seg.end; t += STAP) tijden.push(t);
+    tijden.push(seg.end - 0.05);
+    return { seg, tijden };
+  });
+
+  const alle = opdrachten.flatMap((o) => o.tijden);
+  let posities: ({ x: number } | null)[] = [];
+  try {
+    const py = pythonMetOpenCV();
+    const uit = await new Promise<string>((klaar, fout) => {
+      // Eén frame per meetpunt: we willen hier fijnmazigheid, geen robuustheid
+      // per punt — het gladstrijken daarna vangt de uitschieters op.
+      const kind = spawn(py.cmd, [...py.voor, 'scripts/gezichten.py', bronPad, JSON.stringify(alle), '1']);
+      let stdout = '';
+      let stderr = '';
+      kind.stdout.on('data', (d) => (stdout += d));
+      kind.stderr.on('data', (d) => (stderr += d));
+      kind.on('error', fout);
+      kind.on('close', (code) => (code === 0 ? klaar(stdout) : fout(new Error(stderr.slice(-120)))));
+    });
+    posities = JSON.parse(uit.trim() || '[]');
+  } catch {
+    return 0;
+  }
+  if (posities.length !== alle.length) return 0;
+
+  let index = 0;
+  let gevolgd = 0;
+  for (const { seg, tijden } of opdrachten) {
+    const metingen = tijden.map((t, i) => ({
+      t: t - seg.start,
+      x: posities[index + i]?.x ?? null,
+    }));
+    index += tijden.length;
+    if (metingen.filter((m) => m.x !== null).length < 2) continue;
+    seg.spoor = maakSpoor(metingen);
+    gevolgd++;
+  }
+  return gevolgd;
 }
 
 /**

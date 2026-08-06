@@ -191,13 +191,20 @@ export async function maakControlebeelden(
 
   for (const shot of shots) {
     const t = shot.start + (shot.end - shot.start) / 2;
+    // Volgt de uitsnede de spreker, dan is het focuspunt op dit moment een
+    // ander dan het gemiddelde. De controle moet zien wat de kijker ziet.
+    const opMoment = shot.spoor?.length
+      ? shot.spoor.reduce((beste, p) =>
+          Math.abs(p.t - (t - shot.start)) < Math.abs(beste.t - (t - shot.start)) ? p : beste,
+        ).x
+      : shot.focusX;
     const paneelKnip = shot.paneel
       ? `crop=iw*${(shot.paneel[1] - shot.paneel[0]).toFixed(4)}:ih:iw*${shot.paneel[0].toFixed(4)}:0,`
       : '';
     const focusInPaneel =
-      shot.paneel && typeof shot.focusX === 'number'
-        ? (shot.focusX - shot.paneel[0]) / (shot.paneel[1] - shot.paneel[0])
-        : shot.focusX;
+      shot.paneel && typeof opMoment === 'number'
+        ? (opMoment - shot.paneel[0]) / (shot.paneel[1] - shot.paneel[0])
+        : opMoment;
     const keten = kaderKeten(kader, {
       focusX: focusNaarX(shot.focus, focusInPaneel),
       zoom: shot.zoom ?? 1,
