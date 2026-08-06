@@ -7,10 +7,10 @@ import { useState } from 'react';
  * ClipArmy automatisch laten ophalen zodat de cloud zelf nieuwe campagnes
  * binnenhaalt — ook als je laptop dicht is.
  *
- * Je plakt hier het verzoek dat je eigen browser doet ("Copy as cURL"), niet je
- * wachtwoord. Een wachtwoord geeft volledige toegang tot je account en zou in
- * onze database staan; dit token leest alleen wat jij zelf ook ziet, verloopt
- * vanzelf, en je trekt het in door op ClipArmy uit te loggen.
+ * De aanbevolen route is een e-mailcode: die werkt ook met een Google-account
+ * (dat geen wachtwoord heeft) en maakt een eigen sessie voor de cloud aan, los
+ * van je browser. Er wordt nooit een wachtwoord bewaard; intrekken kan door
+ * bij ClipArmy overal uit te loggen.
  */
 export function ClipArmySessie({
   ingesteld,
@@ -23,37 +23,38 @@ export function ClipArmySessie({
 }) {
   const router = useRouter();
   const [curl, setCurl] = useState('');
-  const [sleutel, setSleutel] = useState('');
+  const [email, setEmail] = useState('');
+  const [code, setCode] = useState('');
+  const [codeGestuurd, setCodeGestuurd] = useState(false);
   const [busy, setBusy] = useState(false);
   const [melding, setMelding] = useState<string | null>(null);
 
-  const site = typeof window !== 'undefined' ? window.location.origin : '';
-  // De bladwijzer leest de sessie uit de opslag van je browser. Het
-  // vernieuwingstoken staat namelijk nergens in een netwerkverzoek — je kunt het
-  // dus niet kopiëren, alleen op de pagina zelf ophalen. En juist dát token is
-  // wat het uurlijks ophalen laat werken zonder dat jij er nog iets voor doet.
-  const koppelCode = sleutel
-    ? `javascript:(async()=>{try{` +
-      `let a=null,ref=null;` +
-      `for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);if(!/auth-token/.test(k))continue;` +
-      `try{const v=JSON.parse(localStorage.getItem(k));const t=v&&(v.access_token?v:v.currentSession);` +
-      `if(t&&t.access_token){a=t;ref=(k.match(/sb-([a-z0-9]+)-auth-token/)||[])[1];}}catch(e){}}` +
-      `if(!a)return alert('Geen sessie gevonden. Ben je ingelogd op ClipArmy?');` +
-      `let key=null;` +
-      `for(const s of document.querySelectorAll('script[src]')){try{const t=await (await fetch(s.src)).text();` +
-      `const m=t.match(/eyJ[A-Za-z0-9_-]+\\.eyJ[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+/g)||[];` +
-      `for(const c of m){try{const p=JSON.parse(atob(c.split('.')[1].replace(/-/g,'+').replace(/_/g,'/')));` +
-      `if(p.role==='anon'){key=c;break;}}catch(e){}}}catch(e){}if(key)break;}` +
-      `if(!key)return alert('Publieke sleutel niet gevonden op de pagina.');` +
-      `const r=await fetch('${site}/api/platform-sessie/extern',{method:'POST',` +
-      `headers:{'content-type':'application/json','x-clipper-sleutel':'${sleutel.replace(/'/g, '')}'},` +
-      `body:JSON.stringify({projectUrl:'https://'+ref+'.supabase.co',apikey:key,` +
-      `access_token:a.access_token,refresh_token:a.refresh_token})});` +
-      `const j=await r.json();alert(r.ok?'Gekoppeld. Clipper OS haalt vanaf nu elk uur zelf nieuwe campagnes op.':'Mislukt: '+(j.error||r.status));` +
-      `}catch(e){alert('Mislukt: '+e)}})()`
-    : '';
+  async function otp(actie: 'start' | 'verify') {
+    setBusy(true);
+    setMelding(null);
+    const res = await fetch('/api/platform-sessie/otp', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ actie, email: email.trim(), code }),
+    });
+    const uit = (await res.json()) as { error?: string };
+    setBusy(false);
+    if (!res.ok) {
+      setMelding(uit.error ?? 'Mislukt');
+      return;
+    }
+    if (actie === 'start') {
+      setCodeGestuurd(true);
+      setMelding('Code verstuurd — kijk in je mail (ook spam).');
+    } else {
+      setCode('');
+      setCodeGestuurd(false);
+      setMelding('Gekoppeld. De cloud haalt vanaf nu elk uur zelf nieuwe campagnes op.');
+      router.refresh();
+    }
+  }
 
-  async function bewaar(waarde: string) {
+  async function bewaarCurl(waarde: string) {
     setBusy(true);
     setMelding(null);
     const res = await fetch('/api/platform-sessie', {
@@ -67,7 +68,7 @@ export function ClipArmySessie({
       setMelding(uit.error ?? 'Opslaan mislukt');
       return;
     }
-    setMelding(waarde ? `Bewaard (${uit.verzoek}). De cloud checkt vanaf nu elk uur.` : 'Sessie gewist.');
+    setMelding(waarde ? `Bewaard (${uit.verzoek}). Koppel nu hierboven met de e-mailcode.` : 'Sessie gewist.');
     setCurl('');
     router.refresh();
   }
@@ -88,84 +89,100 @@ export function ClipArmySessie({
           De cloud haalt dan elk uur nieuwe campagnes op: je laptop hoeft niet aan te staan en je hoeft de site
           niet te bezoeken.
         </p>
+
         <div className="rounded border border-neutral-800 bg-neutral-900/60 p-3">
-          <p className="mb-2 text-sm font-medium">Aanbevolen: koppelen met één klik</p>
+          <p className="mb-2 text-sm font-medium">Koppelen met een e-mailcode (werkt ook met Google-login)</p>
           <p className="mb-2 text-xs text-neutral-400">
-            Een toegangstoken verloopt na ongeveer een uur. Alleen het vernieuwingstoken houdt de koppeling
-            in de lucht, en dat staat in geen enkel netwerkverzoek — het is niet te kopiëren, alleen vanaf de
-            pagina uit te lezen. Deze bladwijzer doet dat.
+            ClipArmy mailt je een inlogcode; die tik je hier in. Clipper OS krijgt daarmee een eigen sessie die
+            zichzelf elk uur ververst — los van je browser, dus je wordt nergens uitgelogd. Geen wachtwoord
+            nodig.
           </p>
-          <input
-            type="password"
-            value={sleutel}
-            onChange={(e) => setSleutel(e.target.value)}
-            placeholder="Clipper OS-wachtwoord"
-            className="mb-2 w-56 rounded border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-xs"
-          />
-          {sleutel && (
-            <p className="text-xs text-neutral-400">
-              <a
-                href={koppelCode}
-                onClick={(e) => e.preventDefault()}
-                className="mr-3 inline-block cursor-grab rounded bg-neutral-100 px-3 py-1.5 font-medium text-neutral-900"
-                title="Sleep mij naar je bladwijzerbalk"
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="e-mail van je ClipArmy-account"
+              className="w-64 rounded border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-xs"
+            />
+            <button
+              onClick={() => otp('start')}
+              disabled={busy || !email.includes('@')}
+              className="rounded border border-neutral-700 px-3 py-1.5 text-xs disabled:opacity-40"
+            >
+              {busy && !codeGestuurd ? 'Bezig…' : 'Stuur code'}
+            </button>
+          </div>
+          {codeGestuurd && (
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <input
+                value={code}
+                onChange={(e) => setCode(e.target.value)}
+                placeholder="code uit de e-mail"
+                className="w-40 rounded border border-neutral-700 bg-neutral-900 px-3 py-1.5 font-mono text-xs"
+              />
+              <button
+                onClick={() => otp('verify')}
+                disabled={busy || code.trim().length < 4}
+                className="rounded bg-neutral-100 px-3 py-1.5 text-xs font-medium text-neutral-900 disabled:opacity-40"
               >
-                → ClipArmy koppelen
-              </a>
-              sleep naar je bladwijzerbalk, ga naar cliparmy.nl en klik hem daar aan
-            </p>
+                Koppelen
+              </button>
+            </div>
           )}
         </div>
 
-        <p className="text-xs text-neutral-500">
-          Of handmatig, als de bladwijzer niet lukt: plak het verzoek dat je browser doet. Werkt, maar het
-          token daarin verloopt na een uur — dan moet je opnieuw plakken.
-        </p>
-        <ol className="list-inside list-decimal space-y-1 text-xs text-neutral-400">
-          <li>Open de campagnepagina op ClipArmy terwijl je ingelogd bent.</li>
-          <li>
-            Druk op F12 (of Cmd+Option+I) → tabblad <span className="text-neutral-300">Netwerk</span> → filter{' '}
-            <span className="text-neutral-300">Fetch/XHR</span>.
-          </li>
-          <li>Ververs de pagina. Klik de regels langs tot je er een ziet met de campagnes erin (tab Preview/Respons).</li>
-          <li>
-            Rechtermuisknop op die regel →{' '}
-            <span className="text-neutral-300">Kopiëren → Kopiëren als cURL</span>.
-          </li>
-          <li>Plak hem hieronder en bewaar.</li>
-        </ol>
-        <textarea
-          value={curl}
-          onChange={(e) => setCurl(e.target.value)}
-          rows={4}
-          placeholder="curl 'https://…/rest/v1/campaigns?select=*' -H 'authorization: Bearer …' …"
-          className="w-full rounded border border-neutral-700 bg-neutral-900 px-3 py-2 font-mono text-xs"
-        />
-        <div className="flex flex-wrap items-center gap-3">
-          <button
-            onClick={() => bewaar(curl)}
-            disabled={busy || !curl.trim()}
-            className="rounded border border-neutral-700 px-3 py-1.5 disabled:opacity-40"
-          >
-            {busy ? 'Bezig…' : 'Verzoek bewaren'}
-          </button>
-          {ingesteld && (
-            <button onClick={() => bewaar('')} disabled={busy} className="text-xs text-neutral-500 hover:text-neutral-300">
-              sessie wissen
-            </button>
-          )}
-          {melding && <span className="text-neutral-400">{melding}</span>}
-        </div>
+        <details className="rounded border border-neutral-800 p-3">
+          <summary className="cursor-pointer text-xs text-neutral-500">
+            Eenmalige voorbereiding of terugval: cURL-verzoek plakken
+          </summary>
+          <div className="mt-2 space-y-2">
+            <p className="text-xs text-neutral-500">
+              De e-mailcode heeft één keer het adres en de publieke sleutel van ClipArmy nodig; die halen we
+              uit een geplakt verzoek. Staat de koppeling al op &quot;aan&quot; geweest, dan is dit al gebeurd
+              en hoef je hier niets.
+            </p>
+            <ol className="list-inside list-decimal space-y-1 text-xs text-neutral-500">
+              <li>Open de campagnepagina op ClipArmy, ingelogd.</li>
+              <li>F12 → Netwerk → filter Fetch/XHR → ververs.</li>
+              <li>Zoek de regel met de campagnes (Preview) → rechtermuisknop → Kopiëren als cURL.</li>
+              <li>Plak hieronder.</li>
+            </ol>
+            <textarea
+              value={curl}
+              onChange={(e) => setCurl(e.target.value)}
+              rows={3}
+              placeholder="curl 'https://…/rest/v1/…' -H 'authorization: Bearer …' …"
+              className="w-full rounded border border-neutral-700 bg-neutral-900 px-3 py-2 font-mono text-xs"
+            />
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                onClick={() => bewaarCurl(curl)}
+                disabled={busy || !curl.trim()}
+                className="rounded border border-neutral-700 px-3 py-1.5 text-xs disabled:opacity-40"
+              >
+                {busy ? 'Bezig…' : 'Verzoek bewaren'}
+              </button>
+              {ingesteld && (
+                <button
+                  onClick={() => bewaarCurl('')}
+                  disabled={busy}
+                  className="text-xs text-neutral-500 hover:text-neutral-300"
+                >
+                  sessie wissen
+                </button>
+              )}
+            </div>
+          </div>
+        </details>
+
+        {melding && <p className="text-neutral-300">{melding}</p>}
         {ingesteld && (
           <p className="text-xs text-neutral-500">
             Laatste check: {laatsteCheck ? new Date(laatsteCheck).toLocaleString('nl-NL') : 'nog niet gedraaid'}
             {laatsteFout ? ` — ${laatsteFout}` : ''}
           </p>
         )}
-        <p className="text-xs text-neutral-500">
-          Het token verloopt vanzelf. Werkt het niet meer, dan zie je dat hierboven staan en plak je een vers
-          verzoek.
-        </p>
       </div>
     </details>
   );

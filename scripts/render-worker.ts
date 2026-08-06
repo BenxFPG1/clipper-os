@@ -27,6 +27,7 @@ import {
   verschuifNaarPauze,
   zoekStilstePunt,
 } from '../src/lib/roughcut/knipcontrole';
+import { controleerScript } from '../src/lib/roughcut/scriptcontrole';
 import { pakFrames } from '../src/lib/roughcut/frames';
 
 const BUCKET = 'montages';
@@ -244,6 +245,50 @@ async function verwerk(job: Job) {
       woordgrenzen,
     });
 
+    // Een halve zin twee keer horen komt hiervandaan: de planner zette de hook
+    // en de payoff op hetzelfde bronfragment (cold open), en dan hoort de
+    // kijker dezelfde zin twee keer. Dat mag niet — de regel is: geen enkele
+    // zin klinkt dubbel in een clip.
+    //
+    // Is het duplicaat vrijwel volledig én staat de belofte al als hooktekst
+    // in beeld, dan vervalt het audioduplicaat helemaal: de tekstkaart draagt
+    // de hook, de zin klinkt één keer, op zijn plek in het verhaal. In andere
+    // gevallen wordt de eerste versie ingekort tot een korte tease die op een
+    // pauze eindigt. HOOK_TEASE=1 dwingt altijd de tease-variant af.
+    for (let i = segmenten.length - 1; i >= 0; i--) {
+      for (let j = i + 1; j < segmenten.length; j++) {
+        const a = segmenten[i];
+        const b = segmenten[j];
+        if (!a || !b) continue;
+        const overlap = Math.min(a.end, b.end) - Math.max(a.start, b.start);
+        const kortste = Math.min(a.end - a.start, b.end - b.start);
+        if (overlap <= kortste * 0.5) continue;
+
+        const bijnaDuplicaat = overlap >= (b.end - b.start) * 0.8;
+        if (bijnaDuplicaat && clip.hook?.tekst_overlay && process.env.HOOK_TEASE !== '1') {
+          console.log(
+            `     herhaling: shot ${a.volgorde} is een duplicaat van shot ${b.volgorde}; ` +
+              `audio-hook vervalt, de hooktekst in beeld draagt de belofte`,
+          );
+          segmenten.splice(i, 1);
+          break;
+        }
+
+        const doel = a.start + Math.min(3.2, (a.end - a.start) * 0.45);
+        const pauze =
+          verschuifNaarPauze(doel, 'eind', stiltes ?? [], [], 1.2) ??
+          (await zoekStilstePunt(bronPad, doel, 'eind', 0.8))?.seconde ??
+          doel;
+        if (pauze - a.start >= 1.2 && pauze < a.end - 0.5) {
+          console.log(
+            `     herhaling: shot ${a.volgorde} en ${b.volgorde} delen ${overlap.toFixed(1)}s bron; ` +
+              `tease ingekort tot ${(pauze - a.start).toFixed(1)}s`,
+          );
+          a.end = pauze;
+        }
+      }
+    }
+
     // Gezichtsfocus per segment (alleen waar het script geen focus opgeeft).
     await vulGezichtsFocus(bronPad, segmenten);
 
@@ -423,6 +468,28 @@ async function verwerk(job: Job) {
       }
     }
 
+    // Harde regel, ná alle verschuivingen: geen twee segmenten in één clip
+    // delen bronmateriaal. De knipcontrole en de uitlijning mogen grenzen
+    // oprekken, maar zodra shot A tot ín het bereik van shot B loopt, hoort de
+    // kijker diezelfde woorden twee keer. De eerdere versie levert in — de
+    // latere zit op zijn plek in het verhaal en blijft heel.
+    for (let i = 0; i < segmenten.length; i++) {
+      for (let j = 0; j < segmenten.length; j++) {
+        if (i === j) continue;
+        const a = segmenten[i];
+        const b = segmenten[j];
+        const overlap = Math.min(a.end, b.end) - Math.max(a.start, b.start);
+        if (overlap <= 0.15) continue;
+        // Alleen de variant afknippen waar dat kan zonder het segment te slopen.
+        if (a.end > b.start && a.start < b.start && b.start - a.start >= 0.8) {
+          console.log(
+            `     overlap: shot ${a.volgorde} liep ${overlap.toFixed(1)}s in shot ${b.volgorde}; eind terug naar ${b.start.toFixed(2)}s`,
+          );
+          a.end = b.start;
+        }
+      }
+    }
+
     // De uiteindelijke knippunten loggen. Zonder dit is achteraf niet na te
     // gaan of een knip midden in een woord viel of netjes in een pauze — en
     // dat was nu juist de hardnekkigste klacht.
@@ -460,6 +527,30 @@ async function verwerk(job: Job) {
       maxBytes: MAX_BYTES,
       onVoortgang: (m) => console.log(`     ${m}`),
     });
+
+    // Zegt de clip wat het script voorschrijft? Het eindbestand wordt
+    // terugvertaald naar tekst en vergeleken: dekking van de scriptwoorden, en
+    // zinnen die twee keer klinken. Dit is de enige controle die een dubbele
+    // zin of een verdwaald fragment kán zien — tijdcodes en geluidsniveaus
+    // weten daar niets van.
+    try {
+      const script = await controleerScript(montage.pad, segmenten as never);
+      if (script) {
+        const procent = Math.round(script.dekking * 100);
+        if (script.herhalingen.length === 0 && procent >= 55) {
+          console.log(`     scriptcontrole: ${procent}% van het script terug te horen, geen herhaalde zinnen`);
+        } else {
+          if (procent < 55) console.log(`     scriptcontrole: maar ${procent}% van het script terug te horen`);
+          for (const h of script.herhalingen) {
+            console.log(
+              `     scriptcontrole: "${h.tekst}" klinkt twee keer (${h.eerste}s en ${h.tweede}s)`,
+            );
+          }
+        }
+      }
+    } catch (e) {
+      console.log(`     scriptcontrole overgeslagen (${(e as Error).message.slice(0, 60)})`);
+    }
 
     // Sluitstuk: het gerenderde bestand zelf nameten. De controles hiervóór
     // kijken naar de bron; deze kijkt naar wat je daadwerkelijk krijgt. Blijkt

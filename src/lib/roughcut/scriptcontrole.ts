@@ -1,0 +1,111 @@
+import { spawn } from 'node:child_process';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { resolveBinary } from '../ingest/binaries';
+import { woordenVanFragment } from './uitlijnen';
+import type { Shot } from './index';
+
+/**
+ * De laatste verdedigingslinie voor "de clip moet het script volgen": het
+ * gerenderde bestand wordt terugvertaald naar tekst en vergeleken met wat het
+ * plan voorschreef.
+ *
+ * Alle controles hiervóór werken op tijdcodes en geluidsniveaus — die vangen
+ * afgekapte woorden en schuivende knippen, maar níet een shot dat per ongeluk
+ * dezelfde zin twee keer laat horen, of een fragment dat na alle verschuivingen
+ * iets anders zegt dan gepland. Dat hoor je alleen door te luisteren, en dit is
+ * de geautomatiseerde vorm daarvan.
+ */
+
+export type ScriptOordeel = {
+  /** Aandeel van de scriptwoorden dat in de clip terugkomt (0..1). */
+  dekking: number;
+  /** Zinnen van 4+ woorden die twee keer in de clip klinken. */
+  herhalingen: { tekst: string; eerste: number; tweede: number }[];
+  woorden: number;
+};
+
+const norm = (t: string) => t.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+
+export async function controleerScript(
+  montagePad: string,
+  segmenten: (Shot & { transcript_fragment?: string })[],
+  opties: { model?: string } = {},
+): Promise<ScriptOordeel | null> {
+  const model = opties.model ?? process.env.WHISPER_ALIGN_MODEL ?? 'base';
+  const werkmap = await mkdtemp(join(tmpdir(), 'clipper-script-'));
+
+  try {
+    const wav = join(werkmap, 'clip.wav');
+    await new Promise<void>((klaar, fout) => {
+      const kind = spawn(
+        resolveBinary('ffmpeg'),
+        ['-nostdin', '-y', '-i', montagePad, '-vn', '-ac', '1', '-ar', '16000', wav],
+        { stdio: ['ignore', 'ignore', 'pipe'] },
+      );
+      let stderr = '';
+      kind.stderr.on('data', (d) => (stderr += d));
+      kind.on('error', fout);
+      kind.on('close', (code) => (code === 0 ? klaar() : fout(new Error(stderr.slice(-120)))));
+    });
+
+    const gehoord = await woordenVanFragment(wav, model);
+    if (gehoord.length < 8) return null;
+
+    const woorden = gehoord.map((w) => ({ ...w, n: norm(w.w) })).filter((w) => w.n.length > 0);
+
+    // Herhaalde zinnen: een reeks van vier of meer woorden die verderop nog
+    // eens klinkt. Vier is bewust de grens — losse woorden en korte frasen
+    // ("en dan", "goud") herhalen mensen constant, hele zinsdelen niet.
+    const herhalingen: ScriptOordeel['herhalingen'] = [];
+    const REEKS = 4;
+    const gezien = new Map<string, number>(); // sleutel -> index van eerste keer
+    for (let i = 0; i + REEKS <= woorden.length; i++) {
+      const sleutel = woorden.slice(i, i + REEKS).map((w) => w.n).join(' ');
+      const eerste = gezien.get(sleutel);
+      if (eerste === undefined) {
+        gezien.set(sleutel, i);
+        continue;
+      }
+      // Alleen echte herhaling: verderop in de clip, niet direct aansluitend
+      // (stotteren of een gestrekte zin telt niet).
+      if (woorden[i].s - woorden[eerste].s > 3) {
+        const vorige = herhalingen[herhalingen.length - 1];
+        // Overlappende vensters samenvoegen tot één melding.
+        if (vorige && woorden[i].s - vorige.tweede < 2.5) {
+          vorige.tekst = `${vorige.tekst} ${woorden[i + REEKS - 1].w}`;
+        } else {
+          herhalingen.push({
+            tekst: woorden.slice(i, i + REEKS).map((w) => w.w).join(' '),
+            eerste: Math.round(woorden[eerste].s * 10) / 10,
+            tweede: Math.round(woorden[i].s * 10) / 10,
+          });
+        }
+      }
+    }
+
+    // Dekking: welk deel van de scriptwoorden komt terug in de clip? Grofweg —
+    // transcriptie verhaspelt namen — dus we tellen per fragment het aandeel
+    // herkende woorden en middelen dat.
+    const inClip = new Set(woorden.map((w) => w.n));
+    const fragmenten = segmenten
+      .map((s) => s.transcript_fragment)
+      .filter((f): f is string => Boolean(f && f.length > 10));
+    let dekking = 1;
+    if (fragmenten.length > 0) {
+      const scores = fragmenten.map((f) => {
+        const doel = f.split(/\s+/).map(norm).filter((w) => w.length >= 3);
+        if (doel.length === 0) return 1;
+        return doel.filter((w) => inClip.has(w)).length / doel.length;
+      });
+      dekking = scores.reduce((a, b) => a + b, 0) / scores.length;
+    }
+
+    return { dekking, herhalingen, woorden: woorden.length };
+  } catch {
+    return null;
+  } finally {
+    await rm(werkmap, { recursive: true, force: true });
+  }
+}

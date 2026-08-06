@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { resolveBinary } from '../ingest/binaries';
 import type { Shot } from './index';
 
-type Woord = { w: string; s: number; e: number };
+export type Woord = { w: string; s: number; e: number };
 
 /**
  * Lijnt knippunten uit op het gecíteerde fragment in plaats van op de
@@ -145,7 +145,12 @@ function zoekCitaat(
 }
 
 /** Woordtijden via faster-whisper (python), met whisper-cli als terugval. */
-async function woordenVanFragment(wav: string, model: string): Promise<Woord[]> {
+/**
+ * Transcribeert een wav-bestand naar woorden met tijden. Ook los bruikbaar:
+ * de scriptcontrole transcribeert er het eindbestand mee om te toetsen of de
+ * clip werkelijk zegt wat het script voorschrijft.
+ */
+export async function woordenVanFragment(wav: string, model: string): Promise<Woord[]> {
   // 1. Python/faster-whisper (staat op de runner).
   try {
     const uit = await run('python3', ['scripts/align.py', wav, model]);
