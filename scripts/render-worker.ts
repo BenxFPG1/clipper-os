@@ -600,13 +600,11 @@ async function vulGezichtsFocus(bronPad: string, segmenten: Shot[]): Promise<voi
         hoogte: hs[Math.floor(hs.length / 2)],
       };
 
-      // Beweegt de spreker flink door het beeld, dan is strak inzoomen
-      // gevaarlijk: hij loopt de uitsnede uit. Dan liever ruim kadreren.
-      const spreiding = xs[xs.length - 1] - xs[0];
-      if (spreiding > 0.15) {
-        s.breed = true;
-        breedGeteld++;
-      }
+      // Hoe ver beweegt de spreker binnen dit shot? Dat begrenst straks de
+      // zoom: precies genoeg om hem de hele tijd in beeld te houden, in plaats
+      // van uit voorzorg helemaal niet inzoomen.
+      s.spreiding = xs[xs.length - 1] - xs[0];
+      if (s.spreiding > 0.15) breedGeteld++;
 
       // Alleen binnen een paneel kadreren als alle metingen het eens zijn; is
       // het beeld halverwege omgesprongen, dan klopt de uitsnede maar de helft
@@ -615,15 +613,15 @@ async function vulGezichtsFocus(bronPad: string, segmenten: Shot[]): Promise<voi
       if (panelen[0] && panelen.every((p) => p === panelen[0])) {
         s.paneel = groep[0].paneel ?? undefined;
       }
-      if (groep.some((m) => m.breed)) {
-        s.breed = true;
-      }
+      // Meerdere mensen in beeld is geen reden om niet in te zoomen — de
+      // sprekerdetectie wijst inmiddels betrouwbaar de juiste persoon aan. Wel
+      // reden om de spreiding mee te wegen, en dat gebeurt hierboven al.
     });
     const gevonden = zonderScriptFocus.filter((s) => typeof s.focusX === 'number').length;
     const panelen = zonderScriptFocus.filter((s) => s.paneel).length;
     console.log(
       `     spreker in beeld: ${gevonden}/${zonderScriptFocus.length} segmenten` +
-        (breedGeteld ? `, ${breedGeteld}x ruim gekadreerd (spreker beweegt of meerdere personen)` : '') +
+        (breedGeteld ? `, ${breedGeteld}x zoom begrensd omdat de spreker beweegt` : '') +
         (panelen ? `, ${panelen}x split screen in de bron (binnen het paneel gekadreerd)` : ''),
     );
   } catch (e) {

@@ -20,6 +20,8 @@ export type Shot = {
   focusX?: number;
   /** Gemeten gezichtsbreedte als fractie van het beeld; begrenst de zoom. */
   focusW?: number;
+  /** Hoe ver de spreker binnen dit shot horizontaal beweegt (fractie). */
+  spreiding?: number;
   /**
    * De bron is hier zelf een split screen; dit is het deel [van, tot] waar de
    * spreker in staat. Daarbuiten kadreren levert een halve persoon plus een
@@ -161,14 +163,17 @@ export async function maakRuweMontage(opties: {
     // ingezoomd te worden tot het hoofd het beeld draagt.
     const ingreepZoom =
       shot.beeld_effect === 'punch_in' ? 1.12 : shot.beeld_effect === 'snelle_zoom' ? 1.18 : 1;
-    // Beweegt de spreker door het beeld of staan er meerdere mensen, dan niet
-    // inzoomen: dan loopt hij binnen het shot de uitsnede uit en kijk je naar
-    // een lege muur.
     const gemetenBreedte =
       shot.paneel && shot.focusW ? shot.focusW / (shot.paneel[1] - shot.paneel[0]) : shot.focusW;
     // Heeft de kadercontrole een zoom vastgesteld, dan wint die: hij is
     // getoetst tegen het werkelijke gezichtsvak.
-    let zoom = shot.zoom ?? (shot.breed ? 1 : Math.max(ingreepZoom, vulZoom(gemetenBreedte)));
+    //
+    // Beweegt de spreker binnen het shot, dan zetten we de zoom niet uit maar
+    // begrenzen we hem: zo ver inzoomen als kan zonder dat hij het kader
+    // uitloopt. "Bij twijfel wijd" leverde een slotshot op waarin hij klein
+    // wegviel tussen het decor.
+    let zoom = shot.zoom ?? Math.max(ingreepZoom, vulZoom(gemetenBreedte));
+    zoom = Math.max(1, Math.min(zoom, bewegingsPlafond(shot.spreiding, gemetenBreedte)));
     // Jump-cut afdekken (editcraft): een knip binnen dezelfde opname is
     // zichtbaar als een sprong. Wissel daarom van schaal (>10% verschil) op
     // elke dode-luchtknip, zodat de sprong als bewuste punch-in leest.
@@ -566,6 +571,17 @@ function vulZoom(focusW?: number): number {
   const inUitsnede = focusW * 3; // 1080 van 1920 breed is grofweg een derde
   const gewenst = 0.33;
   return Math.min(1.7, Math.max(1, gewenst / inUitsnede));
+}
+
+/**
+ * Hoe ver je maximaal mag inzoomen zonder dat de spreker het kader uitloopt.
+ * De uitsnede moet zijn hele bewegingsruimte plus zijn hoofd omvatten.
+ */
+function bewegingsPlafond(spreiding?: number, focusW?: number): number {
+  if (!spreiding || spreiding < 0.02) return Infinity;
+  const nodig = spreiding + (focusW ?? 0.12) * 1.4;
+  const bijZoomEen = 1080 / (1920 * (16 / 9));
+  return Math.max(1, bijZoomEen / Math.max(0.01, nodig));
 }
 
 /** Lengte van een audio- of videobestand in seconden; 0 als het niet te lezen is. */
