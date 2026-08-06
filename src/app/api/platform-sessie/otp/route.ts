@@ -74,12 +74,34 @@ export async function POST(req: NextRequest) {
 
   if (body.actie === 'verify') {
     if (!body.code?.trim()) {
-      return NextResponse.json({ error: 'Vul de code uit de e-mail in.' }, { status: 400 });
+      return NextResponse.json({ error: 'Vul de code of de inloglink uit de e-mail in.' }, { status: 400 });
     }
+
+    // De mail bevat afhankelijk van ClipArmy's sjabloon een cijfercode of een
+    // inloglink. Allebei goed: uit een geplakte link vissen we de token_hash en
+    // verzilveren die — dan logt de link de cloud in, in plaats van je browser.
+    const invoer = body.code.trim();
+    let verifyBody: Record<string, string>;
+    const alsUrl = (() => {
+      try {
+        return new URL(invoer);
+      } catch {
+        return null;
+      }
+    })();
+    const hash = alsUrl?.searchParams.get('token_hash') ?? alsUrl?.searchParams.get('token');
+    if (hash) {
+      verifyBody = { type: alsUrl?.searchParams.get('type') ?? 'magiclink', token_hash: hash };
+    } else if (/^pkce_|^[0-9a-f]{20,}$/i.test(invoer)) {
+      verifyBody = { type: 'magiclink', token_hash: invoer };
+    } else {
+      verifyBody = { type: 'email', email: body.email as string, token: invoer };
+    }
+
     const res = await fetch(`${basis.project}/auth/v1/verify`, {
       method: 'POST',
       headers: { apikey: basis.apikey, 'content-type': 'application/json' },
-      body: JSON.stringify({ type: 'email', email: body.email, token: body.code.trim() }),
+      body: JSON.stringify(verifyBody),
       signal: AbortSignal.timeout(20_000),
     });
     if (!res.ok) {

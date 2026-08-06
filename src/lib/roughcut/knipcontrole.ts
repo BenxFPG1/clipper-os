@@ -105,6 +105,12 @@ export function verschuifNaarPauze(
    */
   maxAfstand = 1.2,
 ): number | null {
+  // Een begin mag maar een fractie naar voren: alles tussen de pauze en het
+  // citaat komt mee in de clip, en dat is precies hoe er een los "Ja," vóór de
+  // eerste zin belandde. Een eind mag iets ruimer — daar loopt hooguit de
+  // eigen zin even door.
+  const begrensd = Math.min(maxAfstand, kant === 'begin' ? 0.5 : 0.8);
+
   // Alleen pauzes van betekenis; korte dipjes zijn medeklinkers, geen pauzes.
   const echt = stiltes.filter((s) => s.end - s.start >= 0.25);
 
@@ -115,7 +121,7 @@ export function verschuifNaarPauze(
       const punt = (s.start + s.end) / 2;
       return { punt, afstand: Math.abs(punt - seconde) };
     })
-    .filter((k) => k.afstand <= maxAfstand)
+    .filter((k) => k.afstand <= begrensd)
     .filter((k) => (kant === 'begin' ? k.punt <= seconde + 0.05 : k.punt >= seconde - 0.05))
     .filter((k) => !alGeprobeerd.some((p) => Math.abs(p - k.punt) < 0.02))
     .sort((a, b) => a.afstand - b.afstand);
@@ -218,9 +224,14 @@ export async function zoekStilstePunt(
   const bruikbaar = blokken.filter((b) => (kant === 'begin' ? b.t <= seconde : b.t >= seconde));
   if (bruikbaar.length === 0) return null;
 
-  const beste = bruikbaar.reduce((a, b) => (b.db < a.db ? b : a));
-  // Alleen verschuiven als het merkbaar stiller is dan waar we nu staan.
-  return beste.db < -30 ? { seconde: beste.t + 0.01, db: Math.round(beste.db * 10) / 10 } : null;
+  // Niet het stilste blok, maar het dichtstbijzijnde blok dat stil genoeg is.
+  // Het stilste dal kan een halve seconde verderop liggen — vóór het losse
+  // "Ja," dat aan de zin voorafgaat — en dan neem je dat woordje alsnog mee.
+  const stilGenoeg = bruikbaar
+    .filter((b) => b.db < -30)
+    .sort((a, b) => Math.abs(a.t - seconde) - Math.abs(b.t - seconde));
+  const beste = stilGenoeg[0];
+  return beste ? { seconde: beste.t + 0.01, db: Math.round(beste.db * 10) / 10 } : null;
 }
 
 /** Het gemiddelde niveau van een heel bestand; ijkpunt voor de naadcontrole. */

@@ -24,6 +24,12 @@ export type ScriptOordeel = {
   /** Zinnen van 4+ woorden die twee keer in de clip klinken. */
   herhalingen: { tekst: string; eerste: number; tweede: number }[];
   woorden: number;
+  /**
+   * Spraak vóór de eerste scriptzin: hoeveel seconden, en wat er gezegd wordt.
+   * Null als de clip meteen met de scripttekst begint (of dat niet te bepalen
+   * is). Dit vangt precies het losse "Ja," of de staart van een vorige zin.
+   */
+  aanloop: { seconden: number; tekst: string } | null;
 };
 
 const norm = (t: string) => t.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
@@ -102,7 +108,32 @@ export async function controleerScript(
       dekking = scores.reduce((a, b) => a + b, 0) / scores.length;
     }
 
-    return { dekking, herhalingen, woorden: woorden.length };
+    // Aanloop: zoek waar de eerste scriptzin begint in wat er werkelijk
+    // klinkt. Alles daarvóór is meegenomen bronmateriaal dat het plan niet
+    // vroeg. Kleine adempauzes zijn prima; hele woorden niet.
+    let aanloop: ScriptOordeel['aanloop'] = null;
+    const eersteFragment = fragmenten[0];
+    if (eersteFragment) {
+      const kop = eersteFragment.split(/\s+/).map(norm).filter((w) => w.length >= 3).slice(0, 5);
+      let beginIndex = -1;
+      for (let i = 0; i < Math.min(woorden.length, 30) && beginIndex < 0; i++) {
+        // Twee opeenvolgende kopwoorden is genoeg bewijs; transcriptie mist er
+        // altijd wel een.
+        const hit = kop.includes(woorden[i].n) && (kop.includes(woorden[i + 1]?.n) || kop.includes(woorden[i + 2]?.n));
+        if (hit) beginIndex = i;
+      }
+      if (beginIndex > 0) {
+        const seconden = woorden[beginIndex].s;
+        if (seconden > 0.7) {
+          aanloop = {
+            seconden: Math.round(seconden * 100) / 100,
+            tekst: woorden.slice(0, beginIndex).map((w) => w.w).join(' ').slice(0, 80),
+          };
+        }
+      }
+    }
+
+    return { dekking, herhalingen, woorden: woorden.length, aanloop };
   } catch {
     return null;
   } finally {

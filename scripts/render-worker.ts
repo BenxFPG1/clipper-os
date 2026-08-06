@@ -321,8 +321,11 @@ async function verwerk(job: Job) {
       }
     }
 
-    // Kaarten en hook: subsegmenten (uit de dode-luchtsplitsing) krijgen geen
-    // eigen kaart, anders staat dezelfde kaart er twee keer.
+    // Kaarten en hook als functie: de aanloopcorrectie verderop kan het eerste
+    // segment inkorten, en dan moeten alle kaartposities opnieuw berekend
+    // worden. Subsegmenten (uit de dode-luchtsplitsing) krijgen geen eigen
+    // kaart, anders staat dezelfde kaart er twee keer.
+    const bouwOverlays = async (): Promise<BurnOverlay[]> => {
     const kaartSegmenten = segmenten.map((sgm) =>
       (sgm as { subKnip?: boolean }).subKnip ? { ...sgm, edit_notitie: '', beeld_effect: undefined } : sgm,
     );
@@ -348,6 +351,8 @@ async function verwerk(job: Job) {
       }
       overlays.unshift({ pad: hookPad, start: 0, end: hookTot });
     }
+    return overlays;
+    };
 
     // Kadercontrole in twee fases, met een lus eromheen. Fase 1 rekent uit wat
     // er werkelijk in beeld valt en corrigeert wat aantoonbaar fout is. Fase 2
@@ -505,14 +510,16 @@ async function verwerk(job: Job) {
       }
     }
 
-    const montage = await maakRuweMontage({
+    let montage!: Awaited<ReturnType<typeof maakRuweMontage>>;
+    for (let poging = 1; ; poging++) {
+    montage = await maakRuweMontage({
       sourceUrl: video.source_url,
       shots: segmenten,
       alGesegmenteerd: true,
       outputPad: lokaal,
       werkmap: bronmap,
       kader: editClip?.kader ?? clip.kader ?? 'vullend',
-      overlays,
+      overlays: await bouwOverlays(),
       // Eigen gelicenseerde audio uit assets/: muziekbed met ducking en
       // stiltevensters, sfx op de shots die erom vragen. Ontbreekt een
       // bestand, dan wordt het stil overgeslagen.
@@ -536,6 +543,20 @@ async function verwerk(job: Job) {
     try {
       const script = await controleerScript(montage.pad, segmenten as never);
       if (script) {
+        // Begint de clip niet op de scripttekst, dan is er bronmateriaal vóór
+        // de eerste zin meegekomen (een los "Ja,", de staart van de vorige
+        // vraag). Dat is alleen betrouwbaar te horen in het eindbestand — dus
+        // corrigeren we het beginpunt en renderen we één keer opnieuw.
+        const eerste = segmenten[0];
+        if (script.aanloop && poging === 1 && eerste && eerste.end - eerste.start - script.aanloop.seconden > 1) {
+          console.log(
+            `     scriptcontrole: clip begint met "${script.aanloop.tekst}" (${script.aanloop.seconden}s vóór het script); beginpunt gecorrigeerd, opnieuw renderen`,
+          );
+          eerste.start += Math.max(0, script.aanloop.seconden - 0.15);
+          eerste.zachtBegin = true;
+          continue;
+        }
+
         const procent = Math.round(script.dekking * 100);
         if (script.herhalingen.length === 0 && procent >= 55) {
           console.log(`     scriptcontrole: ${procent}% van het script terug te horen, geen herhaalde zinnen`);
@@ -550,6 +571,8 @@ async function verwerk(job: Job) {
       }
     } catch (e) {
       console.log(`     scriptcontrole overgeslagen (${(e as Error).message.slice(0, 60)})`);
+    }
+    break;
     }
 
     // Sluitstuk: het gerenderde bestand zelf nameten. De controles hiervóór

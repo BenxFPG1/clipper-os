@@ -77,12 +77,13 @@ export function snapShots<T extends SnapShot>(
   const einden = [...eindKandidaten].sort((a, b) => a.punt - b.punt);
 
   // Na citaat-uitlijning staan de grenzen op het woord, maar dat is niet
-  // hetzelfde als op een stílte. Zit de dichtstbijzijnde pauze net buiten het
-  // krappe venster, dan bleef de knip midden in de spraak staan — en dat hoor
-  // je als een half afgekapt woord. Daarom mag hij nu véél verder zoeken zolang
-  // hij alleen maar verruimt: extra ademruimte kost niets, een afgekapt woord
-  // wel.
-  const zoekVenster = opties.alleenVerruimen ? Math.max(venster, 2.5) : venster;
+  // hetzelfde als op een stílte. Het eind mag daarom ver naar buiten zoeken:
+  // een half afgekapt slotwoord is erger dan wat uitloop. Het begin juist
+  // níet — alles tussen de gevonden pauze en het citaat komt mee in de clip,
+  // en zo begon een clip met de staart van de vorige zin ("…een heel goede
+  // vraag. Ik wou dat…"). Een half woordje aanloop is het maximum.
+  const zoekVensterStart = opties.alleenVerruimen ? Math.max(venster, 0.45) : venster;
+  const zoekVensterEind = opties.alleenVerruimen ? Math.max(venster, 2.5) : venster;
 
   return shots.map((shot) => {
     // Alleen echte spraakpauzes als knippunt. Woordgrenzen uit de transcriptie
@@ -90,8 +91,8 @@ export function snapShots<T extends SnapShot>(
     // nauwkeurig: gemeten schoof een knip daardoor van -49 dB (stilte) naar
     // -14 dB (volle spraak). Vind je geen pauze binnen het venster, dan blijft
     // de uitgelijnde grens staan — die zit tenminste op het citaat.
-    const start = dichtstbij(starts, shot.start, zoekVenster, 'eerder', opties.alleenVerruimen);
-    const eind = dichtstbij(einden, shot.end, zoekVenster, 'later', opties.alleenVerruimen);
+    const start = dichtstbij(starts, shot.start, zoekVensterStart, 'eerder', opties.alleenVerruimen);
+    const eind = dichtstbij(einden, shot.end, zoekVensterEind, 'later', opties.alleenVerruimen);
 
     // Binnen de pauze blijven: hooguit tot de helft ervan, zodat er aan beide
     // kanten stilte overblijft en de knip niet hoorbaar is.

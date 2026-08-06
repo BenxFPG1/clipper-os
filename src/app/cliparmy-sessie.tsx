@@ -93,7 +93,7 @@ export function ClipArmySessie({
         <div className="rounded border border-neutral-800 bg-neutral-900/60 p-3">
           <p className="mb-2 text-sm font-medium">Koppelen met een e-mailcode (werkt ook met Google-login)</p>
           <p className="mb-2 text-xs text-neutral-400">
-            ClipArmy mailt je een inlogcode; die tik je hier in. Clipper OS krijgt daarmee een eigen sessie die
+            ClipArmy mailt je een inlogcode of -link; die plak je hier. Clipper OS krijgt daarmee een eigen sessie die
             zichzelf elk uur ververst — los van je browser, dus je wordt nergens uitgelogd. Geen wachtwoord
             nodig.
           </p>
@@ -118,7 +118,7 @@ export function ClipArmySessie({
               <input
                 value={code}
                 onChange={(e) => setCode(e.target.value)}
-                placeholder="code uit de e-mail"
+                placeholder="code of inloglink uit de e-mail"
                 className="w-40 rounded border border-neutral-700 bg-neutral-900 px-3 py-1.5 font-mono text-xs"
               />
               <button

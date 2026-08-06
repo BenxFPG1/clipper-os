@@ -79,10 +79,23 @@ export async function lijnShotsUit(
 
         // Ook een halve match is winst: alleen het begin of alleen het einde
         // op het woord leggen is beter dan allebei laten gokken.
-        uitgelijnd += 1;
-        const nieuwStart =
+        let nieuwStart =
           grenzen.start !== null ? Math.max(0, spanStart + grenzen.start - 0.06) : shot.start;
-        const nieuwEind = grenzen.end !== null ? spanStart + grenzen.end + 0.15 : shot.end;
+        let nieuwEind = grenzen.end !== null ? spanStart + grenzen.end + 0.15 : shot.end;
+
+        // Wijkt de match meer dan drie seconden af van waar het plan het citaat
+        // legt, dan heeft het model een verkeerde plek gevonden — dat gebeurde
+        // echt: een start die drie seconden de zin in lag, waardoor de clip
+        // midden in "…volatiliteit / ja, de komende jaren" begon. Zo'n kant
+        // vervalt; het plan is dan betrouwbaarder dan de match.
+        if (Math.abs(nieuwStart - shot.start) > 3) nieuwStart = shot.start;
+        if (Math.abs(nieuwEind - shot.end) > 3) nieuwEind = shot.end;
+        if (nieuwStart === shot.start && nieuwEind === shot.end) {
+          uit.push(shot);
+          continue;
+        }
+
+        uitgelijnd += 1;
         if (nieuwEind - nieuwStart < 0.5) {
           uit.push(shot);
           continue;
