@@ -508,25 +508,31 @@ async function bepaalHuisstijl(
  * installeerde, en dan viel de sprekerdetectie stil terug op het midden zonder
  * dat iemand het merkte.
  */
-let pythonKeuze: string | null = null;
-function pythonMetOpenCV(): string {
+let pythonKeuze: { cmd: string; voor: string[] } | null = null;
+function pythonMetOpenCV(): { cmd: string; voor: string[] } {
   if (pythonKeuze) return pythonKeuze;
-  const kandidaten = [
-    process.env.PYTHON_BIN,
-    'python3',
-    '/usr/local/bin/python3',
-    '/opt/homebrew/bin/python3',
-    'python',
-  ].filter(Boolean) as string[];
+
+  const binaries = [process.env.PYTHON_BIN, 'python3', '/usr/local/bin/python3', '/opt/homebrew/bin/python3', 'python']
+    .filter(Boolean) as string[];
+
+  const kandidaten: { cmd: string; voor: string[] }[] = [];
+  for (const bin of binaries) {
+    kandidaten.push({ cmd: bin, voor: [] });
+    // Draait Node onder Rosetta (x86_64) op een Apple Silicon-Mac, dan erft de
+    // python die hij start diezelfde architectuur en weigert numpy te laden —
+    // dat is arm64. `arch -arm64` zet dat recht. Op andere machines bestaat het
+    // commando niet of faalt de proef, en dan valt hij gewoon door.
+    if (process.platform === 'darwin') kandidaten.push({ cmd: 'arch', voor: ['-arm64', bin] });
+  }
 
   for (const kandidaat of kandidaten) {
-    const proef = spawnSync(kandidaat, ['-c', 'import cv2, numpy'], { stdio: 'ignore' });
+    const proef = spawnSync(kandidaat.cmd, [...kandidaat.voor, '-c', 'import cv2, numpy'], { stdio: 'ignore' });
     if (proef.status === 0) {
       pythonKeuze = kandidaat;
       return kandidaat;
     }
   }
-  pythonKeuze = 'python3';
+  pythonKeuze = { cmd: 'python3', voor: [] };
   return pythonKeuze;
 }
 
@@ -552,7 +558,8 @@ async function vulGezichtsFocus(bronPad: string, segmenten: Shot[]): Promise<voi
   );
   try {
     const uit = await new Promise<string>((klaar, fout) => {
-      const kind = spawn(pythonMetOpenCV(), ['scripts/gezichten.py', bronPad, JSON.stringify(tijden)]);
+      const py = pythonMetOpenCV();
+      const kind = spawn(py.cmd, [...py.voor, 'scripts/gezichten.py', bronPad, JSON.stringify(tijden)]);
       let stdout = '';
       let stderr = '';
       kind.stdout.on('data', (d) => (stdout += d));
