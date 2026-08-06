@@ -327,10 +327,12 @@ async function verwerk(job: Job) {
           const seg = segmenten.find((sg) => sg.volgorde === o.volgorde);
           if (!seg) continue;
           const wat = pasVisueleCorrectieToe(seg, o.correctie, o.sterkte);
-          if (wat) {
-            aangepast++;
-            console.log(`     ronde ${ronde} shot ${o.volgorde}: ${o.probleem.slice(0, 70)} → ${wat}`);
-          }
+          if (wat) aangepast++;
+          // Ook loggen wat niet op te lossen viel: anders staat er straks een
+          // klacht in de log zonder dat je weet waarover.
+          console.log(
+            `     ronde ${ronde} shot ${o.volgorde}: ${o.probleem.slice(0, 80)} → ${wat ?? `geen ingreep mogelijk (${o.correctie})`}`,
+          );
         }
 
         // Niets meer kunnen bijstellen? Dan is doorgaan zinloos; nog een ronde
@@ -603,7 +605,16 @@ async function vulGezichtsFocus(bronPad: string, segmenten: Shot[]): Promise<voi
       // Hoe ver beweegt de spreker binnen dit shot? Dat begrenst straks de
       // zoom: precies genoeg om hem de hele tijd in beeld te houden, in plaats
       // van uit voorzorg helemaal niet inzoomen.
-      s.spreiding = xs[xs.length - 1] - xs[0];
+      //
+      // Niet het verschil tussen de uiterste metingen nemen: pakt de detectie op
+      // één van de drie momenten de gesprekspartner in plaats van de spreker,
+      // dan lijkt hij een halve beeldbreedte te verspringen en zoomen we
+      // helemaal niet meer in. Daarom eerst de uitschieters eruit, en dan pas de
+      // spreiding van wat overblijft.
+      const mediaan = s.focusX;
+      const dichtbij = xs.filter((x) => Math.abs(x - mediaan) <= 0.2);
+      const kern = dichtbij.length >= 2 ? dichtbij : xs;
+      s.spreiding = kern[kern.length - 1] - kern[0];
       if (s.spreiding > 0.15) breedGeteld++;
 
       // Alleen binnen een paneel kadreren als alle metingen het eens zijn; is
