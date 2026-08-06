@@ -561,15 +561,17 @@ export async function meetRuisvloer(
  *
  * De uitsnede van 16:9 naar 9:16 pakt ongeveer een derde van de breedte. Staat
  * een hoofd op 8% van het beeld, dan wordt dat in de uitsnede zo'n 24% — dat
- * leest nog als een totaalshot. We mikken op ongeveer een derde van de
- * uitsnedebreedte: groot genoeg om de blik te lezen, niet zo groot dat het
- * hoofd de randen raakt. Boven 1,7 stoppen we: verder inzoomen kost te veel
- * scherpte.
+ * leest nog als een totaalshot.
+ *
+ * We mikken op bijna de halve uitsnedebreedte. Een derde bleek te bescheiden:
+ * op de telefoon bleef er dan een gesprekspartner en een halve boekenkast
+ * omheen staan en droeg het hoofd het beeld niet. Boven 1,7 stoppen we, want
+ * verder inzoomen kost zichtbaar scherpte.
  */
 function vulZoom(focusW?: number): number {
   if (!focusW || focusW <= 0) return 1;
   const inUitsnede = focusW * 3; // 1080 van 1920 breed is grofweg een derde
-  const gewenst = 0.33;
+  const gewenst = 0.45;
   return Math.min(1.7, Math.max(1, gewenst / inUitsnede));
 }
 
