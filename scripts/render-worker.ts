@@ -637,7 +637,7 @@ function pythonMetOpenCV(): { cmd: string; voor: string[] } {
  * seconde, en op een statische talking head verandert er toch niets.
  */
 async function meetSpoor(bronPad: string, segmenten: Shot[]): Promise<number> {
-  const teVolgen = segmenten.filter((s) => (s.spreiding ?? 0) > 0.08 && !s.focus);
+  const teVolgen = segmenten.filter((s) => (s.spreiding ?? 0) > 0.08);
   if (teVolgen.length === 0) return 0;
 
   const STAP = 0.75;

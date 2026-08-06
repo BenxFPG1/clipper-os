@@ -5,7 +5,7 @@ name: roughcut
 
 on:
   schedule:
-    - cron: '*/15 * * * *' # kwartiercheck op wachtende opdrachten
+    - cron: '0 * * * *' # uurcheck als vangnet; de app start zelf een run zodra er werk is
   workflow_dispatch:
 
 concurrency:

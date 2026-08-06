@@ -62,6 +62,7 @@ jobs:
       # ffmpeg staat al op de GitHub-runner. yt-dlp halen we als kant-en-klare
       # binary op: apt-get bleek minutenlang te kunnen hangen op de runner.
       - name: Installeer yt-dlp
+        if: ${{ steps.kies.outputs.job != 'cliparmy' }}
         run: |
           sudo curl -sSL --retry 3 --max-time 120 \
             https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux \
@@ -73,6 +74,8 @@ jobs:
       - name: Dependencies
         run: npm ci
 
+      # Ook nodig voor cliparmy: een binnengehaalde campagne wordt door de
+      # import-agent gelezen.
       - name: Claude Code CLI
         run: npm install -g @anthropic-ai/claude-code
 
@@ -80,7 +83,7 @@ jobs:
       # Zonder dit secret werkt TikTok meestal wel en kan YouTube-research
       # geweigerd worden; de scout logt dat dan als fout per bron en gaat door.
       - name: YouTube-cookies (optioneel)
-        if: ${{ env.YTDLP_COOKIES_B64 != '' }}
+        if: ${{ steps.kies.outputs.job != 'cliparmy' && env.YTDLP_COOKIES_B64 != '' }}
         run: |
           echo "$YTDLP_COOKIES_B64" | base64 -d > "$RUNNER_TEMP/cookies.txt"
           echo "YTDLP_COOKIES_FILE=$RUNNER_TEMP/cookies.txt" >> "$GITHUB_ENV"

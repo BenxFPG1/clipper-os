@@ -6,7 +6,7 @@ name: ai-jobs
 
 on:
   schedule:
-    - cron: '*/15 * * * *' # kwartiercheck op wachtende denkopdrachten
+    - cron: '0 * * * *' # uurcheck als vangnet; de app start zelf een run zodra er werk is
     - cron: '0 6 * * *' # dagelijkse kanaalcheck op nieuwe uploads
   workflow_dispatch:
 

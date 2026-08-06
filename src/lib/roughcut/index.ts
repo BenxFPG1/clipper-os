@@ -222,7 +222,7 @@ export async function maakRuweMontage(opties: {
     }));
     const keten = kaderKeten(kader, {
       focusX: focusNaarX(shot.focus, focusInPaneel),
-      focusExpr: spoorInPaneel && !shot.focus ? (spoorExpressie(spoorInPaneel) ?? undefined) : undefined,
+      focusExpr: spoorInPaneel ? (spoorExpressie(spoorInPaneel) ?? undefined) : undefined,
       zoom,
       focusY: shot.focusY,
     });
