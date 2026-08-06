@@ -109,31 +109,69 @@ def zoekNaad(frames):
 
     Sommige interviews worden als twee camera's naast elkaar geleverd. Kadreer
     je daar blind een verticale uitsnede uit, dan krijg je een halve persoon,
-    de naad, en een halve andere persoon — precies het beeld dat er niet uitziet.
-    Door de naad te vinden kunnen we binnen één paneel blijven.
+    de naad, en een halve andere persoon.
 
-    Geeft de positie 0..1 terug, of None als er geen duidelijke naad is.
+    Maar een scherpe verticale rand is nog geen split screen: een deurpost, een
+    kastrand of een naad in de lambrisering geeft precies hetzelfde signaal. Dat
+    is niet theoretisch — het sneed hier een gesprek doormidden op een houtnaad
+    achter het hoofd van de spreker. Vandaar drie eisen bovenop de rand zelf:
+
+    1. De rand moet er ver bovenuit springen, niet net.
+    2. Hij moet alleen staan: is de buurt ook druk, dan kijk je naar structuur
+       (een kast, een radiator) en niet naar een montagegrens.
+    3. Links en rechts moeten wérkelijk verschillende beelden zijn. Twee camera's
+       leveren andere kleuren en andere helderheid; één kamer niet.
+
+    Bij twijfel: geen naad. Een gemiste split screen kost een middelmatige
+    uitsnede, een verzonnen naad kost een half hoofd.
     """
     scores = None
     for f in frames[:3]:
         grijs = cv2.cvtColor(f, cv2.COLOR_BGR2GRAY).astype("float32")
-        # Verschil tussen buurkolommen, gemiddeld over alle rijen: een naad
-        # loopt over de volle hoogte en springt er dan bovenuit.
         kolom = np.mean(np.abs(np.diff(grijs, axis=1)), axis=0)
         scores = kolom if scores is None else scores + kolom
-    if scores is None or scores.size < 20:
+    if scores is None or scores.size < 40:
         return None
 
     b = scores.size
-    rand = int(b * 0.18)          # buitenranden negeren
+    rand = int(b * 0.18)
     midden = scores[rand:b - rand]
     if midden.size == 0:
         return None
 
     piek = int(np.argmax(midden)) + rand
     mediaan = float(np.median(scores))
-    if mediaan <= 0 or scores[piek] < mediaan * 6:
+    if mediaan <= 0 or scores[piek] < mediaan * 12:
         return None
+
+    # 2. Staat de piek alleen? Kijk naar de omgeving, met de piek zelf eruit.
+    marge = max(3, int(b * 0.02))
+    omgeving = np.concatenate([
+        scores[max(0, piek - marge): max(0, piek - 2)],
+        scores[min(b, piek + 3): min(b, piek + marge)],
+    ])
+    if omgeving.size and float(np.max(omgeving)) > scores[piek] * 0.45:
+        return None
+
+    # 3. Zijn het twee verschillende beelden? Vergelijk de kleurverdeling van
+    #    beide helften; twee camera's lijken nooit zo op elkaar als twee helften
+    #    van dezelfde kamer.
+    f = frames[0]
+    links = f[:, :piek]
+    rechts = f[:, piek + 1:]
+    if links.size == 0 or rechts.size == 0:
+        return None
+
+    verschil = 0.0
+    for kanaal in range(3):
+        hl = cv2.calcHist([links], [kanaal], None, [32], [0, 256]).flatten()
+        hr = cv2.calcHist([rechts], [kanaal], None, [32], [0, 256]).flatten()
+        hl = hl / max(1.0, hl.sum())
+        hr = hr / max(1.0, hr.sum())
+        verschil += float(np.sum(np.abs(hl - hr))) / 2
+    if verschil / 3 < 0.35:
+        return None
+
     return round(piek / b, 4)
 
 
@@ -231,16 +269,19 @@ for t in tijden:
     naad = zoekNaad(frames)
     paneel = None
     if naad is not None and 0.15 < naad < 0.85:
-        # Kiezen op basis van het hele gezichtsvak, niet op het middelpunt. Ligt
-        # het hoofd óp de naad, dan valt de halve kop buiten welk paneel je ook
-        # kiest — dan is niet kadreren beter dan half kadreren.
-        links = x_mediaan - breedte / 2
-        rechts = x_mediaan + breedte / 2
-        if rechts <= naad - 0.01:
-            paneel = [0.0, naad]
-        elif links >= naad + 0.01:
-            paneel = [naad, 1.0]
-        if paneel is not None:
+        # De kant waar de spreker staat, bepaald op zijn middelpunt. Raakt zijn
+        # gezichtsvak de naad net (dat gebeurt: het vak van de detector zit
+        # ruimer dan het gezicht), dan is dat geen reden om het paneel te laten
+        # vallen — de naad in beeld laten is altijd het slechtste van de twee.
+        # Ligt het gezicht écht grotendeels aan de andere kant, dan klopt de
+        # naad niet en kadreren we op het hele beeld.
+        overlap = (
+            max(0.0, (x_mediaan + breedte / 2) - naad)
+            if x_mediaan < naad
+            else max(0.0, naad - (x_mediaan - breedte / 2))
+        )
+        if breedte <= 0 or overlap / breedte < 0.45:
+            paneel = [0.0, naad] if x_mediaan < naad else [naad, 1.0]
             breed = False
 
     ogen = sorted(spreker["ogen"])

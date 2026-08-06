@@ -264,7 +264,10 @@ Zet in `.env` (lokaal) en als GitHub-secret (voor de uurlijkse cloudjob):
     CLIPARMY_WACHTWOORD=...
 
 De job logt daarmee bij elke run zelf in en leest de campagnelijst die jij ook
-ziet. Dit is de enige opzet die blijft werken zonder handwerk: een token uit de
+ziet. Let op: dit werkt alleen als je account een wachtwoord hééft. Log je in
+met Google, dan is dat niet zo — zet er dan eerst via "wachtwoord vergeten" op
+cliparmy.nl een wachtwoord op (je Google-login blijft gewoon werken), of gebruik
+de bladwijzerkoppeling op het dashboard. Dit is de enige opzet die blijft werken zonder handwerk: een token uit de
 browser leeft ongeveer een uur, en botst bovendien met je eigen sessie zodra je
 de site zelf opent.
 

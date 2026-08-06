@@ -89,9 +89,17 @@ export function corrigeerKadrering(
     // Binnen een paneel is alles relatief aan dat paneel: een hoofd van 12% van
     // het hele beeld is 24% van een half paneel.
     const paneelBreed = shot.paneel ? shot.paneel[1] - shot.paneel[0] : 1;
+    // Het gezichtsvak binnen het paneel, geknipt op de paneelranden: steekt het
+    // vak een stukje over de naad, dan bestaat dat stukje simpelweg niet in het
+    // beeld waaruit we snijden. Zonder die klem oordeelt de controle dat het
+    // gezicht niet past en gooit hij het paneel weg — waarna je de naad ziet.
+    const ruwX = shot.paneel ? (g.x - shot.paneel[0]) / paneelBreed : g.x;
+    const ruwBreed = g.breedte / paneelBreed;
+    const links = Math.max(0, ruwX - ruwBreed / 2);
+    const rechts = Math.min(1, ruwX + ruwBreed / 2);
     const inPaneel: Gezicht = {
-      x: shot.paneel ? (g.x - shot.paneel[0]) / paneelBreed : g.x,
-      breedte: g.breedte / paneelBreed,
+      x: (links + rechts) / 2,
+      breedte: Math.max(0.01, rechts - links),
       top: g.top,
       hoogte: g.hoogte,
     };

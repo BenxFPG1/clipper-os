@@ -32,7 +32,7 @@ async function logIn(projectUrl: string, apikey: string): Promise<string | null>
     const detail = (await res.text()).slice(0, 120);
     throw new Error(
       res.status === 400
-        ? `inloggen geweigerd (${detail}) — klopt CLIPARMY_EMAIL/CLIPARMY_WACHTWOORD, en staat er geen tweestapsverificatie op?`
+        ? `inloggen met wachtwoord geweigerd (${detail}). Log je in met Google, dan heeft je account geen wachtwoord — zet er via "wachtwoord vergeten" op cliparmy.nl een op, of gebruik de koppeling met de bladwijzer.`
         : `inloggen gaf ${res.status}: ${detail}`,
     );
   }
@@ -83,16 +83,24 @@ export async function haalClipArmyCampagnes(): Promise<{
   // valt hij terug op het vernieuwingstoken uit de koppeling.
   const project = verzoek.auth?.projectUrl ?? veiligeOrigin(verzoek.url);
   const sleutel = verzoek.auth?.apikey ?? verzoek.headers.apikey;
+  let ingelogd = false;
+  let inlogFout: string | null = null;
   if (project && sleutel) {
     try {
       const token = await logIn(project, sleutel);
-      if (token) verzoek.headers.authorization = `Bearer ${token}`;
+      if (token) {
+        verzoek.headers.authorization = `Bearer ${token}`;
+        ingelogd = true;
+      }
     } catch (e) {
-      return { nieuw: [], bekeken: 0, fout: await noteer(`ClipArmy: ${(e as Error).message}`) };
+      // Niet meteen opgeven: log je in met Google, dan bestaat er geen
+      // wachtwoord en faalt dit altijd. Het vernieuwingstoken uit de koppeling
+      // werkt dan nog wel.
+      inlogFout = (e as Error).message;
     }
   }
 
-  if (!process.env.CLIPARMY_WACHTWOORD && verzoek.auth?.refresh_token) {
+  if (!ingelogd && verzoek.auth?.refresh_token) {
     try {
       const vers = await vernieuwToken(verzoek.auth);
       verzoek.headers.authorization = `Bearer ${vers.access_token}`;
@@ -103,8 +111,17 @@ export async function haalClipArmyCampagnes(): Promise<{
         })
         .eq('platform', 'cliparmy');
     } catch (e) {
-      return { nieuw: [], bekeken: 0, fout: await noteer(`Token vernieuwen mislukt: ${(e as Error).message.slice(0, 120)}`) };
+      return {
+        nieuw: [],
+        bekeken: 0,
+        fout: await noteer(
+          `Token vernieuwen mislukt: ${(e as Error).message.slice(0, 100)}` +
+            (inlogFout ? ` (inloggen lukte ook niet: ${inlogFout.slice(0, 80)})` : ''),
+        ),
+      };
     }
+  } else if (!ingelogd && inlogFout) {
+    return { nieuw: [], bekeken: 0, fout: await noteer(`ClipArmy: ${inlogFout}`) };
   }
 
   let res: Response;
