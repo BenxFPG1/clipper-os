@@ -30,7 +30,10 @@ import {
 } from '../src/lib/roughcut/knipcontrole';
 import { controleerScript } from '../src/lib/roughcut/scriptcontrole';
 import { haalBronWoorden, vindFragment } from '../src/lib/roughcut/woorden';
+import { poort } from '../src/lib/roughcut/poort';
+import { keurMontage } from '../src/lib/roughcut/keuring';
 import { resolveBinary } from '../src/lib/ingest/binaries';
+import { pythonMetOpenCV } from '../src/lib/python';
 import { pakFrames } from '../src/lib/roughcut/frames';
 
 const BUCKET = 'montages';
@@ -153,7 +156,12 @@ async function verwerk(job: Job) {
   // eerst clip 3 en daarna clip 7 aan, dan wordt dezelfde video niet twee keer
   // gedownload — en downloaden is verreweg de traagste stap.
   const bronmap = join(tmpdir(), 'clipper-bron', job.video_id);
-  const bestanden: { naam: string; pad: string; bytes: number }[] = [...alGedaan];
+  const bestanden: {
+    naam: string;
+    pad: string;
+    bytes: number;
+    keuring?: { goed: boolean; regels: { naam: string; goed: boolean; detail: string }[] } | null;
+  }[] = [...alGedaan];
 
   await supabase
     .from('render_jobs')
@@ -645,6 +653,66 @@ async function verwerk(job: Job) {
       }
     }
 
+    // DE POORT. Alles hierboven mag van alles vinden; wat hier uitkomt voldoet
+    // aan de harde regels of wordt teruggeduwd. Er is geen weg naar de
+    // renderer omheen — en grijpt hij ergens in, dan staat er een bug
+    // bovenstrooms die je in dit rapport terugvindt.
+    {
+      const uitkomst = poort(segmenten, bronWoorden);
+      for (const ing of uitkomst.ingrepen) {
+        console.log(`     POORT shot ${ing.volgorde} [${ing.regel}]: ${ing.wat}`);
+      }
+      if (uitkomst.segmenten.length !== segmenten.length) {
+        segmenten.length = 0;
+        segmenten.push(...uitkomst.segmenten);
+      }
+      if (uitkomst.ingrepen.length === 0) console.log('     poort: alle regels gehaald zonder ingreep');
+
+      // Vastleggen wat er uit de poort komt. Renderen is vanaf hier alleen nog
+      // uitvoeren: hetzelfde montageplan geeft hetzelfde bestand. Daarmee kan
+      // een clip die goed is ook goed blíjven — en kan de evaluatieset later
+      // exact deze grenzen keuren in plaats van ze opnieuw te raden.
+      try {
+        const { data: rij } = await supabase
+          .from('clip_plans')
+          .select('id, montageplan')
+          .eq('video_id', job.video_id)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .single();
+        const bestaandPlan = (rij?.montageplan as { clips?: Record<string, unknown> } | null) ?? {};
+        await supabase
+          .from('clip_plans')
+          .update({
+            montageplan: {
+              ...bestaandPlan,
+              clips: {
+                ...(bestaandPlan.clips ?? {}),
+                [String(nummer)]: {
+                  vastgelegd_at: new Date().toISOString(),
+                  segmenten: segmenten.map((sg) => ({
+                    volgorde: sg.volgorde,
+                    start: sg.start,
+                    end: sg.end,
+                    functie: sg.functie,
+                    focusX: sg.focusX,
+                    focusY: sg.focusY,
+                    zoom: sg.zoom,
+                    paneel: sg.paneel,
+                    spoor: sg.spoor,
+                    spoorY: sg.spoorY,
+                    transcript_fragment: (sg as { transcript_fragment?: string }).transcript_fragment,
+                  })),
+                },
+              },
+            },
+          })
+          .eq('id', rij!.id);
+      } catch (e) {
+        console.log(`     montageplan niet vastgelegd (${(e as Error).message.slice(0, 60)})`);
+      }
+    }
+
     // De uiteindelijke knippunten loggen. Zonder dit is achteraf niet na te
     // gaan of een knip midden in een woord viel of netjes in een pauze — en
     // dat was nu juist de hardnekkigste klacht.
@@ -662,6 +730,7 @@ async function verwerk(job: Job) {
 
     let montage!: Awaited<ReturnType<typeof maakRuweMontage>>;
     let beeldRondeGedaan = false;
+    let keuringsuitslag: Awaited<ReturnType<typeof keurMontage>> | null = null;
     for (let poging = 1; poging <= 4; poging++) {
     montage = await maakRuweMontage({
       sourceUrl: video.source_url,
@@ -852,6 +921,22 @@ async function verwerk(job: Job) {
     break;
     }
 
+    // De keuring: het eindoordeel over precies datgene waarop geoordeeld
+    // wordt. Zelfde meting als de evaluatieset gebruikt, zodat "groen bij mij"
+    // en "groen bij jou" hetzelfde betekenen.
+    try {
+      const rapport = await keurMontage(montage.pad, segmenten, bronWoorden, {
+        python: pythonMetOpenCV(),
+      });
+      console.log(`     ── keuring: ${rapport.goed ? 'GOED' : 'NIET GOED'}`);
+      for (const r of rapport.regels) {
+        console.log(`        ${r.goed ? '✓' : '✗'} ${r.naam}: ${r.detail}`);
+      }
+      keuringsuitslag = rapport;
+    } catch (e) {
+      console.log(`     keuring overgeslagen (${(e as Error).message.slice(0, 70)})`);
+    }
+
     // Sluitstuk: het gerenderde bestand zelf nameten. De controles hiervóór
     // kijken naar de bron; deze kijkt naar wat je daadwerkelijk krijgt. Blijkt
     // hier iets mis, dan zit de fout in de keten erna (fades, ducking) en niet
@@ -903,7 +988,19 @@ async function verwerk(job: Job) {
       continue;
     }
 
-    bestanden.push({ naam, pad, bytes: size });
+    // De keuringsuitslag reist mee met het bestand: in het dashboard zie je zo
+    // per clip of hij door alle regels kwam, zonder de log te hoeven lezen.
+    bestanden.push({
+      naam,
+      pad,
+      bytes: size,
+      keuring: keuringsuitslag
+        ? {
+            goed: keuringsuitslag.goed,
+            regels: keuringsuitslag.regels.map((r) => ({ naam: r.naam, goed: r.goed, detail: r.detail })),
+          }
+        : null,
+    });
     gedaan += 1;
     // Meteen wegschrijven: wordt de run halverwege afgebroken, dan blijft dit
     // werk staan in plaats van verloren te gaan.
@@ -984,40 +1081,6 @@ async function bepaalHuisstijl(
       .eq('id', v.campaign_id);
   }
   return { accent: kleur, font: bestaand.font ?? 'archivo' };
-}
-
-/**
- * Welke python heeft OpenCV én numpy? Op een machine met meerdere
- * installaties wees `python3` niet per se naar dezelfde als waar pip in
- * installeerde, en dan viel de sprekerdetectie stil terug op het midden zonder
- * dat iemand het merkte.
- */
-let pythonKeuze: { cmd: string; voor: string[] } | null = null;
-function pythonMetOpenCV(): { cmd: string; voor: string[] } {
-  if (pythonKeuze) return pythonKeuze;
-
-  const binaries = [process.env.PYTHON_BIN, 'python3', '/usr/local/bin/python3', '/opt/homebrew/bin/python3', 'python']
-    .filter(Boolean) as string[];
-
-  const kandidaten: { cmd: string; voor: string[] }[] = [];
-  for (const bin of binaries) {
-    kandidaten.push({ cmd: bin, voor: [] });
-    // Draait Node onder Rosetta (x86_64) op een Apple Silicon-Mac, dan erft de
-    // python die hij start diezelfde architectuur en weigert numpy te laden —
-    // dat is arm64. `arch -arm64` zet dat recht. Op andere machines bestaat het
-    // commando niet of faalt de proef, en dan valt hij gewoon door.
-    if (process.platform === 'darwin') kandidaten.push({ cmd: 'arch', voor: ['-arm64', bin] });
-  }
-
-  for (const kandidaat of kandidaten) {
-    const proef = spawnSync(kandidaat.cmd, [...kandidaat.voor, '-c', 'import cv2, numpy'], { stdio: 'ignore' });
-    if (proef.status === 0) {
-      pythonKeuze = kandidaat;
-      return kandidaat;
-    }
-  }
-  pythonKeuze = { cmd: 'python3', voor: [] };
-  return pythonKeuze;
 }
 
 /**

@@ -1,0 +1,72 @@
+# Het vangnet dat elke wijziging aan de montagecode tegenhoudt vóór hij bij een
+# echte clip komt.
+#
+# De poort-tests draaien altijd en kosten seconden: geen video, geen model,
+# geen netwerk — puur de regels waar de montage zich aan moet houden. Precies
+# de gevallen die eerder telkens opnieuw stukgingen (knip in een woord, twee
+# shots op hetzelfde fragment, een segment dat niets meer voorstelt).
+#
+# De keuring van echte clips draait tegen de basislijn in eval/, maar alleen
+# als de secrets er zijn — een pull request van buiten hoeft daar niet op te
+# wachten.
+name: montage-tests
+
+on:
+  push:
+    paths:
+      - 'src/lib/roughcut/**'
+      - 'scripts/render-worker.ts'
+      - 'scripts/gezichten.py'
+      - 'scripts/align.py'
+      - 'scripts/test-poort.ts'
+      - 'scripts/eval-montage.ts'
+      - '.github/workflows/montage-tests.yml'
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  poort:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Regels van de poort
+        run: npm run test:poort
+
+  keuring:
+    runs-on: ubuntu-latest
+    needs: poort
+    if: ${{ github.event_name != 'pull_request' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Installeer ffmpeg
+        run: |
+          if which ffmpeg; then ffmpeg -version | head -1
+          else sudo apt-get update -q && sudo apt-get install -y -q ffmpeg; fi
+
+      - name: Installeer OpenCV en faster-whisper
+        run: pip3 install --quiet opencv-python-headless faster-whisper
+
+      - run: npm ci
+
+      - name: Keuring tegen de basislijn
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          if [ -z "$SUPABASE_SERVICE_ROLE_KEY" ]; then
+            echo "Geen secrets beschikbaar; keuring overgeslagen."
+            exit 0
+          fi
+          npm run eval:montage

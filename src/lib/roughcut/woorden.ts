@@ -31,6 +31,24 @@ const BUCKET = 'montages';
 
 export type BronWoord = Woord;
 
+/**
+ * Alleen de cache lezen: voor gereedschap dat de bronvideo niet bij de hand
+ * heeft, zoals de evaluatieset.
+ */
+export async function bronWoordenUitCache(
+  videoId: string,
+  model = process.env.WHISPER_BRON_MODEL ?? 'small',
+): Promise<BronWoord[] | null> {
+  const dl = await db().storage.from(BUCKET).download(`woorden/${videoId}-${model}.json`);
+  if (!dl.data) return null;
+  try {
+    const woorden = JSON.parse(await dl.data.text()) as BronWoord[];
+    return woorden.length > 50 ? woorden : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function haalBronWoorden(
   videoId: string,
   bronPad: string,

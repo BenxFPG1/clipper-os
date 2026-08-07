@@ -46,7 +46,10 @@ export function kaderKeten(
   const fy = opties.focusYExpr ?? Math.min(1, Math.max(0, opties.focusY ?? 0.5)).toFixed(3);
   return (
     `scale=-2:${hoogte},` +
-    `crop=1080:1920:min(max((iw-1080)*${f}\\,0)\\,iw-1080):min(max(ih*${fy}-960\\,0)\\,ih-1920),` +
+    // Horizontaal net als verticaal: het focuspunt is het middelpunt van de
+    // uitsnede. Zo betekent focusX overal hetzelfde — in de meting, in de
+    // controle en hier in de render.
+    `crop=1080:1920:min(max(iw*${f}-540\\,0)\\,iw-1080):min(max(ih*${fy}-960\\,0)\\,ih-1920),` +
     'format=yuv420p'
   );
 }

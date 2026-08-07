@@ -50,8 +50,13 @@ export function uitsnedeVan(
   const breedte = Math.min(1, DOEL_VERHOUDING / bronVerhouding / zoom);
   const hoogte = Math.min(1, 1 / zoom);
 
+  // focusX is het gewenste míddelpunt van de uitsnede, niet een positie langs
+  // het schuifbereik. Dat verschil was een echte bug: met f*(1-breedte) kon het
+  // kader een spreker aan de rand nooit centreren — bij focus 0,88 bleef het
+  // kader op 0,76 steken terwijl er ruimte tot 1,0 was, en viel zijn wang
+  // buiten beeld. Precies het "half in beeld" dat bleef terugkomen.
   const f = Math.min(1, Math.max(0, focusX));
-  const x0 = Math.min(Math.max(f * (1 - breedte), 0), 1 - breedte);
+  const x0 = Math.min(Math.max(f - breedte / 2, 0), 1 - breedte);
   const y0 = Math.min(Math.max(focusY - hoogte / 2, 0), 1 - hoogte);
 
   return { x0, x1: x0 + breedte, y0, y1: y0 + hoogte };
@@ -135,9 +140,8 @@ export function corrigeerKadrering(
       const past = inPaneel.breedte * (1 + MARGE) <= breedte;
 
       if (past) {
-        // Past wel, maar staat verkeerd: het focuspunt naar het gezicht toe.
-        const nieuw = (inPaneel.x - breedte / 2) / Math.max(0.001, 1 - breedte);
-        focusX = Math.min(1, Math.max(0, nieuw));
+        // Past wel, maar staat verkeerd: het kader op het gezicht centreren.
+        focusX = Math.min(1, Math.max(0, inPaneel.x));
         if (!gedaan.includes('focus')) gedaan.push('focus');
       } else if (zoom > 1.02) {
         zoom = Math.max(1, zoom - 0.15);
@@ -160,6 +164,28 @@ export function corrigeerKadrering(
         } else {
           focusY = Math.min(0.85, Math.max(0.15, inPaneel.top + inPaneel.hoogte / 2));
         }
+      }
+    }
+
+    // Volgt de uitsnede een spoor, dan is het statische focuspunt niet de
+    // enige stand die voorkomt. De uitsnede kan bovendien niet buiten het beeld
+    // schuiven: staat de spreker helemaal aan de rand, dan klemt het kader en
+    // valt een deel van zijn hoofd erbuiten hoe goed het focuspunt ook is. Dan
+    // helpt alleen uitzoomen. Daarom toetsen we hier álle standen van het
+    // spoor, en zakt de zoom tot het hoofd overal past.
+    if (shot.spoor?.length) {
+      const halfBreed = inPaneel.breedte / 2;
+      for (let ronde = 0; ronde < 8 && zoom > 1.02; ronde++) {
+        const teKrap = shot.spoor.some((punt) => {
+          const x = shot.paneel
+            ? (punt.x - shot.paneel[0]) / (shot.paneel[1] - shot.paneel[0])
+            : punt.x;
+          const u = uitsnedeVan(x, zoom, focusY, verhouding);
+          return x - halfBreed < u.x0 - 0.001 || x + halfBreed > u.x1 + 0.001;
+        });
+        if (!teKrap) break;
+        zoom = Math.max(1, zoom - 0.1);
+        if (!gedaan.includes('minder zoom voor het spoor')) gedaan.push('minder zoom voor het spoor');
       }
     }
 

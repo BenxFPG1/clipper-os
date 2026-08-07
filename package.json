@@ -14,7 +14,9 @@
     "retro:dryrun": "tsx scripts/retro-dryrun.ts",
     "job": "tsx scripts/job.ts",
     "roughcut": "tsx scripts/roughcut.ts",
-    "project": "tsx scripts/project.ts"
+    "project": "tsx scripts/project.ts",
+    "test:poort": "tsx scripts/test-poort.ts",
+    "eval:montage": "tsx scripts/eval-montage.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.115.0",

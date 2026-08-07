@@ -435,3 +435,9 @@ alter table platform_sessies add column if not exists verzoek jsonb;
 -- herrender geen nieuwe Claude-call kost.
 alter table clip_plans add column if not exists edit_beslissingen jsonb;
 alter table clip_plans add column if not exists edit_prompt_versie text;
+
+-- Het vastgelegde montageplan per clip: de definitieve knipgrenzen en
+-- kadrering zoals ze uit de poort kwamen. Renderen is daarmee reproduceerbaar
+-- (zelfde plan, zelfde bestand) en de evaluatieset kan exact deze grenzen
+-- keuren in plaats van ze opnieuw af te leiden.
+alter table clip_plans add column if not exists montageplan jsonb;
