@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { db } from '../src/lib/supabase';
 import { requireEnv } from '../src/lib/env';
 import { spawn, spawnSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { Shot, maakRuweMontage, detecteerStiltes, meetRuisvloer, bepaalSegmenten, zorgVoorBron, type BurnOverlay } from '../src/lib/roughcut';
 import { maakTekstkaarten, tekenHookKaart, kleurUitThumbnail, kaartenMap, type Huisstijl } from '../src/lib/roughcut/tekstkaarten';
 import { lijnShotsUit } from '../src/lib/roughcut/uitlijnen';
@@ -28,6 +29,7 @@ import {
   zoekStilstePunt,
 } from '../src/lib/roughcut/knipcontrole';
 import { controleerScript } from '../src/lib/roughcut/scriptcontrole';
+import { resolveBinary } from '../src/lib/ingest/binaries';
 import { pakFrames } from '../src/lib/roughcut/frames';
 
 const BUCKET = 'montages';
@@ -289,6 +291,94 @@ async function verwerk(job: Job) {
       }
     }
 
+    // Knipcontrole: luisteren of elke knip werkelijk in een pauze valt, en
+    // net zo lang naar buiten opschuiven tot dat zo is. Elke stap vóór deze
+    // (uitlijning, dode lucht, in- en uitloop) kan het punt een fractie
+    // verschuiven, en één fractie is genoeg om middenin een lettergreep te
+    // eindigen. Meten is de enige harde toets.
+    {
+      const geprobeerd = new Map<string, number[]>();
+      // De oorspronkelijke grenzen onthouden: het knippunt mag in totaal niet
+      // verder dan anderhalve seconde opschuiven, hoeveel rondes we ook doen.
+      const origineel = new Map(segmenten.map((sg) => [sg.volgorde, { start: sg.start, end: sg.end }]));
+      for (let ronde = 1; ronde <= 2; ronde++) {
+        const oordeel = await beoordeelKnippen(bronPad, segmenten);
+        const fout = oordeel.filter((o) => !o.goed);
+        if (fout.length === 0) {
+          console.log(`     knipcontrole: alle ${oordeel.length} knippen in een pauze`);
+          break;
+        }
+
+        let verzet = 0;
+        for (const o of fout) {
+          const seg = segmenten.find((sg) => sg.volgorde === o.volgorde);
+          if (!seg) continue;
+          const sleutel = `${o.volgorde}-${o.kant}`;
+          const eerder = geprobeerd.get(sleutel) ?? [];
+          const basis = origineel.get(o.volgorde);
+          const anker = o.kant === 'begin' ? basis?.start ?? o.seconde : basis?.end ?? o.seconde;
+          const ruimte = Math.max(0, 1.5 - Math.abs(o.seconde - anker));
+          const nieuwPunt =
+            ruimte < 0.05 ? null : verschuifNaarPauze(o.seconde, o.kant, stiltes ?? [], eerder, Math.min(1.2, ruimte));
+          if (nieuwPunt === null) {
+            // Geen echte pauze in de buurt. Dan alsnog het stilste moment in de
+            // golfvorm zoeken: het dal tussen twee woorden klinkt hoorbaar beter
+            // dan een knip midden op een klinker.
+            const dal = await zoekStilstePunt(bronPad, o.seconde, o.kant);
+            if (dal) {
+              if (o.kant === 'begin') seg.start = dal.seconde;
+              else seg.end = dal.seconde;
+              verzet++;
+              console.log(
+                `     knip ${o.volgorde} ${o.kant}: geen pauze, wel een dal → ${dal.seconde.toFixed(2)}s (${dal.db} dB)`,
+              );
+              continue;
+            }
+
+            // Ook geen dal: dan blijft de knip staan, maar krijgt hij een
+            // langere fade zodat hij niet als een afgebroken woord klinkt.
+            if (o.kant === 'begin') seg.zachtBegin = true;
+            else seg.zachtEind = true;
+            console.log(
+              `     knip ${o.volgorde} ${o.kant} blijft op ${o.seconde.toFixed(2)}s (${o.db} dB): geen pauze binnen de marge, zachte overgang`,
+            );
+            continue;
+          }
+          geprobeerd.set(sleutel, [...eerder, nieuwPunt]);
+          if (o.kant === 'begin') seg.start = nieuwPunt;
+          else seg.end = nieuwPunt;
+          verzet++;
+          console.log(
+            `     knip ${o.volgorde} ${o.kant}: ${o.db} dB op ${o.seconde.toFixed(2)}s → ${nieuwPunt.toFixed(2)}s`,
+          );
+        }
+        if (verzet === 0) break;
+      }
+    }
+
+    // Harde regel, ná alle verschuivingen: geen twee segmenten in één clip
+    // delen bronmateriaal. De knipcontrole en de uitlijning mogen grenzen
+    // oprekken, maar zodra shot A tot ín het bereik van shot B loopt, hoort de
+    // kijker diezelfde woorden twee keer. De eerdere versie levert in — de
+    // latere zit op zijn plek in het verhaal en blijft heel.
+    for (let i = 0; i < segmenten.length; i++) {
+      for (let j = 0; j < segmenten.length; j++) {
+        if (i === j) continue;
+        const a = segmenten[i];
+        const b = segmenten[j];
+        const overlap = Math.min(a.end, b.end) - Math.max(a.start, b.start);
+        if (overlap <= 0.15) continue;
+        // Alleen de variant afknippen waar dat kan zonder het segment te slopen.
+        if (a.end > b.start && a.start < b.start && b.start - a.start >= 0.8) {
+          console.log(
+            `     overlap: shot ${a.volgorde} liep ${overlap.toFixed(1)}s in shot ${b.volgorde}; eind terug naar ${b.start.toFixed(2)}s`,
+          );
+          a.end = b.start;
+        }
+      }
+    }
+
+
     // Gezichtsfocus per segment (alleen waar het script geen focus opgeeft).
     await vulGezichtsFocus(bronPad, segmenten);
 
@@ -296,6 +386,58 @@ async function verwerk(job: Job) {
     // woord over? Dan de uitsnede laten meelopen in plaats van uitzoomen.
     const gevolgd = await meetSpoor(bronPad, segmenten);
     if (gevolgd > 0) console.log(`     ${gevolgd} shot(s) met meelopende uitsnede (face tracking)`);
+
+    // Regel: een sprekerswissel is een knip, geen pan. Neemt de ander het woord
+    // over, dan ligt er een halve beeldbreedte tussen de twee posities en pant
+    // een meelopende uitsnede seconden door leeg midden — niemand in beeld.
+    // Dus: springt het spoor blijvend, dan splitsen we het shot op het
+    // wisselmoment in twee statische kaders. De audio loopt naadloos door; het
+    // beeld wisselt naar de nieuwe spreker, precies zoals de editcraft-vault
+    // het voorschrijft ("wissel naar de reactie").
+    {
+      const mediaan = (xs: number[]) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)];
+      for (let i = segmenten.length - 1; i >= 0; i--) {
+        const seg = segmenten[i];
+        const spoor = seg.spoor;
+        if (!spoor || spoor.length < 4) continue;
+
+        const kwart = Math.max(1, Math.floor(spoor.length / 3));
+        const voor = mediaan(spoor.slice(0, kwart).map((punt) => punt.x));
+        const na = mediaan(spoor.slice(-kwart).map((punt) => punt.x));
+        if (Math.abs(na - voor) < 0.22) continue;
+
+        // Het wisselmoment: waar het spoor het midden tussen beide posities
+        // kruist.
+        const midden = (voor + na) / 2;
+        const kruising = spoor.find((punt) =>
+          voor < na ? punt.x >= midden : punt.x <= midden,
+        );
+        const wissel = kruising?.t ?? (seg.start + seg.end) / 2;
+        if (wissel - seg.start < 0.7 || seg.end - wissel < 0.7) continue;
+
+        console.log(
+          `     sprekerswissel in shot ${seg.volgorde} op ${wissel.toFixed(2)}s: pan vervangen door knip`,
+        );
+        const tweede: Shot = {
+          ...seg,
+          volgorde: seg.volgorde + 0.5,
+          start: wissel,
+          focusX: na,
+          spoor: undefined,
+          spreiding: 0,
+          gezicht: seg.gezicht ? { ...seg.gezicht, x: na } : undefined,
+          zachtBegin: false,
+        };
+        (tweede as { subKnip?: boolean }).subKnip = true;
+        seg.end = wissel;
+        seg.focusX = voor;
+        seg.spoor = undefined;
+        seg.spreiding = 0;
+        seg.zachtEind = false;
+        if (seg.gezicht) seg.gezicht = { ...seg.gezicht, x: voor };
+        segmenten.splice(i + 1, 0, tweede);
+      }
+    }
 
     // Beslissingen van de edit-agent op de segmenten leggen. Subsegmenten
     // (ontstaan door dode lucht weg te knippen) erven van hun bronshot, maar
@@ -408,93 +550,6 @@ async function verwerk(job: Job) {
       }
     }
 
-    // Knipcontrole: luisteren of elke knip werkelijk in een pauze valt, en
-    // net zo lang naar buiten opschuiven tot dat zo is. Elke stap vóór deze
-    // (uitlijning, dode lucht, in- en uitloop) kan het punt een fractie
-    // verschuiven, en één fractie is genoeg om middenin een lettergreep te
-    // eindigen. Meten is de enige harde toets.
-    {
-      const geprobeerd = new Map<string, number[]>();
-      // De oorspronkelijke grenzen onthouden: het knippunt mag in totaal niet
-      // verder dan anderhalve seconde opschuiven, hoeveel rondes we ook doen.
-      const origineel = new Map(segmenten.map((sg) => [sg.volgorde, { start: sg.start, end: sg.end }]));
-      for (let ronde = 1; ronde <= 2; ronde++) {
-        const oordeel = await beoordeelKnippen(bronPad, segmenten);
-        const fout = oordeel.filter((o) => !o.goed);
-        if (fout.length === 0) {
-          console.log(`     knipcontrole: alle ${oordeel.length} knippen in een pauze`);
-          break;
-        }
-
-        let verzet = 0;
-        for (const o of fout) {
-          const seg = segmenten.find((sg) => sg.volgorde === o.volgorde);
-          if (!seg) continue;
-          const sleutel = `${o.volgorde}-${o.kant}`;
-          const eerder = geprobeerd.get(sleutel) ?? [];
-          const basis = origineel.get(o.volgorde);
-          const anker = o.kant === 'begin' ? basis?.start ?? o.seconde : basis?.end ?? o.seconde;
-          const ruimte = Math.max(0, 1.5 - Math.abs(o.seconde - anker));
-          const nieuwPunt =
-            ruimte < 0.05 ? null : verschuifNaarPauze(o.seconde, o.kant, stiltes ?? [], eerder, Math.min(1.2, ruimte));
-          if (nieuwPunt === null) {
-            // Geen echte pauze in de buurt. Dan alsnog het stilste moment in de
-            // golfvorm zoeken: het dal tussen twee woorden klinkt hoorbaar beter
-            // dan een knip midden op een klinker.
-            const dal = await zoekStilstePunt(bronPad, o.seconde, o.kant);
-            if (dal) {
-              if (o.kant === 'begin') seg.start = dal.seconde;
-              else seg.end = dal.seconde;
-              verzet++;
-              console.log(
-                `     knip ${o.volgorde} ${o.kant}: geen pauze, wel een dal → ${dal.seconde.toFixed(2)}s (${dal.db} dB)`,
-              );
-              continue;
-            }
-
-            // Ook geen dal: dan blijft de knip staan, maar krijgt hij een
-            // langere fade zodat hij niet als een afgebroken woord klinkt.
-            if (o.kant === 'begin') seg.zachtBegin = true;
-            else seg.zachtEind = true;
-            console.log(
-              `     knip ${o.volgorde} ${o.kant} blijft op ${o.seconde.toFixed(2)}s (${o.db} dB): geen pauze binnen de marge, zachte overgang`,
-            );
-            continue;
-          }
-          geprobeerd.set(sleutel, [...eerder, nieuwPunt]);
-          if (o.kant === 'begin') seg.start = nieuwPunt;
-          else seg.end = nieuwPunt;
-          verzet++;
-          console.log(
-            `     knip ${o.volgorde} ${o.kant}: ${o.db} dB op ${o.seconde.toFixed(2)}s → ${nieuwPunt.toFixed(2)}s`,
-          );
-        }
-        if (verzet === 0) break;
-      }
-    }
-
-    // Harde regel, ná alle verschuivingen: geen twee segmenten in één clip
-    // delen bronmateriaal. De knipcontrole en de uitlijning mogen grenzen
-    // oprekken, maar zodra shot A tot ín het bereik van shot B loopt, hoort de
-    // kijker diezelfde woorden twee keer. De eerdere versie levert in — de
-    // latere zit op zijn plek in het verhaal en blijft heel.
-    for (let i = 0; i < segmenten.length; i++) {
-      for (let j = 0; j < segmenten.length; j++) {
-        if (i === j) continue;
-        const a = segmenten[i];
-        const b = segmenten[j];
-        const overlap = Math.min(a.end, b.end) - Math.max(a.start, b.start);
-        if (overlap <= 0.15) continue;
-        // Alleen de variant afknippen waar dat kan zonder het segment te slopen.
-        if (a.end > b.start && a.start < b.start && b.start - a.start >= 0.8) {
-          console.log(
-            `     overlap: shot ${a.volgorde} liep ${overlap.toFixed(1)}s in shot ${b.volgorde}; eind terug naar ${b.start.toFixed(2)}s`,
-          );
-          a.end = b.start;
-        }
-      }
-    }
-
     // De uiteindelijke knippunten loggen. Zonder dit is achteraf niet na te
     // gaan of een knip midden in een woord viel of netjes in een pauze — en
     // dat was nu juist de hardnekkigste klacht.
@@ -511,7 +566,8 @@ async function verwerk(job: Job) {
     }
 
     let montage!: Awaited<ReturnType<typeof maakRuweMontage>>;
-    for (let poging = 1; ; poging++) {
+    let beeldRondeGedaan = false;
+    for (let poging = 1; poging <= 4; poging++) {
     montage = await maakRuweMontage({
       sourceUrl: video.source_url,
       shots: segmenten,
@@ -554,6 +610,11 @@ async function verwerk(job: Job) {
           );
           eerste.start += Math.max(0, script.aanloop.seconden - 0.15);
           eerste.zachtBegin = true;
+          // De grens is verschoven, dus de kadrering van dit segment klopt
+          // niet meer: opnieuw meten en doorrekenen, alleen voor dit segment.
+          await vulGezichtsFocus(bronPad, [eerste]);
+          await meetSpoor(bronPad, [eerste]);
+          corrigeerKadrering([eerste]);
           continue;
         }
 
@@ -572,6 +633,66 @@ async function verwerk(job: Job) {
     } catch (e) {
       console.log(`     scriptcontrole overgeslagen (${(e as Error).message.slice(0, 60)})`);
     }
+    // Beeldcontrole op het eindbestand zelf: frames uit de gerenderde clip,
+    // niet uit een benadering. De controle vóór de render toetst wat er zou
+    // móeten gebeuren; deze toetst wat er gebeurd ís — inclusief tracking,
+    // paneel en zoom zoals ffmpeg ze werkelijk uitvoerde. Fouten worden
+    // gecorrigeerd en één keer opnieuw gerenderd.
+    if (!beeldRondeGedaan && process.env.KADER_RONDES !== '0') {
+      beeldRondeGedaan = true;
+      try {
+        const beelden: { volgorde: number; pad: string }[] = [];
+        let cursor = 0;
+        for (const sg of segmenten) {
+          const duurSeg = sg.end - sg.start;
+          // Een statisch shot is met één beeld te beoordelen; bij een bewegende
+          // spreker of een meelopende uitsnede kan het begin goed staan en het
+          // eind niet — dan drie momenten.
+          const beweegt = Boolean(sg.spoor?.length) || (sg.spreiding ?? 0) > 0.08;
+          const punten = beweegt ? [0.2, 0.5, 0.85] : [0.5];
+          for (const [k, fractie] of punten.entries()) {
+            const beeldPad = join(kaartMap, `eind-${String(sg.volgorde).padStart(4, '0')}-${k}.jpg`);
+            await new Promise<void>((klaar) => {
+              const kind = spawn(resolveBinary('ffmpeg'), [
+                '-nostdin', '-y', '-ss', (cursor + duurSeg * fractie).toFixed(2), '-i', montage.pad,
+                '-frames:v', '1', '-vf', 'scale=360:-2', '-q:v', '5', beeldPad,
+              ], { stdio: ['ignore', 'ignore', 'ignore'] });
+              kind.on('error', () => klaar());
+              kind.on('close', () => klaar());
+            });
+            if (existsSync(beeldPad)) beelden.push({ volgorde: sg.volgorde, pad: beeldPad });
+          }
+          cursor += duurSeg;
+        }
+
+        const oordeel = await controleerKaderVisueel(beelden);
+        const fout = oordeel.shots.filter((o) => !o.goed);
+        if (fout.length === 0) {
+          console.log(`     eindbeeldcontrole: alle ${beelden.length} shots goed in het eindbestand`);
+        } else {
+          let aangepast = 0;
+          const alGecorrigeerd = new Set<number>();
+          for (const o of fout) {
+            const seg = segmenten.find((sg) => sg.volgorde === o.volgorde);
+            if (!seg || alGecorrigeerd.has(o.volgorde)) continue;
+            alGecorrigeerd.add(o.volgorde);
+            const wat = pasVisueleCorrectieToe(seg, o.correctie, o.sterkte);
+            if (wat) aangepast++;
+            console.log(
+              `     eindbeeldcontrole shot ${o.volgorde}: ${o.probleem.slice(0, 80)} → ${wat ?? 'geen ingreep mogelijk'}`,
+            );
+          }
+          if (aangepast > 0 && poging < 4) {
+            corrigeerKadrering(segmenten);
+            console.log('     eindbeeldcontrole: correcties toegepast, opnieuw renderen');
+            continue;
+          }
+        }
+      } catch (e) {
+        console.log(`     eindbeeldcontrole overgeslagen (${(e as Error).message.slice(0, 60)})`);
+      }
+    }
+
     break;
     }
 
@@ -786,8 +907,11 @@ async function meetSpoor(bronPad: string, segmenten: Shot[]): Promise<number> {
   let index = 0;
   let gevolgd = 0;
   for (const { seg, tijden } of opdrachten) {
+    // Absolute brontijd, niet relatief aan de shotstart: de knip- en
+    // aanloopcontrole mogen de grens later nog verschuiven, en een relatief
+    // spoor schuift dan mee scheef — de camera volgde dan een spook.
     const metingen = tijden.map((t, i) => ({
-      t: t - seg.start,
+      t,
       x: posities[index + i]?.x ?? null,
     }));
     index += tijden.length;

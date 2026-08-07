@@ -194,9 +194,7 @@ export async function maakControlebeelden(
     // Volgt de uitsnede de spreker, dan is het focuspunt op dit moment een
     // ander dan het gemiddelde. De controle moet zien wat de kijker ziet.
     const opMoment = shot.spoor?.length
-      ? shot.spoor.reduce((beste, p) =>
-          Math.abs(p.t - (t - shot.start)) < Math.abs(beste.t - (t - shot.start)) ? p : beste,
-        ).x
+      ? shot.spoor.reduce((beste, p) => (Math.abs(p.t - t) < Math.abs(beste.t - t) ? p : beste)).x
       : shot.focusX;
     const paneelKnip = shot.paneel
       ? `crop=iw*${(shot.paneel[1] - shot.paneel[0]).toFixed(4)}:ih:iw*${shot.paneel[0].toFixed(4)}:0,`
@@ -249,9 +247,13 @@ export function pasVisueleCorrectieToe(
   switch (correctie) {
     case 'naar_links':
       shot.focusX = Math.max(0, (shot.focusX ?? 0.5) - stap);
+      // Een gevolgd shot krijgt de duw over het hele spoor, anders wint de
+      // spoor-expressie van de correctie en verandert er niets in beeld.
+      shot.spoor = shot.spoor?.map((punt) => ({ t: punt.t, x: Math.max(0, punt.x - stap) }));
       return `focus ${stap.toFixed(2)} naar links`;
     case 'naar_rechts':
       shot.focusX = Math.min(1, (shot.focusX ?? 0.5) + stap);
+      shot.spoor = shot.spoor?.map((punt) => ({ t: punt.t, x: Math.min(1, punt.x + stap) }));
       return `focus ${stap.toFixed(2)} naar rechts`;
     case 'uitzoomen':
       if ((shot.zoom ?? 1) <= 1.001) {

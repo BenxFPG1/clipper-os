@@ -4,7 +4,7 @@ import { structuredCall } from '../claude';
 const checkSchema = z.object({
   shots: z.array(
     z.object({
-      volgorde: z.number().int().min(1),
+      volgorde: z.number().min(1),
       goed: z.boolean().describe('Staat de spreker correct in beeld?'),
       probleem: z
         .string()

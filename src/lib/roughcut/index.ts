@@ -214,10 +214,11 @@ export async function maakRuweMontage(opties: {
     const breedteInPaneel =
       paneel && shot.focusW ? shot.focusW / (paneel[1] - paneel[0]) : shot.focusW;
 
-    // Volgt de uitsnede de spreker? Dan de tijdsafhankelijke expressie
-    // gebruiken; het spoor staat in shot-tijd, dus vanaf 0.
+    // Volgt de uitsnede de spreker? Het spoor staat in absolute brontijd en
+    // wordt hier pas omgerekend naar shot-tijd — zo overleeft het elke latere
+    // grensverschuiving.
     const spoorInPaneel = shot.spoor?.map((punt) => ({
-      t: punt.t,
+      t: punt.t - shot.start,
       x: paneel ? (punt.x - paneel[0]) / (paneel[1] - paneel[0]) : punt.x,
     }));
     const keten = kaderKeten(kader, {
