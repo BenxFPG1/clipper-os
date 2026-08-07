@@ -344,38 +344,57 @@ async function verwerk(job: Job) {
           break;
         }
 
-        // De regel zonder uitzondering: geen enkel shot eindigt midden in een
-        // zin — ook de tease niet. Zelf een tease afknippen op een "zinseinde"
-        // is geprobeerd en werkt niet: de interpunctie van de transcriptie legt
-        // punten waar de spreker gewoon doorpraat, en dan klinkt het alsnog als
-        // een afgebroken zin. Dus: alleen een hook die de plánner al als korte
-        // volledige zin ontwierp (het hele shot is hooguit 4,5s) mag blijven.
-        // Elke langere duplicaat-hook vervalt; de hooktekst in beeld draagt de
-        // belofte. HOOK_TEASE=1 herstelt het oude afknip-gedrag voor wie het
-        // toch wil.
+        // De cold open mag blijven, maar nooit als halve zin. Eerdere pogingen
+        // gebruikten de interpunctie van de transcriptie als zinseinde, en die
+        // zet punten waar de spreker doorpraat. De woordtijden zijn wél
+        // betrouwbaar: een gat van 0,35s of meer tussen twee woorden is een
+        // echte adempauze, en dáár mag de tease eindigen. Vinden we er geen
+        // binnen een korte hook, dan vervalt de audio-hook en draagt de
+        // hooktekst in beeld de belofte.
         const isOntworpenTease = a.end - a.start <= 4.5;
         if (isOntworpenTease) {
           (a as { tease?: boolean }).tease = true;
           continue;
         }
-        if (process.env.HOOK_TEASE === '1') {
-          const doel = a.start + Math.min(3.2, (a.end - a.start) * 0.45);
-          const pauze =
-            verschuifNaarPauze(doel, 'eind', stiltes ?? [], [], 1.2) ??
-            (await zoekStilstePunt(bronPad, doel, 'eind', 0.8))?.seconde ??
-            null;
-          if (pauze !== null && pauze - a.start >= 1.2 && pauze < a.end - 0.5) {
-            console.log(
-              `     herhaling: shot ${a.volgorde} en ${b.volgorde} delen ${overlap.toFixed(1)}s bron; tease ingekort (HOOK_TEASE)`,
-            );
-            a.end = pauze;
-            (a as { tease?: boolean }).tease = true;
-            continue;
+
+        // Waar mag de cold open eindigen? Bij voorkeur op een adempauze, maar
+        // die zijn zeldzaam: deze spreker praat zonder gaten door (gemeten:
+        // vrijwel elk gat is 0,00s). Een zin die eindigt op een punt en
+        // gevolgd wordt door een hoofdletter is dan de beste beschikbare
+        // grens — de tease stopt op een afgeronde gedachte, niet middenin.
+        let teaseEind: number | null = null;
+        if (bronWoorden) {
+          const grens = a.start + 5.5;
+          let opPauze: number | null = null;
+          let opZin: number | null = null;
+          for (let k = 1; k < bronWoorden.length; k++) {
+            const vorig = bronWoorden[k - 1];
+            const nu = bronWoorden[k];
+            if (vorig.e <= a.start + 1.2 || vorig.e > grens) continue;
+            if (opPauze === null && nu.s - vorig.e >= 0.3) opPauze = vorig.e;
+            // Punt én een hoofdletter erna: twee signalen die samen betrouwbaar
+            // genoeg zijn voor een afgeronde gedachte. Een gat eisen kan niet —
+            // deze spreker heeft er geen.
+            if (opZin === null && /[.!?]$/.test(vorig.w.trim()) && /^[A-ZÀ-Ý]/.test(nu.w.trim())) {
+              opZin = vorig.e;
+            }
           }
+          teaseEind = opPauze ?? opZin;
         }
+
+        if (teaseEind !== null) {
+          console.log(
+            `     herhaling: shot ${a.volgorde} en ${b.volgorde} delen ${overlap.toFixed(1)}s bron; ` +
+              `cold open eindigt op een gemeten adempauze na ${(teaseEind - a.start).toFixed(1)}s`,
+          );
+          a.end = teaseEind + 0.1;
+          (a as { tease?: boolean }).tease = true;
+          continue;
+        }
+
         console.log(
-          `     herhaling: shot ${a.volgorde} dupliceert shot ${b.volgorde} en is geen korte volledige ` +
-            `zin; audio-hook vervalt, de hooktekst in beeld draagt de belofte`,
+          `     herhaling: shot ${a.volgorde} dupliceert shot ${b.volgorde} en heeft geen adempauze ` +
+            `binnen de cold open; audio-hook vervalt, de hooktekst draagt de belofte`,
         );
         segmenten.splice(i, 1);
         break;
@@ -1146,14 +1165,47 @@ async function meetSpoor(bronPad: string, segmenten: Shot[]): Promise<number> {
     // die persoon op elk moment is — een meting die ver van het anker ligt is
     // de gesprekspartner en wordt verworpen. Zonder deze scheiding wisselde
     // het spoor per run van persoon.
-    const anker = seg.focusX;
-    const metingen = ruw.map((r) => {
-      const x = r.meting?.x ?? null;
-      if (x !== null && anker !== undefined && Math.abs(x - anker) > 0.28) {
-        return { t: r.t, x: null };
+    // Identiteit bewaken zonder échte beweging te blokkeren. Twee eerdere
+    // pogingen faalden allebei op een helft van het probleem: vergelijken met
+    // het globale midden verwierp juist de grote wegleunbeweging, en
+    // "geloof een sprong als het volgende punt hem bevestigt" trapte erin
+    // zodra de gesprekspartner twéé keer achter elkaar gedetecteerd werd
+    // (gemeten: 0,60 → 0,07 → 0,11 → 0,72; het kader zwaaide door het midden
+    // en zette de spreker tegen de rand).
+    //
+    // Het echte onderscheid is dat twee mensen twee groepen posities vormen.
+    // Dus: alle metingen clusteren, de groep kiezen die hoort bij de spreker
+    // (bepaald met de robuuste vijf-frame-meting), en de rest laten vallen.
+    // Beweegt iemand geleidelijk ver opzij, dan blijft dat één groep en gaat
+    // het kader gewoon mee.
+    const CLUSTER = 0.25;
+    const groepen: { punten: number[]; midden: number }[] = [];
+    for (const r of ruw) {
+      const x = r.meting?.x;
+      if (x === undefined) continue;
+      const bij = groepen.find((g) => Math.abs(g.midden - x) <= CLUSTER);
+      if (bij) {
+        bij.punten.push(x);
+        bij.midden = bij.punten.reduce((a, b) => a + b, 0) / bij.punten.length;
+      } else {
+        groepen.push({ punten: [x], midden: x });
       }
+    }
+    const spreker = seg.focusX;
+    const eigenGroep =
+      groepen.length <= 1
+        ? groepen[0]
+        : spreker !== undefined
+          ? groepen.reduce((a, b) => (Math.abs(b.midden - spreker) < Math.abs(a.midden - spreker) ? b : a))
+          : groepen.reduce((a, b) => (b.punten.length > a.punten.length ? b : a));
+
+    const metingen = ruw.map((r) => {
+      const x = r.meting?.x;
+      if (x === undefined) return { t: r.t, x: null };
+      if (eigenGroep && Math.abs(x - eigenGroep.midden) > CLUSTER * 1.6) return { t: r.t, x: null };
       return { t: r.t, x };
     });
+
     if (metingen.filter((m) => m.x !== null).length < 2) continue;
 
     const spoor = maakSpoor(metingen);

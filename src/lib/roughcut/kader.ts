@@ -180,9 +180,13 @@ export function maakSpoor(
     return { t: m.t, x: buren.reduce((som, b) => som + b.x, 0) / buren.length };
   });
 
-  // Volgen met demping en een snelheidsplafond.
+  // Volgen met demping en een snelheidsplafond. Het eerste punt is de gemeten
+  // positie zelf, niet het gladgestreken gemiddelde: een shot moet meteen goed
+  // staan. Met een aanloop stond de spreker de eerste seconde links in beeld
+  // terwijl het kader nog bijtrok — precies wat er aan het begin van het
+  // slotshot te zien was.
   const uit: { t: number; x: number }[] = [];
-  let positie = glad[0].x;
+  let positie = gevuld[0].x;
   for (const [i, punt] of glad.entries()) {
     const dt = i === 0 ? 0 : punt.t - glad[i - 1].t;
     const doel = punt.x;

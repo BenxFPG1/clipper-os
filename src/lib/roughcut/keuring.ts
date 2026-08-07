@@ -98,7 +98,12 @@ type GezichtMeting = { x: number; breedte: number; top: number; hoogte: number }
  */
 export async function keurGezicht(
   montagePad: string,
-  opties: { python?: { cmd: string; voor: string[] }; perSeconden?: number } = {},
+  opties: {
+    python?: { cmd: string; voor: string[] };
+    perSeconden?: number;
+    /** Segmenten, om ook het begin van elk shot te bemonsteren. */
+    segmenten?: Shot[];
+  } = {},
 ): Promise<KeuringRegel> {
   const py = opties.python ?? { cmd: 'python3', voor: [] };
   const stap = opties.perSeconden ?? 1.5;
@@ -108,6 +113,19 @@ export async function keurGezicht(
 
   const tijden: number[] = [];
   for (let t = 0.4; t < duur - 0.2; t += stap) tijden.push(Math.round(t * 100) / 100);
+
+  // Extra metingen vlak ná elke knip. Daar zitten de fouten: een kader dat nog
+  // moet bijtrekken, een spreker die net van plek is gewisseld. Een raster van
+  // anderhalve seconde stapt daar zo overheen.
+  let cursor = 0;
+  for (const seg of opties.segmenten ?? []) {
+    for (const na of [0.08, 0.35, 0.8]) {
+      const t = cursor + na;
+      if (t > 0.05 && t < duur - 0.1) tijden.push(Math.round(t * 100) / 100);
+    }
+    cursor += seg.end - seg.start;
+  }
+  tijden.sort((a, b) => a - b);
   if (tijden.length === 0) return { naam: 'spreker in beeld', goed: true, detail: 'te kort' };
 
   const res = spawnSync(py.cmd, [...py.voor, 'scripts/gezichten.py', montagePad, JSON.stringify(tijden), '3'], {
@@ -273,7 +291,7 @@ export async function keurMontage(
   const regels: KeuringRegel[] = [
     keurKnippen(segmenten, bronWoorden),
     keurOverlap(segmenten),
-    await keurGezicht(montagePad, opties),
+    await keurGezicht(montagePad, { ...opties, segmenten }),
     ...(await keurScript(montagePad, segmenten)),
     await keurNaden(montagePad, segmenten, bronWoorden),
   ];
