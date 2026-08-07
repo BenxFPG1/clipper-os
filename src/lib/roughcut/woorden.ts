@@ -37,7 +37,12 @@ export async function haalBronWoorden(
   opties: { model?: string; log?: (m: string) => void } = {},
 ): Promise<BronWoord[] | null> {
   const log = opties.log ?? (() => {});
-  const model = opties.model ?? process.env.WHISPER_ALIGN_MODEL ?? 'base';
+  // 'small' in plaats van 'base': base verstaat dit soort Vlaams zo matig dat
+  // fragmenten onvindbaar worden en de verificatie vals alarm slaat — en op
+  // vals alarm gaat elk herstel de verkeerde kant op. De transcriptie is
+  // eenmalig per video en gecachet, dus het duurdere model kost per saldo
+  // vrijwel niets.
+  const model = opties.model ?? process.env.WHISPER_BRON_MODEL ?? 'small';
   const supabase = db();
   const cachePad = `woorden/${videoId}-${model}.json`;
 

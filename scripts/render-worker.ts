@@ -694,8 +694,10 @@ async function verwerk(job: Job) {
           // valt onder de zachte fade; een half eerste woord hoor je altijd.
           eerste.start += Math.max(0, script.aanloop.seconden - 0.45);
           eerste.zachtBegin = true;
-          // De grens is verschoven, dus de kadrering van dit segment klopt
-          // niet meer: opnieuw meten en doorrekenen, alleen voor dit segment.
+          // De grens is verschoven, dus alle metingen van dit segment zijn
+          // ongeldig — ook het spoor, anders volgt de camera het oude tijdvak.
+          eerste.gezicht = undefined;
+          eerste.spoor = undefined;
           await vulGezichtsFocus(bronPad, [eerste]);
           await meetSpoor(bronPad, [eerste]);
           corrigeerKadrering([eerste]);
@@ -718,17 +720,25 @@ async function verwerk(job: Job) {
               );
               seg.start = Math.max(0, seg.planStart - 0.1);
             } else {
-              // We staan al op (of vóór) het plan en de zin ontbreekt alsnog:
-              // dan is het plán te laat — de tijdcodes komen uit rollende
-              // ondertitelblokken. Stap anderhalve seconde verder terug de
-              // bron in; de volgende terugluistering toetst of het genoeg was.
+              // We staan al op het plan en de kop is alsnog niet terug te
+              // horen. Vroeger stapte hij hier blind 1,5s terug — dat was een
+              // gok, en gokken maakten goede knippen kapot (een start midden
+              // in de vorige zin, kadrering die niet meer klopte). Met de
+              // betere transcriptie is dit vrijwel altijd een verhaspeld woord
+              // in de verificatie zelf. Dus: melden, niets verschuiven.
               console.log(
-                `     scriptcontrole shot ${ps.volgorde}: fragmentbegin ontbreekt en plan is al bereikt; 1,5s verder terug (${(seg.start - 1.5).toFixed(2)})`,
+                `     scriptcontrole shot ${ps.volgorde}: kop niet herkend in de terugluistering (waarschijnlijk verhaspeld); grens blijft staan`,
               );
-              seg.start = Math.max(0, seg.start - 1.5);
+              continue;
             }
             seg.zachtBegin = true;
+            // Grens verschoven: alle metingen van dit segment zijn ongeldig.
+            // Volledig opnieuw meten — ook het spoor, anders volgt de camera
+            // een positie uit het oude tijdvak.
+            seg.gezicht = undefined;
+            seg.spoor = undefined;
             await vulGezichtsFocus(bronPad, [seg]);
+            await meetSpoor(bronPad, [seg]);
             corrigeerKadrering([seg]);
             hersteld++;
           }

@@ -204,10 +204,18 @@ export async function maakRuweMontage(opties: {
     }
     zoom = Math.max(1, zoom);
     // Jump-cut afdekken (editcraft): een knip binnen dezelfde opname is
-    // zichtbaar als een sprong. Wissel daarom van schaal (>10% verschil) op
-    // elke dode-luchtknip, zodat de sprong als bewuste punch-in leest.
-    if ((shot as { subKnip?: boolean }).subKnip && zoom === 1) {
-      zoom = vorigeZoom > 1.05 ? 1 : 1.11;
+    // zichtbaar als een hapering. Dat geldt voor de dode-luchtknippen én voor
+    // elk paar opeenvolgende shots dat in de bron vrijwel aansluit (zelfde
+    // camera, zelfde houding). Een schaalverschil van ruim 10% maakt er een
+    // bewuste punch-in van; zonder dat verschil leest de naad als "niet
+    // smooth". Gevolgde shots slaan we over — daar beweegt het kader al.
+    const vorige = i > 0 ? gesorteerd[i - 1] : null;
+    const doorloop =
+      (shot as { subKnip?: boolean }).subKnip ||
+      (vorige !== null && shot.start - vorige.end > -0.1 && shot.start - vorige.end < 2.5);
+    if (doorloop && !shot.spoor?.length && Math.abs(zoom - vorigeZoom) < 0.08) {
+      zoom = vorigeZoom > 1.14 ? Math.max(1, vorigeZoom - 0.12) : vorigeZoom + 0.12;
+      zoom = Math.min(1.7, zoom);
     }
     vorigeZoom = zoom;
     // Is de bron hier een split screen, dan eerst het paneel met de spreker

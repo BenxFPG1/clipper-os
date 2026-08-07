@@ -166,13 +166,19 @@ function zoekCitaat(
  * clip werkelijk zegt wat het script voorschrijft.
  */
 export async function woordenVanFragment(wav: string, model: string): Promise<Woord[]> {
-  // 1. Python/faster-whisper (staat op de runner).
-  try {
-    const uit = await run('python3', ['scripts/align.py', wav, model]);
-    const woorden = JSON.parse(uit.trim().split('\n').pop() ?? '[]') as Woord[];
-    if (woorden.length > 0) return woorden;
-  } catch {
-    // door naar whisper-cli
+  // 1. Python/faster-whisper: staat op de runner, en lokaal via de
+  //    arm-python (Node draait hier onder Rosetta; een kale "python3" erft die
+  //    architectuur en kan zijn arm64-pakketten niet laden).
+  const pogingen: [string, string[]][] = [['python3', []]];
+  if (process.platform === 'darwin') pogingen.unshift(['arch', ['-arm64', 'python3']]);
+  for (const [cmd, voor] of pogingen) {
+    try {
+      const uit = await run(cmd, [...voor, 'scripts/align.py', wav, model]);
+      const woorden = JSON.parse(uit.trim().split('\n').pop() ?? '[]') as Woord[];
+      if (woorden.length > 0) return woorden;
+    } catch {
+      // volgende poging, uiteindelijk whisper-cli
+    }
   }
 
   // 2. whisper-cli met tokens van maximaal één woord (Mac).
