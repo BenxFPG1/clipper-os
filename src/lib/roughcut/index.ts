@@ -20,6 +20,8 @@ export type Shot = {
   focusX?: number;
   /** Gemeten gezichtsbreedte als fractie van het beeld; begrenst de zoom. */
   focusW?: number;
+  /** Kleinste gemeten gezichtsbreedte binnen het shot (wegleun-momenten). */
+  focusWmin?: number;
   /** Hoe ver de spreker binnen dit shot horizontaal beweegt (fractie). */
   spreiding?: number;
   /**
@@ -28,6 +30,11 @@ export type Shot = {
    * uit te zoomen tot alles past.
    */
   spoor?: { t: number; x: number }[];
+  /** Verticaal meelopend kader (ooghoogte); zelfde vorm als het spoor. */
+  spoorY?: { t: number; x: number }[];
+  /** Grootste sprong tussen twee opeenvolgende ruwe metingen: onderscheidt een
+   * sprekerswissel (sprong) van een wegleunende spreker (glijer). */
+  maxStap?: number;
   /**
    * De bron is hier zelf een split screen; dit is het deel [van, tot] waar de
    * spreker in staat. Daarbuiten kadreren levert een halve persoon plus een
@@ -196,13 +203,7 @@ export async function maakRuweMontage(opties: {
     // begrenzen we hem: zo ver inzoomen als kan zonder dat hij het kader
     // uitloopt. "Bij twijfel wijd" leverde een slotshot op waarin hij klein
     // wegviel tussen het decor.
-    let zoom = shot.zoom ?? Math.max(ingreepZoom, vulZoom(gemetenBreedte));
-    // Beweegt de uitsnede mee, dan hoeft hij de hele bewegingsruimte niet in één
-    // kader te vangen en mag de zoom gewoon op maat blijven.
-    if (!shot.spoor?.length) {
-      zoom = Math.min(zoom, bewegingsPlafond(shot.spreiding, gemetenBreedte));
-    }
-    zoom = Math.max(1, zoom);
+    let zoom = shot.zoom ?? Math.max(ingreepZoom, basisZoom(shot));
     // Jump-cut afdekken (editcraft): een knip binnen dezelfde opname is
     // zichtbaar als een hapering. Dat geldt voor de dode-luchtknippen én voor
     // elk paar opeenvolgende shots dat in de bron vrijwel aansluit (zelfde
@@ -214,8 +215,10 @@ export async function maakRuweMontage(opties: {
       (shot as { subKnip?: boolean }).subKnip ||
       (vorige !== null && shot.start - vorige.end > -0.1 && shot.start - vorige.end < 2.5);
     if (doorloop && !shot.spoor?.length && Math.abs(zoom - vorigeZoom) < 0.08) {
-      zoom = vorigeZoom > 1.14 ? Math.max(1, vorigeZoom - 0.12) : vorigeZoom + 0.12;
-      zoom = Math.min(1.7, zoom);
+      // Altijd eerst omhóóg: een naadknip hoort een punch-in te zijn. Omlaag
+      // gaf precies de klacht "de zoom gebeurt niet" — het vervolgshot werd
+      // wijder en de tweeshot kwam terug in beeld.
+      zoom = vorigeZoom + 0.12 <= 1.7 ? vorigeZoom + 0.12 : Math.max(1, vorigeZoom - 0.12);
     }
     vorigeZoom = zoom;
     // Is de bron hier een split screen, dan eerst het paneel met de spreker
@@ -240,11 +243,13 @@ export async function maakRuweMontage(opties: {
       t: punt.t - shot.start,
       x: paneel ? (punt.x - paneel[0]) / (paneel[1] - paneel[0]) : punt.x,
     }));
+    const spoorYRel = shot.spoorY?.map((punt) => ({ t: punt.t - shot.start, x: punt.x }));
     const keten = kaderKeten(kader, {
       focusX: focusNaarX(shot.focus, focusInPaneel),
       focusExpr: spoorInPaneel ? (spoorExpressie(spoorInPaneel) ?? undefined) : undefined,
       zoom,
       focusY: shot.focusY,
+      focusYExpr: spoorYRel ? (spoorExpressie(spoorYRel) ?? undefined) : undefined,
     });
     const effect = effectKeten(shot.beeld_effect, duur);
     invoer.push('-ss', shot.start.toFixed(3), '-t', duur.toFixed(3), '-i', bronBestand);
@@ -624,6 +629,34 @@ function vulZoom(focusW?: number): number {
   const inUitsnede = focusW * 3; // 1080 van 1920 breed is grofweg een derde
   const gewenst = 0.45;
   return Math.min(1.7, Math.max(1, gewenst / inUitsnede));
+}
+
+/**
+ * De zoom die een shot uit zichzelf verdient — één waarheid voor de render én
+ * voor de kadercontrole. Toen de controle zijn eigen aanname (zoom 1) hanteerde
+ * en terugschreef, verloor elk shot dat hij aanraakte zijn berekende inzoom:
+ * dat was het "de zoom gebeurt niet"-slotshot.
+ *
+ * Bij een gevolgd shot dimensioneert de zoom op het kléínste gemeten gezicht:
+ * het kader loopt toch mee, dus de enige vraag is of de spreker ook op zijn
+ * verste moment groot in beeld staat. Zonder spoor geldt het bewegingsplafond.
+ */
+export function basisZoom(shot: Shot): number {
+  const paneelBreed = shot.paneel ? shot.paneel[1] - shot.paneel[0] : 1;
+  const inPaneel = (b?: number) => (b !== undefined ? b / paneelBreed : undefined);
+  const breedte = shot.spoor?.length
+    ? (inPaneel(shot.focusWmin) ?? inPaneel(shot.focusW))
+    : inPaneel(shot.focusW);
+  let zoom = vulZoom(breedte);
+  if (!shot.spoor?.length) {
+    zoom = Math.min(zoom, bewegingsPlafond(shot.spreiding, inPaneel(shot.focusW)));
+  } else if ((shot.spreiding ?? 0) > 0.15) {
+    // Grote glijbeweging (naar voren leunen, opstaan): het kader volgt, maar
+    // agressief inzoomen wordt dan benauwd — het gezicht verandert onderweg
+    // ook van grootte. Gematigd is hier het maximum dat prettig kijkt.
+    zoom = Math.min(zoom, 1.35);
+  }
+  return Math.max(1, Math.min(1.7, zoom));
 }
 
 /**

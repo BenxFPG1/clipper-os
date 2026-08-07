@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { resolveBinary } from '../ingest/binaries';
 import { focusNaarX, kaderKeten, type Kader } from './kader';
-import type { Shot } from './index';
+import { basisZoom, type Shot } from './index';
 
 /**
  * Controleert of de spreker daadwerkelijk in de uitsnede past, en corrigeert
@@ -104,7 +104,9 @@ export function corrigeerKadrering(
       hoogte: g.hoogte,
     };
 
-    let zoom = shot.zoom ?? 1;
+    // Van dezelfde basiszoom uitgaan als de render; met "1" als aanname
+    // schreef de controle die 1 terug en verdween elke berekende inzoom.
+    let zoom = shot.zoom ?? basisZoom(shot);
     let focusX = shot.focusX !== undefined
       ? (shot.paneel ? (shot.focusX - shot.paneel[0]) / paneelBreed : shot.focusX)
       : 0.5;

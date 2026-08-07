@@ -106,9 +106,13 @@ export async function haalBronWoorden(
 const norm = (t: string) => t.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
 
 export type FragmentAnker = {
-  /** Grenzen van het fragment, exact op de woorden. */
-  start: number;
-  end: number;
+  /**
+   * Grenzen van het fragment, exact op de woorden. Null betekent: die kant is
+   * niet met genoeg zekerheid gematcht — gebruik daar de planwaarde met de
+   * gewone controles.
+   */
+  start: number | null;
+  end: number | null;
   /** Aandeel fragmentwoorden dat op zijn plek teruggevonden is (0..1). */
   score: number;
   /** Ruimte tot het vorige/volgende woord in de bron; bepaalt de knipmarge. */
@@ -138,45 +142,117 @@ export function vindFragment(
     .map((w, i) => ({ n: norm(w.w), i }))
     .filter((w) => w.n.length > 0);
 
-  let beste: { van: number; tot: number; score: number; afstand: number } | null = null;
+  // Verhaspelingsbestendig vergelijken. Namen wijken af ("Philippe" voor
+  // "Philip"), en getallen worden in losse tokens gehoord ("4.000" wordt
+  // "4" + "000") — allebei funest voor exacte gelijkheid.
+  const isCijfer = (x: string) => /^\d+$/.test(x);
+  const lijkt = (a: string, b: string) => {
+    if (a === b) return true;
+    if (isCijfer(a) && isCijfer(b)) return a.includes(b) || b.includes(a);
+    return a.length >= 4 && b.length >= 4 && (a.startsWith(b) || b.startsWith(a));
+  };
+
+  let beste: {
+    van: number;
+    tot: number;
+    score: number;
+    afstand: number;
+    kopRaak: number;
+    staartRaak: number;
+  } | null = null;
 
   for (let i = 0; i < bron.length; i++) {
-    // Snelle poort: het eerste of tweede doelwoord moet hier ongeveer staan.
-    if (bron[i].n !== doel[0] && bron[i].n !== doel[1]) continue;
+    if (!lijkt(bron[i].n, doel[0]) && !lijkt(bron[i].n, doel[1]) && !lijkt(bron[i].n, doel[2] ?? '')) {
+      continue;
+    }
 
-    let cursor = i;
-    let geraakt = 0;
-    let laatste = i;
-    for (const dw of doel) {
-      let gevonden = -1;
-      for (let k = cursor; k < Math.min(bron.length, cursor + 3); k++) {
-        if (bron[k].n === dw) {
-          gevonden = k;
-          break;
-        }
-      }
-      if (gevonden >= 0) {
-        geraakt++;
-        laatste = gevonden;
-        cursor = gevonden + 1;
-      } else {
-        cursor++;
+    // Echte sequentie-uitlijning (LCS) over een venster. De eerdere
+    // cursor-varianten konden óf invoegingen óf weglatingen aan, nooit beide:
+    // de spreker zegt extra woorden die het script niet citeert ("denk ik
+    // zelfs") én het script bevat woorden die de transcriptie mist — en één
+    // hapering liet dan de hele rest van de zin cascaderen naar nul.
+    const venster = bron.slice(i, i + doel.length * 2 + 12);
+    const n = venster.length;
+    const m = doel.length;
+    // dp[k][d] = langste gedeelde deelreeks van venster[k..] en doel[d..]
+    const dp: number[][] = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0));
+    for (let k = n - 1; k >= 0; k--) {
+      for (let d = m - 1; d >= 0; d--) {
+        dp[k][d] = lijkt(venster[k].n, doel[d])
+          ? 1 + dp[k + 1][d + 1]
+          : Math.max(dp[k + 1][d], dp[k][d + 1]);
       }
     }
 
-    const score = geraakt / doel.length;
+    const geraakt = dp[0][0];
+    const score = geraakt / m;
     if (score < 0.55) continue;
-    const afstand = Math.abs(woorden[bron[i].i].s - planStart);
+
+    // Terugloop: welke woorden zijn gematcht, en dus waar liggen de randen?
+    let k = 0;
+    let d = 0;
+    let eersteMatch = -1;
+    let laatsteMatch = -1;
+    let eersteDoel = -1;
+    let laatsteDoel = -1;
+    while (k < n && d < m) {
+      if (lijkt(venster[k].n, doel[d]) && dp[k][d] === 1 + dp[k + 1][d + 1]) {
+        if (eersteMatch < 0) {
+          eersteMatch = k;
+          eersteDoel = d;
+        }
+        laatsteMatch = k;
+        laatsteDoel = d;
+        k++;
+        d++;
+      } else if (dp[k + 1][d] >= dp[k][d + 1]) {
+        k++;
+      } else {
+        d++;
+      }
+    }
+    if (eersteMatch < 0) continue;
+
+    // Getallen worden als losse tokens gehoord ("4" + ".000"); het anker moet
+    // dan tot het láátste stuk van het getal doorlopen, anders eindigt de clip
+    // middenin "4.000".
+    while (
+      laatsteMatch + 1 < n &&
+      isCijfer(venster[laatsteMatch + 1].n) &&
+      isCijfer(doel[laatsteDoel]) &&
+      doel[laatsteDoel].includes(venster[laatsteMatch + 1].n)
+    ) {
+      laatsteMatch++;
+    }
+
+    const afstand = Math.abs(woorden[venster[eersteMatch].i].s - planStart);
     if (
       !beste ||
       score > beste.score + 0.08 ||
       (Math.abs(score - beste.score) <= 0.08 && afstand < beste.afstand)
     ) {
-      beste = { van: bron[i].i, tot: bron[laatste].i, score, afstand };
+      beste = {
+        van: venster[eersteMatch].i,
+        tot: venster[laatsteMatch].i,
+        score,
+        afstand,
+        // Zekerheid per kant: het eerste gematchte fragmentwoord moet bij de
+        // kop horen, het laatste bij de staart. Tellen hoevéél kopwoorden
+        // raakten bleek te streng bij korte functiewoorden.
+        kopRaak: eersteDoel >= 0 && eersteDoel <= 2 ? 2 : 0,
+        staartRaak: laatsteDoel >= m - 4 ? 2 : 0,
+      };
     }
   }
 
   if (!beste) return null;
+
+  // Kant-vertrouwen: een anker geldt per kant alleen als die kant van het
+  // fragment ook echt gematcht is. Een half-geslaagd anker dat zijn einde op
+  // het laatst gematchte woord legt, hakt anders scriptinhoud af.
+  const startZeker = beste.kopRaak >= 2;
+  const eindZeker = beste.staartRaak >= 2;
+  if (!startZeker && !eindZeker) return null;
 
   const eerste = woorden[beste.van];
   const laatste = woorden[beste.tot];
@@ -184,8 +260,8 @@ export function vindFragment(
   const volgend = woorden[beste.tot + 1];
 
   return {
-    start: eerste.s,
-    end: laatste.e,
+    start: startZeker ? eerste.s : null,
+    end: eindZeker ? laatste.e : null,
     score: beste.score,
     gapVoor: vorig ? Math.max(0, eerste.s - vorig.e) : 2,
     gapNa: volgend ? Math.max(0, volgend.s - laatste.e) : 2,

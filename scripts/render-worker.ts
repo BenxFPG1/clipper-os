@@ -260,17 +260,28 @@ async function verwerk(job: Job) {
           return { ...shot, planStart: shot.start, planEnd: shot.end };
         }
         aantalUitgelijnd++;
-        geankerd.push(`${shot.volgorde}@${anker.start.toFixed(1)}(${Math.round(anker.score * 100)}%)`);
+        geankerd.push(
+          `${shot.volgorde}@${anker.start !== null ? anker.start.toFixed(1) : 'plan'}` +
+            `${anker.end === null ? '→plan' : ''}(${Math.round(anker.score * 100)}%)`,
+        );
+        // Per kant: alleen een geankerde kant is exact; een onzekere kant
+        // houdt de planwaarde en de gewone controles. "exact" (en dus het
+        // overslaan van snap en knipcontrole) geldt alleen als béide kanten
+        // op woorden staan.
+        const beideZeker = anker.start !== null && anker.end !== null;
         return {
           ...shot,
           // De helft van de ruimte tot het buurwoord als adem, met een kleine
           // boven- en ondergrens. Sluit het woord vrijwel direct aan, dan een
           // zachte fade in plaats van een hoorbare knip.
-          start: Math.max(0, anker.start - Math.min(0.3, Math.max(0.04, anker.gapVoor / 2))),
-          end: anker.end + Math.min(0.45, Math.max(0.08, anker.gapNa / 2)),
-          exact: true,
-          zachtBegin: anker.gapVoor < 0.18,
-          zachtEind: anker.gapNa < 0.18,
+          start:
+            anker.start !== null
+              ? Math.max(0, anker.start - Math.min(0.3, Math.max(0.04, anker.gapVoor / 2)))
+              : shot.start,
+          end: anker.end !== null ? anker.end + Math.min(0.45, Math.max(0.08, anker.gapNa / 2)) : shot.end,
+          exact: beideZeker,
+          zachtBegin: anker.start !== null && anker.gapVoor < 0.18,
+          zachtEind: anker.end !== null && anker.gapNa < 0.18,
           planStart: shot.start,
           planEnd: shot.end,
         };
@@ -485,6 +496,10 @@ async function verwerk(job: Job) {
         const voor = mediaan(spoor.slice(0, kwart).map((punt) => punt.x));
         const na = mediaan(spoor.slice(-kwart).map((punt) => punt.x));
         if (Math.abs(na - voor) < 0.22) continue;
+        // Alleen een échte sprong is een wissel; een glijdende verplaatsing is
+        // dezelfde spreker die beweegt, en die wordt gevolgd — splitsen gaf
+        // daar een tweede kader op verouderde meetdata.
+        if ((seg.maxStap ?? 0) < 0.22) continue;
 
         // Het wisselmoment: waar het spoor het midden tussen beide posities
         // kruist.
@@ -1013,7 +1028,12 @@ function pythonMetOpenCV(): { cmd: string; voor: string[] } {
  * seconde, en op een statische talking head verandert er toch niets.
  */
 async function meetSpoor(bronPad: string, segmenten: Shot[]): Promise<number> {
-  const teVolgen = segmenten.filter((s) => (s.spreiding ?? 0) > 0.08);
+  // Alle shots van betekenis fijnmazig meten. De oude poort — alleen volgen
+  // als de grove 3-puntsmeting beweging zag — was stuk: het uitschieterfilter
+  // van die meting gooide een échte verplaatsing (0,60 → 0,82, de wegleun in
+  // het slotshot) weg als meetfout, waarna er niet gevolgd werd en de spreker
+  // zijn statische kader uitliep. Het spoor zelf beslist nu of er beweging is.
+  const teVolgen = segmenten.filter((s) => s.end - s.start >= 2.5 && !s.focus);
   if (teVolgen.length === 0) return 0;
 
   const STAP = 0.75;
@@ -1025,13 +1045,17 @@ async function meetSpoor(bronPad: string, segmenten: Shot[]): Promise<number> {
   });
 
   const alle = opdrachten.flatMap((o) => o.tijden);
-  let posities: ({ x: number } | null)[] = [];
+  let posities: ({ x: number; breedte?: number } | null)[] = [];
   try {
     const py = pythonMetOpenCV();
     const uit = await new Promise<string>((klaar, fout) => {
       // Eén frame per meetpunt: we willen hier fijnmazigheid, geen robuustheid
       // per punt — het gladstrijken daarna vangt de uitschieters op.
-      const kind = spawn(py.cmd, [...py.voor, 'scripts/gezichten.py', bronPad, JSON.stringify(alle), '1']);
+      // Drie frames per meetpunt in plaats van één: met één frame kan de
+      // mondbewegings-stemming niet werken en pakte de detectie zo nu en dan
+      // de gesprekspartner — in het spoor oogde dat als een sprong van een
+      // halve beeldbreedte, en dáár vuurde de sprekerswissel-splitsing op.
+      const kind = spawn(py.cmd, [...py.voor, 'scripts/gezichten.py', bronPad, JSON.stringify(alle), '3']);
       let stdout = '';
       let stderr = '';
       kind.stdout.on('data', (d) => (stdout += d));
@@ -1051,13 +1075,63 @@ async function meetSpoor(bronPad: string, segmenten: Shot[]): Promise<number> {
     // Absolute brontijd, niet relatief aan de shotstart: de knip- en
     // aanloopcontrole mogen de grens later nog verschuiven, en een relatief
     // spoor schuift dan mee scheef — de camera volgde dan een spook.
-    const metingen = tijden.map((t, i) => ({
-      t,
-      x: posities[index + i]?.x ?? null,
-    }));
+    const ruw = tijden.map((t, i) => ({ t, meting: posities[index + i] ?? null }));
     index += tijden.length;
+    // Identiteit en positie zijn twee verschillende vragen. Wíé we volgen is
+    // al beslist door de grove meting (vijf frames per punt, stemming op
+    // mondbeweging): dat is het anker. Het fijnspoor mag alleen bepalen wáár
+    // die persoon op elk moment is — een meting die ver van het anker ligt is
+    // de gesprekspartner en wordt verworpen. Zonder deze scheiding wisselde
+    // het spoor per run van persoon.
+    const anker = seg.focusX;
+    const metingen = ruw.map((r) => {
+      const x = r.meting?.x ?? null;
+      if (x !== null && anker !== undefined && Math.abs(x - anker) > 0.28) {
+        return { t: r.t, x: null };
+      }
+      return { t: r.t, x };
+    });
     if (metingen.filter((m) => m.x !== null).length < 2) continue;
-    seg.spoor = maakSpoor(metingen);
+
+    const spoor = maakSpoor(metingen);
+    const xs = spoor.map((punt) => punt.x);
+    const bereik = Math.max(...xs) - Math.min(...xs);
+    // De werkelijke beweging vervangt de grove 3-puntsschatting; daar rekent
+    // het zoomplafond mee.
+    seg.spreiding = bereik;
+
+    if (bereik < 0.05) continue; // statisch: geen spoor nodig
+
+    seg.spoor = spoor;
+
+    // Sprong of glijer? Een sprekerswissel is een sprong (grote stap tussen
+    // twee opeenvolgende metingen); een wegleunende spreker glijdt.
+    const ruweXs = metingen.filter((m): m is { t: number; x: number } => m.x !== null);
+    let maxStap = 0;
+    for (let k = 1; k < ruweXs.length; k++) {
+      maxStap = Math.max(maxStap, Math.abs(ruweXs[k].x - ruweXs[k - 1].x));
+    }
+    seg.maxStap = maxStap;
+
+    // Ooghoogte meesporen: wie naar voren leunt zakt ook in beeld, en een
+    // statische verticale kadrering snijdt dan de kruin of de kin af.
+    const oogMetingen = ruw.map((r) => ({
+      t: r.t,
+      x: (r.meting as { oog?: number } | null)?.oog ?? null,
+    }));
+    if (oogMetingen.filter((m) => m.x !== null).length >= 2) {
+      seg.spoorY = maakSpoor(oogMetingen).map((punt) => ({
+        t: punt.t,
+        x: Math.min(0.85, Math.max(0.15, punt.x + 0.06)),
+      }));
+    }
+
+    // De kleinste gezichtsbreedte over het hele shot: daar dimensioneert de
+    // zoom op, zodat de spreker ook op zijn verste moment groot in beeld staat.
+    const breedtes = ruw
+      .map((r) => (r.meting as { breedte?: number } | null)?.breedte)
+      .filter((b): b is number => typeof b === 'number' && b > 0.02);
+    if (breedtes.length > 0) seg.focusWmin = Math.min(seg.focusWmin ?? 1, ...breedtes);
     gevolgd++;
   }
   return gevolgd;
@@ -1125,6 +1199,9 @@ async function vulGezichtsFocus(bronPad: string, segmenten: Shot[]): Promise<voi
       s.focusX = xs[Math.floor(xs.length / 2)];
       const ws = groep.map((m) => m.breedte).sort((a, b) => a - b);
       s.focusW = ws[Math.floor(ws.length / 2)];
+      // Ook de kleinste meting bewaren: bij een gevolgd shot moet de zoom
+      // daarop dimensioneren, anders wordt de spreker klein zodra hij wegleunt.
+      s.focusWmin = ws[0];
 
       // Het volledige gezichtsvak bewaren: daar toetst de kadercontrole tegen.
       const tops = groep.map((m) => m.top).sort((a, b) => a - b);

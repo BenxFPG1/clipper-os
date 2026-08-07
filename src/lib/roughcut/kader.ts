@@ -22,6 +22,8 @@ export function kaderKeten(
     focusY?: number;
     /** Meelopend focuspunt (ffmpeg-expressie in t); wint van focusX. */
     focusExpr?: string;
+    /** Verticale variant; wint van focusY. */
+    focusYExpr?: string;
   } = {},
 ): string {
   const zoom = opties.zoom ?? 1;
@@ -41,7 +43,7 @@ export function kaderKeten(
   // Verticaal: standaard het midden, maar met een focusY leggen we de ogen op
   // ongeveer een derde van boven. Een sprekend hoofd hoort daar; precies
   // gecentreerd geeft te veel lucht boven en een kin tegen de onderrand.
-  const fy = Math.min(1, Math.max(0, opties.focusY ?? 0.5)).toFixed(3);
+  const fy = opties.focusYExpr ?? Math.min(1, Math.max(0, opties.focusY ?? 0.5)).toFixed(3);
   return (
     `scale=-2:${hoogte},` +
     `crop=1080:1920:min(max((iw-1080)*${f}\\,0)\\,iw-1080):min(max(ih*${fy}-960\\,0)\\,ih-1920),` +
