@@ -1,5 +1,5 @@
 export type SnapSegment = { start_seconds: number; end_seconds: number; text: string };
-export type SnapShot = { start: number; end: number; functie?: string };
+export type SnapShot = { start: number; end: number; functie?: string; exact?: boolean };
 export type Stilte = { start: number; end: number };
 
 /**
@@ -86,6 +86,9 @@ export function snapShots<T extends SnapShot>(
   const zoekVensterEind = opties.alleenVerruimen ? Math.max(venster, 1.2) : venster;
 
   return shots.map((shot) => {
+    // Woordanker-grenzen zijn al exact; elke verschuiving is verslechtering.
+    if (shot.exact) return shot;
+
     // Alleen echte spraakpauzes als knippunt. Woordgrenzen uit de transcriptie
     // leken een goede terugval, maar die tijden zijn op een tiende seconde
     // nauwkeurig: gemeten schoof een knip daardoor van -49 dB (stilte) naar

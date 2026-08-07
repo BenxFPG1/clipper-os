@@ -50,6 +50,12 @@ export type Shot = {
    * het fragment ontbreken, dan is dít waar we naar teruggrijpen. */
   planStart?: number;
   planEnd?: number;
+  /**
+   * Grenzen komen exact van de brontranscriptie (woordanker). Dan is elke
+   * verdere verschuiving per definitie een verslechtering: snap en
+   * knipcontrole blijven eraf.
+   */
+  exact?: boolean;
   /** Gemeten gezichtsvak, waartegen de kadercontrole toetst. */
   gezicht?: { x: number; breedte: number; top: number; hoogte: number };
   /**

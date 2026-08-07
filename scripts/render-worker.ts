@@ -29,6 +29,7 @@ import {
   zoekStilstePunt,
 } from '../src/lib/roughcut/knipcontrole';
 import { controleerScript } from '../src/lib/roughcut/scriptcontrole';
+import { haalBronWoorden, vindFragment } from '../src/lib/roughcut/woorden';
 import { resolveBinary } from '../src/lib/ingest/binaries';
 import { pakFrames } from '../src/lib/roughcut/frames';
 
@@ -200,6 +201,12 @@ async function verwerk(job: Job) {
 
   // Zit er muziek of ruis onder de spraak? Alleen dan is ruisonderdrukking
   // gerechtvaardigd; op schone bron maakt hij de stem juist slechter.
+  // De brontranscriptie is de enige waarheid voor knipgrenzen. Eenmalig per
+  // video, daarna uit de cache.
+  const bronWoorden = await haalBronWoorden(job.video_id, bronPad, {
+    log: (m) => console.log(`  ${m}`),
+  });
+
   let ruisvloer: number | null = null;
   try {
     ruisvloer = await meetRuisvloer(bronPad, stiltes ?? []);
@@ -232,14 +239,51 @@ async function verwerk(job: Job) {
 
     console.log(`  clip ${nummer}: ${clip.titel_intern}`);
 
-    // Eerst het citaat terugvinden op woordniveau: dat legt de grenzen op de
-    // zin die het plan bedoelt, in plaats van op de dichtstbijzijnde stilte
-    // (die kan van de verkeerde zin zijn). Daarna pas segmenteren.
-    const { shots: uitgelijnd, uitgelijnd: aantalUitgelijnd, woordgrenzen } = await lijnShotsUit(
-      bronPad,
-      clip.shots,
-      { log: (m) => console.log(`     ${m}`) },
-    );
+    // De grenzen komen uit de brontranscriptie: elk fragment wordt in de
+    // volledige tekst opgezocht en de knip valt exact tussen het laatste woord
+    // ervóór en het eerste woord van het fragment. Geen venstertjes, geen
+    // snappen, geen raden. Alleen als een fragment niet te vinden is, valt dat
+    // shot terug op de oude venster-uitlijning.
+    let uitgelijnd: typeof clip.shots;
+    let aantalUitgelijnd = 0;
+    let woordgrenzen: number[] = [];
+    if (bronWoorden) {
+      const geankerd: string[] = [];
+      uitgelijnd = clip.shots.map((shot) => {
+        const fragment = (shot as { transcript_fragment?: string }).transcript_fragment;
+        if (!fragment || fragment.length < 12) {
+          return { ...shot, planStart: shot.start, planEnd: shot.end };
+        }
+        const anker = vindFragment(bronWoorden, fragment, shot.start);
+        if (!anker) {
+          geankerd.push(`${shot.volgorde}✗`);
+          return { ...shot, planStart: shot.start, planEnd: shot.end };
+        }
+        aantalUitgelijnd++;
+        geankerd.push(`${shot.volgorde}@${anker.start.toFixed(1)}(${Math.round(anker.score * 100)}%)`);
+        return {
+          ...shot,
+          // De helft van de ruimte tot het buurwoord als adem, met een kleine
+          // boven- en ondergrens. Sluit het woord vrijwel direct aan, dan een
+          // zachte fade in plaats van een hoorbare knip.
+          start: Math.max(0, anker.start - Math.min(0.3, Math.max(0.04, anker.gapVoor / 2))),
+          end: anker.end + Math.min(0.45, Math.max(0.08, anker.gapNa / 2)),
+          exact: true,
+          zachtBegin: anker.gapVoor < 0.18,
+          zachtEind: anker.gapNa < 0.18,
+          planStart: shot.start,
+          planEnd: shot.end,
+        };
+      });
+      console.log(`     woordanker: ${geankerd.join(' ')}`);
+    } else {
+      const uitlijning = await lijnShotsUit(bronPad, clip.shots, {
+        log: (m) => console.log(`     ${m}`),
+      });
+      uitgelijnd = uitlijning.shots as typeof clip.shots;
+      aantalUitgelijnd = uitlijning.uitgelijnd;
+      woordgrenzen = uitlijning.woordgrenzen;
+    }
     const segmenten = bepaalSegmenten(uitgelijnd, {
       transcript: (videoRij?.transcript as never) ?? undefined,
       stiltes: stiltes ?? undefined,
@@ -321,6 +365,14 @@ async function verwerk(job: Job) {
         for (const o of fout) {
           const seg = segmenten.find((sg) => sg.volgorde === o.volgorde);
           if (!seg) continue;
+          // Woordanker-grenzen staan al exact op het woord; als het daar niet
+          // stil is, praat de spreker gewoon door en is een zachte fade het
+          // juiste antwoord — verschuiven maakt het alleen maar fout.
+          if (seg.exact) {
+            if (o.kant === 'begin') seg.zachtBegin = true;
+            else seg.zachtEind = true;
+            continue;
+          }
           const sleutel = `${o.volgorde}-${o.kant}`;
           const eerder = geprobeerd.get(sleutel) ?? [];
           const basis = origineel.get(o.volgorde);
