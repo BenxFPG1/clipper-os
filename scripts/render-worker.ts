@@ -267,7 +267,12 @@ async function verwerk(job: Job) {
         if (overlap <= kortste * 0.5) continue;
 
         const bijnaDuplicaat = overlap >= (b.end - b.start) * 0.8;
-        if (bijnaDuplicaat && clip.hook?.tekst_overlay && process.env.HOOK_TEASE !== '1') {
+        // De hook helemaal schrappen bleek te ver: dan opent de clip op de
+        // setup en voelt de structuur niet meer als het script. Standaard wordt
+        // het duplicaat dus een kórte tease die op een pauze eindigt — hook
+        // aanwezig, zonder dat de volle zin twee keer klinkt. HOOK_WEG=1
+        // schrapt hem alsnog helemaal.
+        if (bijnaDuplicaat && clip.hook?.tekst_overlay && process.env.HOOK_WEG === '1') {
           console.log(
             `     herhaling: shot ${a.volgorde} is een duplicaat van shot ${b.volgorde}; ` +
               `audio-hook vervalt, de hooktekst in beeld draagt de belofte`,
@@ -287,6 +292,9 @@ async function verwerk(job: Job) {
               `tease ingekort tot ${(pauze - a.start).toFixed(1)}s`,
           );
           a.end = pauze;
+          // Markeren als bedoelde cold open: de scriptcontrole hoort deze
+          // herhaling niet als fout te melden — dit ís de belofte vooraf.
+          (a as { tease?: boolean }).tease = true;
         }
       }
     }
@@ -608,7 +616,11 @@ async function verwerk(job: Job) {
           console.log(
             `     scriptcontrole: clip begint met "${script.aanloop.tekst}" (${script.aanloop.seconden}s vóór het script); beginpunt gecorrigeerd, opnieuw renderen`,
           );
-          eerste.start += Math.max(0, script.aanloop.seconden - 0.15);
+          // Een minder strakke marge dan je zou willen: de woordtijden van het
+          // transcriptiemodel zitten er zomaar drie tienden naast, en te strak
+          // corrigeren sneed het eerste scriptwoord aan. Een restje aanloop
+          // valt onder de zachte fade; een half eerste woord hoor je altijd.
+          eerste.start += Math.max(0, script.aanloop.seconden - 0.45);
           eerste.zachtBegin = true;
           // De grens is verschoven, dus de kadrering van dit segment klopt
           // niet meer: opnieuw meten en doorrekenen, alleen voor dit segment.
@@ -618,15 +630,62 @@ async function verwerk(job: Job) {
           continue;
         }
 
+        // Fragmenten waarvan de kop nergens klinkt zijn middenin de zin
+        // aangesneden (de uitlijning heeft de verkeerde plek gepakt). Het plan
+        // weet waar de zin echt begint — daar grijpen we op terug, één keer.
+        const zoek = (script.perShot ?? []).filter((ps) => !ps.gevonden);
+        if (zoek.length > 0 && poging <= 3) {
+          let hersteld = 0;
+          for (const ps of zoek) {
+            const seg = segmenten.find((sg) => sg.volgorde === ps.volgorde);
+            if (!seg || seg.planStart === undefined) continue;
+            if (seg.start > seg.planStart + 0.3) {
+              // De uitlijning zat later dan het plan: terug naar het plan.
+              console.log(
+                `     scriptcontrole shot ${ps.volgorde}: fragmentbegin niet terug te horen; start terug van ${seg.start.toFixed(2)} naar plan ${seg.planStart.toFixed(2)}`,
+              );
+              seg.start = Math.max(0, seg.planStart - 0.1);
+            } else {
+              // We staan al op (of vóór) het plan en de zin ontbreekt alsnog:
+              // dan is het plán te laat — de tijdcodes komen uit rollende
+              // ondertitelblokken. Stap anderhalve seconde verder terug de
+              // bron in; de volgende terugluistering toetst of het genoeg was.
+              console.log(
+                `     scriptcontrole shot ${ps.volgorde}: fragmentbegin ontbreekt en plan is al bereikt; 1,5s verder terug (${(seg.start - 1.5).toFixed(2)})`,
+              );
+              seg.start = Math.max(0, seg.start - 1.5);
+            }
+            seg.zachtBegin = true;
+            await vulGezichtsFocus(bronPad, [seg]);
+            corrigeerKadrering([seg]);
+            hersteld++;
+          }
+          if (hersteld > 0) continue;
+        }
+
         const procent = Math.round(script.dekking * 100);
-        if (script.herhalingen.length === 0 && procent >= 55) {
-          console.log(`     scriptcontrole: ${procent}% van het script terug te horen, geen herhaalde zinnen`);
+        // De cold open herhaalt per definitie de payoff — dat is opzet, geen
+        // fout. Alleen herhalingen die níet in de tease beginnen tellen.
+        const teaseGrens = (segmenten[0] as { tease?: boolean }).tease
+          ? segmenten[0].end - segmenten[0].start + 0.5
+          : 0;
+        const echteHerhalingen = script.herhalingen.filter((h) => h.eerste > teaseGrens);
+        if (echteHerhalingen.length === 0 && procent >= 55) {
+          const perShot = (script.perShot ?? [])
+            .map((ps) => `${ps.volgorde}${ps.gevonden ? `✓@${ps.opSeconde}s` : '✗'}`)
+            .join(' ');
+          console.log(
+            `     scriptcontrole: ${procent}% terug te horen, geen herhaalde zinnen | shots: ${perShot}`,
+          );
         } else {
           if (procent < 55) console.log(`     scriptcontrole: maar ${procent}% van het script terug te horen`);
-          for (const h of script.herhalingen) {
+          for (const h of echteHerhalingen) {
             console.log(
               `     scriptcontrole: "${h.tekst}" klinkt twee keer (${h.eerste}s en ${h.tweede}s)`,
             );
+          }
+          if (echteHerhalingen.length < script.herhalingen.length) {
+            console.log('     scriptcontrole: cold open herhaalt de payoff (bedoeld)');
           }
         }
       }

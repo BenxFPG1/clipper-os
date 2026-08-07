@@ -83,7 +83,7 @@ export function snapShots<T extends SnapShot>(
   // en zo begon een clip met de staart van de vorige zin ("…een heel goede
   // vraag. Ik wou dat…"). Een half woordje aanloop is het maximum.
   const zoekVensterStart = opties.alleenVerruimen ? Math.max(venster, 0.45) : venster;
-  const zoekVensterEind = opties.alleenVerruimen ? Math.max(venster, 2.5) : venster;
+  const zoekVensterEind = opties.alleenVerruimen ? Math.max(venster, 1.2) : venster;
 
   return shots.map((shot) => {
     // Alleen echte spraakpauzes als knippunt. Woordgrenzen uit de transcriptie

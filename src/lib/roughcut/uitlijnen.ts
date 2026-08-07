@@ -46,7 +46,7 @@ export async function lijnShotsUit(
     for (const shot of shots) {
       const fragment = shot.transcript_fragment?.trim();
       if (!fragment || fragment.length < 12) {
-        uit.push(shot);
+        uit.push({ ...shot, planStart: shot.start, planEnd: shot.end });
         continue;
       }
 
@@ -63,7 +63,7 @@ export async function lijnShotsUit(
         ]);
         const woorden = await woordenVanFragment(wav, model);
         if (woorden.length < 4) {
-          uit.push(shot);
+          uit.push({ ...shot, planStart: shot.start, planEnd: shot.end });
           continue;
         }
 
@@ -73,7 +73,7 @@ export async function lijnShotsUit(
 
         const grenzen = zoekCitaat(woorden, fragment);
         if (!grenzen || (grenzen.start === null && grenzen.end === null)) {
-          uit.push(shot);
+          uit.push({ ...shot, planStart: shot.start, planEnd: shot.end });
           continue;
         }
 
@@ -83,26 +83,28 @@ export async function lijnShotsUit(
           grenzen.start !== null ? Math.max(0, spanStart + grenzen.start - 0.06) : shot.start;
         let nieuwEind = grenzen.end !== null ? spanStart + grenzen.end + 0.15 : shot.end;
 
-        // Wijkt de match meer dan drie seconden af van waar het plan het citaat
-        // legt, dan heeft het model een verkeerde plek gevonden — dat gebeurde
-        // echt: een start die drie seconden de zin in lag, waardoor de clip
-        // midden in "…volatiliteit / ja, de komende jaren" begon. Zo'n kant
-        // vervalt; het plan is dan betrouwbaarder dan de match.
-        if (Math.abs(nieuwStart - shot.start) > 3) nieuwStart = shot.start;
-        if (Math.abs(nieuwEind - shot.end) > 3) nieuwEind = shot.end;
+        // Asymmetrische tolerantie rond het plan. De plantijden komen uit
+        // rollende ondertitelblokken en zitten er zomaar seconden naast; de
+        // uitlijning is meestal preciezer. Maar de risico's zijn niet
+        // symmetrisch: een start die EERDER ligt neemt hooguit wat extra van
+        // de eigen zin mee (veilig), een start die LATER ligt snijdt de zin
+        // aan (dat is precies "random geknipt"). Zelfde logica gespiegeld voor
+        // het einde.
+        if (nieuwStart - shot.start > 1.2 || shot.start - nieuwStart > 4) nieuwStart = shot.start;
+        if (shot.end - nieuwEind > 1.2 || nieuwEind - shot.end > 2.5) nieuwEind = shot.end;
         if (nieuwStart === shot.start && nieuwEind === shot.end) {
-          uit.push(shot);
+          uit.push({ ...shot, planStart: shot.start, planEnd: shot.end });
           continue;
         }
 
         uitgelijnd += 1;
         if (nieuwEind - nieuwStart < 0.5) {
-          uit.push(shot);
+          uit.push({ ...shot, planStart: shot.start, planEnd: shot.end });
           continue;
         }
-        uit.push({ ...shot, start: nieuwStart, end: nieuwEind });
+        uit.push({ ...shot, start: nieuwStart, end: nieuwEind, planStart: shot.start, planEnd: shot.end });
       } catch {
-        uit.push(shot);
+        uit.push({ ...shot, planStart: shot.start, planEnd: shot.end });
       } finally {
         await rm(wav, { force: true });
       }

@@ -30,6 +30,12 @@ export type ScriptOordeel = {
    * is). Dit vangt precies het losse "Ja," of de staart van een vorige zin.
    */
   aanloop: { seconden: number; tekst: string } | null;
+  /**
+   * Per segment: is het begin van zijn scriptfragment terug te horen, en op
+   * welke seconde? Een fragment waarvan de kop nergens klinkt is vrijwel zeker
+   * middenin de zin aangesneden — precies wat als "random geknipt" voelt.
+   */
+  perShot: { volgorde: number; gevonden: boolean; opSeconde: number | null }[];
 };
 
 const norm = (t: string) => t.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
@@ -108,6 +114,27 @@ export async function controleerScript(
       dekking = scores.reduce((a, b) => a + b, 0) / scores.length;
     }
 
+    // Per segment: vind de kop van zijn fragment terug in wat er klinkt.
+    const zoekKop = (fragment: string): number | null => {
+      const kop = fragment.split(/\s+/).map(norm).filter((w) => w.length >= 3).slice(0, 5);
+      for (let i = 0; i < woorden.length; i++) {
+        if (kop.includes(woorden[i].n) && (kop.includes(woorden[i + 1]?.n) || kop.includes(woorden[i + 2]?.n))) {
+          return i;
+        }
+      }
+      return null;
+    };
+    const perShot = segmenten
+      .filter((sg) => sg.transcript_fragment && sg.transcript_fragment.length > 10)
+      .map((sg) => {
+        const idx = zoekKop(sg.transcript_fragment as string);
+        return {
+          volgorde: sg.volgorde,
+          gevonden: idx !== null,
+          opSeconde: idx !== null ? Math.round(woorden[idx].s * 10) / 10 : null,
+        };
+      });
+
     // Aanloop: zoek waar de eerste scriptzin begint in wat er werkelijk
     // klinkt. Alles daarvóór is meegenomen bronmateriaal dat het plan niet
     // vroeg. Kleine adempauzes zijn prima; hele woorden niet.
@@ -133,7 +160,7 @@ export async function controleerScript(
       }
     }
 
-    return { dekking, herhalingen, woorden: woorden.length, aanloop };
+    return { dekking, herhalingen, woorden: woorden.length, aanloop, perShot };
   } catch {
     return null;
   } finally {

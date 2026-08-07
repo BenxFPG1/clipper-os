@@ -45,6 +45,11 @@ export type Shot = {
    */
   zachtBegin?: boolean;
   zachtEind?: boolean;
+  /** De grenzen zoals het plan ze bedoelde, vóór uitlijning en verschuiving.
+   * Het reddingspunt: blijkt uit de terugluistering dat de eerste woorden van
+   * het fragment ontbreken, dan is dít waar we naar teruggrijpen. */
+  planStart?: number;
+  planEnd?: number;
   /** Gemeten gezichtsvak, waartegen de kadercontrole toetst. */
   gezicht?: { x: number; breedte: number; top: number; hoogte: number };
   /**
