@@ -73,13 +73,23 @@ export async function haalBronWoorden(
     const woorden = await woordenVanFragment(wav, model);
     if (woorden.length < 50) return null;
 
-    await supabase.storage
+    // De bucket is voor montages bedoeld en staat uitsluitend video/mp4 toe;
+    // JSON, tekst en zelfs audio worden geweigerd. De inhoud ís gewoon JSON,
+    // alleen het etiket zegt video. Niet fraai, wel beter dan een
+    // schemawijziging voor één cachebestand — en het uploadresultaat wordt
+    // gecheckt, want een stille misser betekent elke render opnieuw tien
+    // minuten transcriberen.
+    const upload = await supabase.storage
       .from(BUCKET)
       .upload(cachePad, Buffer.from(JSON.stringify(woorden)), {
-        contentType: 'application/json',
+        contentType: 'video/mp4',
         upsert: true,
       });
-    log(`brontranscriptie klaar en gecachet (${woorden.length} woorden)`);
+    if (upload.error) {
+      log(`LET OP: transcriptiecache niet opgeslagen (${upload.error.message}); volgende render transcribeert opnieuw`);
+    } else {
+      log(`brontranscriptie klaar en gecachet (${woorden.length} woorden)`);
+    }
     return woorden;
   } catch {
     return null;

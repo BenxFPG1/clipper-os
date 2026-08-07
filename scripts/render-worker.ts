@@ -325,21 +325,41 @@ async function verwerk(job: Job) {
           break;
         }
 
-        const doel = a.start + Math.min(3.2, (a.end - a.start) * 0.45);
-        const pauze =
-          verschuifNaarPauze(doel, 'eind', stiltes ?? [], [], 1.2) ??
-          (await zoekStilstePunt(bronPad, doel, 'eind', 0.8))?.seconde ??
-          doel;
-        if (pauze - a.start >= 1.2 && pauze < a.end - 0.5) {
-          console.log(
-            `     herhaling: shot ${a.volgorde} en ${b.volgorde} delen ${overlap.toFixed(1)}s bron; ` +
-              `tease ingekort tot ${(pauze - a.start).toFixed(1)}s`,
-          );
-          a.end = pauze;
-          // Markeren als bedoelde cold open: de scriptcontrole hoort deze
-          // herhaling niet als fout te melden — dit ís de belofte vooraf.
+        // De regel zonder uitzondering: geen enkel shot eindigt midden in een
+        // zin — ook de tease niet. Zelf een tease afknippen op een "zinseinde"
+        // is geprobeerd en werkt niet: de interpunctie van de transcriptie legt
+        // punten waar de spreker gewoon doorpraat, en dan klinkt het alsnog als
+        // een afgebroken zin. Dus: alleen een hook die de plánner al als korte
+        // volledige zin ontwierp (het hele shot is hooguit 4,5s) mag blijven.
+        // Elke langere duplicaat-hook vervalt; de hooktekst in beeld draagt de
+        // belofte. HOOK_TEASE=1 herstelt het oude afknip-gedrag voor wie het
+        // toch wil.
+        const isOntworpenTease = a.end - a.start <= 4.5;
+        if (isOntworpenTease) {
           (a as { tease?: boolean }).tease = true;
+          continue;
         }
+        if (process.env.HOOK_TEASE === '1') {
+          const doel = a.start + Math.min(3.2, (a.end - a.start) * 0.45);
+          const pauze =
+            verschuifNaarPauze(doel, 'eind', stiltes ?? [], [], 1.2) ??
+            (await zoekStilstePunt(bronPad, doel, 'eind', 0.8))?.seconde ??
+            null;
+          if (pauze !== null && pauze - a.start >= 1.2 && pauze < a.end - 0.5) {
+            console.log(
+              `     herhaling: shot ${a.volgorde} en ${b.volgorde} delen ${overlap.toFixed(1)}s bron; tease ingekort (HOOK_TEASE)`,
+            );
+            a.end = pauze;
+            (a as { tease?: boolean }).tease = true;
+            continue;
+          }
+        }
+        console.log(
+          `     herhaling: shot ${a.volgorde} dupliceert shot ${b.volgorde} en is geen korte volledige ` +
+            `zin; audio-hook vervalt, de hooktekst in beeld draagt de belofte`,
+        );
+        segmenten.splice(i, 1);
+        break;
       }
     }
 

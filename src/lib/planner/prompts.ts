@@ -36,6 +36,10 @@ Prioriteer structuren en hooks met een hoog vault-gewicht, maar wijk gemotiveerd
 
 Respecteer de campagneregels strikt. Content die onder verboden content valt, stel je niet voor. Zet risico op "check_regels" als een clip op het randje zit.
 
+Regels voor shots en de hook:
+- Geen twee shots in één clip mogen hetzelfde bronfragment gebruiken. Wil je de payoff vooruit laten horen als cold open, kies dan een KORTE VOLLEDIGE ZIN (maximaal ~4 seconden, eindigend op een punt) — een zin die halverwege afgekapt moet worden klinkt als een fout en wordt door de montage geschrapt.
+- Elk shot begint bij het begin van een zin en eindigt bij het einde van een zin. transcript_fragment is dus altijd een of meer hele zinnen, nooit een half citaat.
+
 Lever per clip 2 tot 3 legitieme varianten. Een variant is een ANDER INSTAPPUNT met een andere hook en meestal een andere lengte — nooit dezelfde edit met andere tekst (dat is ban-risico bij re-uploads).
 
 Harde eisen:
