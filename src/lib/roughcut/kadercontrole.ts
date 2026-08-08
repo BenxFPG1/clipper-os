@@ -115,9 +115,11 @@ export function corrigeerKadrering(
     let focusX = shot.focusX !== undefined
       ? (shot.paneel ? (shot.focusX - shot.paneel[0]) / paneelBreed : shot.focusX)
       : 0.5;
-    // Ooghoogte op ongeveer een derde van boven: dat is de klassieke plek voor
-    // een sprekend hoofd en houdt de kin uit de onderste rand.
-    let focusY = Math.min(0.85, Math.max(0.15, g.top + g.hoogte * 0.38 + 0.06));
+    // Het hoofd rond het midden van het kader, met een klein beetje hoofdruimte
+    // erboven. De klassieke ooglijn op een derde duwt het hoofd hoog in beeld;
+    // op een telefoon leest dat als "hij hangt bovenin" en raakt de kruin
+    // sneller de rand zodra iemand beweegt.
+    let focusY = Math.min(0.85, Math.max(0.15, g.top + g.hoogte * 0.5 + 0.03));
     const gedaan: string[] = [];
 
     // Valt de spreker buiten het paneel dat we kozen? Dan klopte het paneel
@@ -201,6 +203,13 @@ export function corrigeerKadrering(
     }
   }
 
+  // Sluitregel: het kader staat gecentreerd op het gezicht. Alles hierboven
+  // mag de zoom en de hoogte bepalen; de horizontale plek is geen kwestie van
+  // smaak maar van meten.
+  for (const shot of shots) {
+    if (shot.gezicht) shot.focusX = Math.min(1, Math.max(0, shot.gezicht.x));
+  }
+
   return correcties;
 }
 
@@ -273,16 +282,14 @@ export function pasVisueleCorrectieToe(
   const stap = 0.06 + 0.14 * Math.min(1, Math.max(0, sterkte));
 
   switch (correctie) {
+    // Horizontaal verschuiven doen we niet meer. Het kader hoort gecentreerd op
+    // het gezicht te staan, en dat wéten we uit de meting; een duwtje op basis
+    // van een blik op één frame haalde het er juist vanaf. De klacht was dan
+    // ook precies dat: het gezicht stond niet in het midden. Zit er toch iets
+    // scheef, dan is dat een meetprobleem en hoort het daar opgelost te worden.
     case 'naar_links':
-      shot.focusX = Math.max(0, (shot.focusX ?? 0.5) - stap);
-      // Een gevolgd shot krijgt de duw over het hele spoor, anders wint de
-      // spoor-expressie van de correctie en verandert er niets in beeld.
-      shot.spoor = shot.spoor?.map((punt) => ({ t: punt.t, x: Math.max(0, punt.x - stap) }));
-      return `focus ${stap.toFixed(2)} naar links`;
     case 'naar_rechts':
-      shot.focusX = Math.min(1, (shot.focusX ?? 0.5) + stap);
-      shot.spoor = shot.spoor?.map((punt) => ({ t: punt.t, x: Math.min(1, punt.x + stap) }));
-      return `focus ${stap.toFixed(2)} naar rechts`;
+      return null;
     case 'uitzoomen':
       if ((shot.zoom ?? 1) <= 1.001) {
         // Al helemaal uitgezoomd: dan zit het probleem in het paneel.

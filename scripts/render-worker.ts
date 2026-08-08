@@ -1216,7 +1216,9 @@ async function meetSpoor(bronPad: string, segmenten: Shot[]): Promise<number> {
         const onder = oog + hoogte * 0.62; // kin
         const minY = onder - halfKader + 0.01;
         const maxY = boven + halfKader - 0.01;
-        const gewenst = oog + 0.06;
+        // Zelfde keuze als bij de statische kadrering: het hoofd rond het
+        // midden in plaats van de ogen op een derde.
+        const gewenst = oog + hoogte * 0.12;
         const y = maxY >= minY ? Math.min(maxY, Math.max(minY, gewenst)) : (boven + onder) / 2;
         return { t: punt.t, x: Math.min(0.9, Math.max(0.1, y)) };
       });

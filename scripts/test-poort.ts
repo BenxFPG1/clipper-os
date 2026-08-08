@@ -57,15 +57,29 @@ toets('geeft null in een pauze', woordOnder(woorden, 12.6) === null);
 console.log('poort — regel 1: geen knip in een woord');
 {
   const { segmenten, ingrepen } = poort([shot(1, 11.3, 13.2)], woorden);
-  toets('schuift een start uit "collega" naar het woordbegin', segmenten[0].start === 11.05,
+  // Het hele woord komt mee, plus een vleugje ademruimte — maar het buurwoord
+  // blijft erbuiten.
+  toets('neemt "collega" helemaal mee', segmenten[0].start <= 11.05 && segmenten[0].start > 11.0,
     `start=${segmenten[0].start}`);
-  toets('schuift een eind uit "Philippe" naar het woordeind', segmenten[0].end === 13.5,
+  toets('neemt "Philippe" helemaal mee', segmenten[0].end >= 13.5 && segmenten[0].end < 13.55,
     `eind=${segmenten[0].end}`);
   toets('rapporteert beide ingrepen', ingrepen.filter((i) => i.regel === 'woordgrens').length === 2);
 }
 {
   const { ingrepen } = poort([shot(1, 10.75, 12.3)], woorden);
   toets('laat een correcte knip met rust', ingrepen.length === 0, JSON.stringify(ingrepen));
+}
+
+console.log('poort — regel 1b: ademruimte rond de knip');
+{
+  // Knip pal op de grenzen van "mijn ... zat": er hoort lucht omheen te komen,
+  // maar nooit zoveel dat het buurwoord meekomt.
+  const { segmenten } = poort([shot(1, 10.75, 12.3)], woorden);
+  const s0 = segmenten[0];
+  toets('begin schuift naar buiten', s0.start < 10.75, `start=${s0.start.toFixed(3)}`);
+  toets('maar niet tot in "dat"', s0.start >= 10.7, `start=${s0.start.toFixed(3)}`);
+  toets('eind schuift naar buiten', s0.end > 12.3, `eind=${s0.end.toFixed(3)}`);
+  toets('maar niet tot in "Philippe"', s0.end <= 12.9, `eind=${s0.end.toFixed(3)}`);
 }
 
 console.log('poort — regel 2: geen gedeeld bronmateriaal');
@@ -108,7 +122,7 @@ console.log('poort — regel 0: een fragment wordt nooit gehalveerd');
   // 11.6 terwijl zijn fragment tot 12.3 doorloopt.
   const tease: Shot = { ...shot(1, 10.0, 11.6), ankerStart: 10.0, ankerEind: 12.3 };
   const { segmenten, ingrepen } = poort([tease], woorden);
-  toets('herstelt het afgekapte eind', segmenten[0]?.end === 12.3, `eind=${segmenten[0]?.end}`);
+  toets('herstelt het afgekapte eind', (segmenten[0]?.end ?? 0) >= 12.3, `eind=${segmenten[0]?.end}`);
   toets('meldt het als half fragment', ingrepen.some((i) => i.regel === 'halfFragment'));
 }
 {
@@ -119,7 +133,7 @@ console.log('poort — regel 0: een fragment wordt nooit gehalveerd');
   const { segmenten } = poort([tease, payoff], woorden);
   toets('laat de duplicaat vervallen in plaats van halveren', segmenten.length === 1);
   toets('en houdt de volledige zin over',
-    segmenten[0]?.start === 10.0 && segmenten[0]?.end === 12.3,
+    (segmenten[0]?.start ?? 1) <= 10.0 && (segmenten[0]?.end ?? 0) >= 12.3,
     `${segmenten[0]?.start}-${segmenten[0]?.end}`);
 }
 

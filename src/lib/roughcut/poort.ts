@@ -23,6 +23,8 @@ import type { BronWoord } from './woorden';
  *  1. Geen knip valt binnen een woord. We kennen de woordtijden van de hele
  *     bron; ligt een grens strikt tussen begin en eind van een woord, dan
  *     wordt hij naar buiten geschoven naar de rand van dat woord.
+ *  1b. Rond elke knip staat ademruimte, begrensd door de werkelijke stilte tot
+ *     het buurwoord — een knip pal op de woordgrens klinkt afgebeten.
  *  2. Geen twee segmenten delen bronmateriaal, want dan hoort de kijker
  *     dezelfde woorden twee keer.
  *  3. Segmenten zijn niet omgekeerd of te kort om te bestaan.
@@ -110,6 +112,32 @@ export function poort(
         });
         seg.end = bijEind.e;
       }
+    }
+  }
+
+  // Regel 1b: ademruimte. Een knip die exact op de woordgrens ligt klinkt
+  // afgebeten — de aanzet van een medeklinker begint een fractie vóór het
+  // woord en de klank sterft er een fractie ná uit. We schuiven daarom naar
+  // buiten, maar nooit verder dan de helft van de werkelijke stilte tot het
+  // buurwoord: zo komt er nooit een stukje van een ander woord mee.
+  if (bronWoorden && bronWoorden.length > 0) {
+    const ADEM_VOOR = 0.12;
+    const ADEM_NA = 0.2;
+    for (const seg of uit) {
+      const vorig = [...bronWoorden].reverse().find((w) => w.e <= seg.start + 0.02);
+      const gatVoor = vorig ? Math.max(0, seg.start - vorig.e) : 1;
+      seg.start = Math.max(0, seg.start - Math.min(ADEM_VOOR, gatVoor / 2));
+
+      const volgend = bronWoorden.find((w) => w.s >= seg.end - 0.02);
+      const gatNa = volgend ? Math.max(0, volgend.s - seg.end) : 1;
+      seg.end += Math.min(ADEM_NA, gatNa / 2);
+
+      // Praat de spreker aan deze kant gewoon door, dan ís er geen lucht om
+      // mee te nemen — het vorige woord zou meekomen. Daar hoort dan een
+      // langere audiofade: dat leest als een zachte overgang in plaats van een
+      // knip die pal tegen het woord aan zit.
+      if (gatVoor < 0.12) seg.zachtBegin = true;
+      if (gatNa < 0.12) seg.zachtEind = true;
     }
   }
 
