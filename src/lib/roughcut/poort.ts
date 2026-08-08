@@ -33,7 +33,7 @@ import type { BronWoord } from './woorden';
 
 export type PoortIngreep = {
   volgorde: number;
-  regel: 'woordgrens' | 'overlap' | 'ongeldig';
+  regel: 'halfFragment' | 'woordgrens' | 'overlap' | 'ongeldig';
   wat: string;
 };
 
@@ -53,6 +53,38 @@ export function poort(
 ): { segmenten: Shot[]; ingrepen: PoortIngreep[] } {
   const ingrepen: PoortIngreep[] = [];
   let uit = [...segmenten].sort((a, b) => a.volgorde - b.volgorde);
+
+  // Regel 0: geen half fragment. Een shot moet het hele stuk tekst bevatten
+  // dat het script eraan toekent — niet een deel ervan.
+  //
+  // Dit is de regel die het langst ontbrak, en het verschil met regel 1 is
+  // wezenlijk: een knip kan keurig op een woordgrens vallen en de zín toch
+  // doormidden hakken. Precies dat gebeurde toen de cold open werd afgekapt op
+  // een punt die de transcriptie verzonnen had ("Het zal goud door die grote
+  // volatiliteit." terwijl de zin doorloopt met "de komende jaren nog opnieuw
+  // gaan verdubbelen"). Interpunctie uit spraakherkenning is geen bewijs van
+  // een zinseinde; het scriptfragment wél, want dat is wat een mens bedoelde.
+  //
+  // Wordt een shot hierdoor een duplicaat van een ander, dan lost regel 2 dat
+  // daarna op — inkorten of laten vervallen, maar nooit halveren.
+  for (const seg of uit) {
+    if (seg.ankerEind !== undefined && seg.end < seg.ankerEind - 0.15) {
+      ingrepen.push({
+        volgorde: seg.volgorde,
+        regel: 'halfFragment',
+        wat: `eindigde op ${seg.end.toFixed(2)}, midden in zijn fragment; hersteld naar ${seg.ankerEind.toFixed(2)}`,
+      });
+      seg.end = seg.ankerEind;
+    }
+    if (seg.ankerStart !== undefined && seg.start > seg.ankerStart + 0.15) {
+      ingrepen.push({
+        volgorde: seg.volgorde,
+        regel: 'halfFragment',
+        wat: `begon op ${seg.start.toFixed(2)}, na het begin van zijn fragment; hersteld naar ${seg.ankerStart.toFixed(2)}`,
+      });
+      seg.start = seg.ankerStart;
+    }
+  }
 
   // Regel 1: geen knip middenin een woord.
   if (bronWoorden && bronWoorden.length > 0) {
@@ -83,30 +115,51 @@ export function poort(
 
   // Regel 2: geen gedeeld bronmateriaal. De latere staat op zijn plek in het
   // verhaal en blijft heel; de eerdere levert in.
+  //
+  // Maar inleveren mag nooit regel 0 breken. Zou het inkorten het fragment van
+  // een shot halveren, dan vervalt dat shot in zijn geheel. Dat is de juiste
+  // afweging: een cold open die de payoff woord voor woord herhaalt kan alleen
+  // heel of niet — een halve zin als opening is precies de klacht.
+  const vervallen = new Set<number>();
   for (let i = 0; i < uit.length; i++) {
     for (let j = i + 1; j < uit.length; j++) {
       const a = uit[i];
       const b = uit[j];
+      if (vervallen.has(a.volgorde) || vervallen.has(b.volgorde)) continue;
       const overlap = Math.min(a.end, b.end) - Math.max(a.start, b.start);
       if (overlap <= 0.15) continue;
 
-      if (a.start < b.start && b.start - a.start >= 0.8) {
+      const magInkorten =
+        a.start < b.start &&
+        b.start - a.start >= 0.8 &&
+        (a.ankerEind === undefined || b.start >= a.ankerEind - 0.15);
+
+      if (magInkorten) {
         ingrepen.push({
           volgorde: a.volgorde,
           regel: 'overlap',
           wat: `liep ${overlap.toFixed(1)}s in shot ${b.volgorde}; eind → ${b.start.toFixed(2)}`,
         });
         a.end = b.start;
-      } else if (b.end > a.end && b.end - a.end >= 0.8) {
+      } else if (b.end > a.end && b.end - a.end >= 0.8 && (b.ankerStart === undefined || a.end <= b.ankerStart + 0.15)) {
         ingrepen.push({
           volgorde: b.volgorde,
           regel: 'overlap',
           wat: `liep ${overlap.toFixed(1)}s in shot ${a.volgorde}; start → ${a.end.toFixed(2)}`,
         });
         b.start = a.end;
+      } else {
+        // Niet in te korten zonder een zin te halveren: de eerdere vervalt.
+        vervallen.add(a.volgorde);
+        ingrepen.push({
+          volgorde: a.volgorde,
+          regel: 'overlap',
+          wat: `dupliceert shot ${b.volgorde} en is niet in te korten zonder de zin te halveren; vervalt`,
+        });
       }
     }
   }
+  uit = uit.filter((seg) => !vervallen.has(seg.volgorde));
 
   // Regel 3: geldige lengte. Een segment dat door de regels hierboven te kort
   // werd, hoort er niet te zijn — dat is beter dan een flits van een halve

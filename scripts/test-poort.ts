@@ -102,6 +102,27 @@ console.log('keuring komt overeen met de poort');
     `${keurKnippen(na, woorden).detail} | ${keurOverlap(na).detail}`);
 }
 
+console.log('poort — regel 0: een fragment wordt nooit gehalveerd');
+{
+  // Een cold open die op een verzonnen punt is afgekapt: het shot loopt tot
+  // 11.6 terwijl zijn fragment tot 12.3 doorloopt.
+  const tease: Shot = { ...shot(1, 10.0, 11.6), ankerStart: 10.0, ankerEind: 12.3 };
+  const { segmenten, ingrepen } = poort([tease], woorden);
+  toets('herstelt het afgekapte eind', segmenten[0]?.end === 12.3, `eind=${segmenten[0]?.end}`);
+  toets('meldt het als half fragment', ingrepen.some((i) => i.regel === 'halfFragment'));
+}
+{
+  // Dezelfde tease naast de payoff die hetzelfde fragment gebruikt: hij kan
+  // niet ingekort worden zonder de zin te halveren, dus hoort hij te vervallen.
+  const tease: Shot = { ...shot(1, 10.0, 11.6), ankerStart: 10.0, ankerEind: 12.3 };
+  const payoff: Shot = { ...shot(2, 10.0, 12.3), ankerStart: 10.0, ankerEind: 12.3 };
+  const { segmenten } = poort([tease, payoff], woorden);
+  toets('laat de duplicaat vervallen in plaats van halveren', segmenten.length === 1);
+  toets('en houdt de volledige zin over',
+    segmenten[0]?.start === 10.0 && segmenten[0]?.end === 12.3,
+    `${segmenten[0]?.start}-${segmenten[0]?.end}`);
+}
+
 console.log('kadercontrole — een gevolgd shot past over het hele spoor');
 {
   // Spreker staat aan de rechterrand: het kader kan niet verder mee, dus moet

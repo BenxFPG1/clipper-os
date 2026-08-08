@@ -66,6 +66,24 @@ export function keurKnippen(segmenten: Shot[], bronWoorden: BronWoord[] | null):
   };
 }
 
+/** Regel 1b: geen shot bevat maar een deel van zijn scriptfragment. */
+export function keurFragmenten(segmenten: Shot[]): KeuringRegel {
+  const fouten: string[] = [];
+  for (const seg of segmenten) {
+    if (seg.ankerEind !== undefined && seg.end < seg.ankerEind - 0.15) {
+      fouten.push(`shot ${seg.volgorde} mist ${(seg.ankerEind - seg.end).toFixed(1)}s aan het eind`);
+    }
+    if (seg.ankerStart !== undefined && seg.start > seg.ankerStart + 0.15) {
+      fouten.push(`shot ${seg.volgorde} mist ${(seg.start - seg.ankerStart).toFixed(1)}s aan het begin`);
+    }
+  }
+  return {
+    naam: 'hele zinnen',
+    goed: fouten.length === 0,
+    detail: fouten.length === 0 ? 'elk shot bevat zijn volledige scriptfragment' : fouten.join('; '),
+  };
+}
+
 /** Regel 2: geen twee segmenten delen bronmateriaal. */
 export function keurOverlap(segmenten: Shot[]): KeuringRegel {
   const fouten: string[] = [];
@@ -161,8 +179,16 @@ export async function keurGezicht(
     const links = m.x - m.breedte / 2;
     const rechts = m.x + m.breedte / 2;
     const buiten = Math.max(0, -links) + Math.max(0, rechts - 1);
+    // Verticaal net zo streng als horizontaal. Deze toets was bij het
+    // versoepelen van de drempels weggevallen, en precies daar ging het weer
+    // mis: het kader volgde de ooghoogte omlaag terwijl hij vooroverleunde, en
+    // sneed de bovenkant van zijn hoofd af.
+    const buitenV = Math.max(0, -m.top) + Math.max(0, m.top + m.hoogte - 1);
     if (buiten > m.breedte * BUITEN_MAX) {
-      fouten.push(`${tijden[i]}s: ${Math.round((buiten / m.breedte) * 100)}% van het hoofd buiten beeld`);
+      fouten.push(`${tijden[i]}s: ${Math.round((buiten / m.breedte) * 100)}% van het hoofd zijwaarts buiten beeld`);
+    } else if (buitenV > m.hoogte * BUITEN_MAX) {
+      const waar = m.top < 0 ? 'kruin' : 'kin';
+      fouten.push(`${tijden[i]}s: ${waar} buiten beeld (${Math.round((buitenV / m.hoogte) * 100)}%)`);
     } else if (m.breedte < MIN_BREEDTE) {
       fouten.push(`${tijden[i]}s te klein (${Math.round(m.breedte * 100)}%)`);
     }
@@ -290,6 +316,7 @@ export async function keurMontage(
 ): Promise<Keuringsrapport> {
   const regels: KeuringRegel[] = [
     keurKnippen(segmenten, bronWoorden),
+    keurFragmenten(segmenten),
     keurOverlap(segmenten),
     await keurGezicht(montagePad, { ...opties, segmenten }),
     ...(await keurScript(montagePad, segmenten)),

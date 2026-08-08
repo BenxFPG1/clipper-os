@@ -288,6 +288,8 @@ async function verwerk(job: Job) {
               : shot.start,
           end: anker.end !== null ? anker.end + Math.min(0.45, Math.max(0.08, anker.gapNa / 2)) : shot.end,
           exact: beideZeker,
+          ankerStart: anker.start ?? undefined,
+          ankerEind: anker.end ?? undefined,
           zachtBegin: anker.start !== null && anker.gapVoor < 0.18,
           zachtEind: anker.end !== null && anker.gapNa < 0.18,
           planStart: shot.start,
@@ -344,57 +346,23 @@ async function verwerk(job: Job) {
           break;
         }
 
-        // De cold open mag blijven, maar nooit als halve zin. Eerdere pogingen
-        // gebruikten de interpunctie van de transcriptie als zinseinde, en die
-        // zet punten waar de spreker doorpraat. De woordtijden zijn wél
-        // betrouwbaar: een gat van 0,35s of meer tussen twee woorden is een
-        // echte adempauze, en dáár mag de tease eindigen. Vinden we er geen
-        // binnen een korte hook, dan vervalt de audio-hook en draagt de
-        // hooktekst in beeld de belofte.
-        const isOntworpenTease = a.end - a.start <= 4.5;
-        if (isOntworpenTease) {
+        // Een cold open die de payoff herhaalt kan alleen heel of niet. Hem
+        // afkappen op een "zinseinde" uit de transcriptie is geprobeerd en gaf
+        // exact de klacht terug: de opening werd "Het zal goud door die grote
+        // volatiliteit." terwijl die zin doorloopt. Interpunctie uit
+        // spraakherkenning is geen zinseinde.
+        //
+        // Wil je een audio-hook, dan hoort de planner er een korte volledige
+        // zin voor te kiezen (dat staat in zijn opdracht). Is het shot kort
+        // genoeg, dan blijft het staan; anders draagt de hooktekst in beeld de
+        // belofte en klinkt de zin één keer, op zijn plek.
+        if (a.end - a.start <= 4.5) {
           (a as { tease?: boolean }).tease = true;
           continue;
         }
-
-        // Waar mag de cold open eindigen? Bij voorkeur op een adempauze, maar
-        // die zijn zeldzaam: deze spreker praat zonder gaten door (gemeten:
-        // vrijwel elk gat is 0,00s). Een zin die eindigt op een punt en
-        // gevolgd wordt door een hoofdletter is dan de beste beschikbare
-        // grens — de tease stopt op een afgeronde gedachte, niet middenin.
-        let teaseEind: number | null = null;
-        if (bronWoorden) {
-          const grens = a.start + 5.5;
-          let opPauze: number | null = null;
-          let opZin: number | null = null;
-          for (let k = 1; k < bronWoorden.length; k++) {
-            const vorig = bronWoorden[k - 1];
-            const nu = bronWoorden[k];
-            if (vorig.e <= a.start + 1.2 || vorig.e > grens) continue;
-            if (opPauze === null && nu.s - vorig.e >= 0.3) opPauze = vorig.e;
-            // Punt én een hoofdletter erna: twee signalen die samen betrouwbaar
-            // genoeg zijn voor een afgeronde gedachte. Een gat eisen kan niet —
-            // deze spreker heeft er geen.
-            if (opZin === null && /[.!?]$/.test(vorig.w.trim()) && /^[A-ZÀ-Ý]/.test(nu.w.trim())) {
-              opZin = vorig.e;
-            }
-          }
-          teaseEind = opPauze ?? opZin;
-        }
-
-        if (teaseEind !== null) {
-          console.log(
-            `     herhaling: shot ${a.volgorde} en ${b.volgorde} delen ${overlap.toFixed(1)}s bron; ` +
-              `cold open eindigt op een gemeten adempauze na ${(teaseEind - a.start).toFixed(1)}s`,
-          );
-          a.end = teaseEind + 0.1;
-          (a as { tease?: boolean }).tease = true;
-          continue;
-        }
-
         console.log(
-          `     herhaling: shot ${a.volgorde} dupliceert shot ${b.volgorde} en heeft geen adempauze ` +
-            `binnen de cold open; audio-hook vervalt, de hooktekst draagt de belofte`,
+          `     herhaling: shot ${a.volgorde} dupliceert shot ${b.volgorde} en is geen korte volledige ` +
+            `zin; audio-hook vervalt, de hooktekst draagt de belofte`,
         );
         segmenten.splice(i, 1);
         break;
@@ -1235,10 +1203,23 @@ async function meetSpoor(bronPad: string, segmenten: Shot[]): Promise<number> {
       x: (r.meting as { oog?: number } | null)?.oog ?? null,
     }));
     if (oogMetingen.filter((m) => m.x !== null).length >= 2) {
-      seg.spoorY = maakSpoor(oogMetingen).map((punt) => ({
-        t: punt.t,
-        x: Math.min(0.85, Math.max(0.15, punt.x + 0.06)),
-      }));
+      // Elk punt van het verticale spoor zo klemmen dat het hoofd erin past.
+      // Zonder die klem volgt het kader de ooghoogte omlaag als iemand
+      // vooroverleunt, en verdwijnt zijn kruin uit beeld — met een meelopend
+      // kader is dit de enige plek waar dat nog getoetst wordt.
+      const hoogte = seg.gezicht?.hoogte ?? 0.3;
+      const zoomNu = seg.zoom ?? 1;
+      const halfKader = 0.5 / zoomNu;
+      seg.spoorY = maakSpoor(oogMetingen).map((punt) => {
+        const oog = punt.x;
+        const boven = oog - hoogte * 0.42; // kruin
+        const onder = oog + hoogte * 0.62; // kin
+        const minY = onder - halfKader + 0.01;
+        const maxY = boven + halfKader - 0.01;
+        const gewenst = oog + 0.06;
+        const y = maxY >= minY ? Math.min(maxY, Math.max(minY, gewenst)) : (boven + onder) / 2;
+        return { t: punt.t, x: Math.min(0.9, Math.max(0.1, y)) };
+      });
     }
 
     // De kleinste gezichtsbreedte over het hele shot: daar dimensioneert de

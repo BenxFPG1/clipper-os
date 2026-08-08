@@ -58,6 +58,13 @@ export type Shot = {
   planStart?: number;
   planEnd?: number;
   /**
+   * Begin en eind van het scriptfragment zoals teruggevonden in de
+   * brontranscriptie, op het woord nauwkeurig. Dit is de maat voor "de zin is
+   * compleet": eindigt een shot vóór ankerEind, dan is de zin afgekapt.
+   */
+  ankerStart?: number;
+  ankerEind?: number;
+  /**
    * Grenzen komen exact van de brontranscriptie (woordanker). Dan is elke
    * verdere verschuiving per definitie een verslechtering: snap en
    * knipcontrole blijven eraf.
