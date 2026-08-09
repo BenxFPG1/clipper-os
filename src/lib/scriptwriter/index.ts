@@ -9,9 +9,11 @@ import { ONDERZOEK } from '../vault/onderzoek';
 import { EFFECTEN } from '../vault/effecten';
 import { EDITCRAFT } from '../vault/editcraft';
 import { geleerdeKennis } from '../vault/kennis';
+import { SPREEKTAAL } from '../vault/spreektaal';
+import { keurScriptTekst, rapportVoorPrompt, type ScriptPoortRapport } from './poort';
 
 export const SCRIPT_SCHEMA_VERSION = '1.0';
-export const SCRIPT_PROMPT_VERSION = 'script-3.1';
+export const SCRIPT_PROMPT_VERSION = 'script-4.0';
 
 export const scriptSchema = z.object({
   concept: z.string(),
@@ -34,6 +36,14 @@ export const scriptSchema = z.object({
     gesproken: z.string(),
     waarom: z.string(),
   }),
+  /**
+   * De smederij: minstens vijf serieuze hookkandidaten vóór de keuze. Goede
+   * hooks worden niet bedacht maar geselecteerd — wie er maar één schrijft,
+   * kiest per definitie zijn eerste ingeving.
+   */
+  hook_kandidaten: z
+    .array(z.object({ tekst: z.string(), formule: z.string(), waarom_afgevallen: z.string() }))
+    .optional(),
   shotlist: z
     .array(
       z.object({
@@ -63,6 +73,10 @@ export const scriptSchema = z.object({
     .min(2),
   risico: z.enum(['geen', 'check_regels']),
   onderbouwing: z.string(),
+  /** Mechanische keuring; reist mee zodat het dashboard toont waarop getoetst is. */
+  poortrapport: z
+    .object({ goed: z.boolean(), fouten: z.array(z.string()), waarschuwingen: z.array(z.string()) })
+    .optional(),
   /** Ingevuld door de examinatie-pass: wat de eerste versie mankeerde en wat er is verbeterd. */
   zelfkritiek: z
     .object({
@@ -82,7 +96,14 @@ const SCRIPT_SYSTEM = `Je bent scriptschrijver voor short-form video (TikTok, Re
 
 HET BELANGRIJKSTE: elk script is een mini-verhaal, geen opsomming. Je bouwt hem in deze volgorde:
 1. Eerst de verhaallijn: welke belofte doet de hook, welke vraag blijft open tot het einde, in welke stappen loopt de spanning op, en hoe lost de payoff de belofte exact in. Vul dit in het veld "verhaallijn" in VOORDAT je de shotlist schrijft.
-2. Dan pas de shotlist, en elk shot moet een taak hebben in dat verhaal: de spanning verhogen of de belofte inlossen. Een shot dat alleen informatie geeft zonder het verhaal vooruit te duwen, schrap je.
+2. Dan de hook-smederij: schrijf minstens VIJF wezenlijk verschillende hookkandidaten (verschillende formules uit de vault, niet vijf verwoordingen van dezelfde). Zet ze in "hook_kandidaten" met per afvaller waarom hij verliest, en bouw de beste uit tot de definitieve hook. Wie maar één hook schrijft, kiest zijn eerste ingeving.
+3. Dan pas de shotlist, en elk shot moet een taak hebben in dat verhaal: de spanning verhogen of de belofte inlossen. Een shot dat alleen informatie geeft zonder het verhaal vooruit te duwen, schrap je.
+
+HARDE TAALREGELS (mechanisch gecontroleerd — een overtreding komt terug):
+- Elk woord in "gesproken_tekst" is letterlijk uitspreekbaar. Geen placeholders, geen "[FRAGMENT]", geen "[hier het detail]". Ken je het bronmateriaal niet, dan schrijf je een script dat volledig op eigen tekst draait en zet je de fragmentkeuze in "benodigdheden".
+- Woordbudget: maximaal 3 woorden per seconde per shot. Tel na.
+- Nooit aankondigen ("kijk mee", "let op", "je gelooft nooit") en nooit sociale bewijskracht verzinnen die niet in de briefing staat.
+- Schrijf per zin en per shot een re-hook-ritme: elke 7 à 10 seconden gaat er iets nieuws open.
 
 Toets jezelf hierop:
 - Kun je in één zin zeggen wat de kijker aan het einde weet dat hij aan het begin nog niet wist? Zo niet: geen verhaal.
@@ -187,7 +208,7 @@ ${JSON.stringify(brief.campaignRules ?? {}, null, 2)}
 === VAULT (onze gemeten kennis) ===
 ${renderVaultForPrompt(vault)}
 
-${STORYCRAFT}\n\n${STORYSTIJLEN}\n\n${ONDERZOEK}\n\n${EFFECTEN}\n\n${EDITCRAFT}${scoutBlok}${feedbackBlok}${stijlBlok}`,
+${STORYCRAFT}\n\n${SPREEKTAAL}\n\n${STORYSTIJLEN}\n\n${ONDERZOEK}\n\n${EFFECTEN}\n\n${EDITCRAFT}${scoutBlok}${feedbackBlok}${stijlBlok}`,
     schema: scriptSchema,
     toolName: 'lever_script',
     toolDescription: 'Lever het volledige script voor deze briefing.',
@@ -195,6 +216,17 @@ ${STORYCRAFT}\n\n${STORYSTIJLEN}\n\n${ONDERZOEK}\n\n${EFFECTEN}\n\n${EDITCRAFT}$
     effort: SCRIPT_EFFORT,
     operation: 'scriptwriter',
   });
+
+  // De scriptpoort tussen concept en examen: mechanische fouten (placeholders,
+  // woordbudget, aankondigingen) worden geméten en gaan als verhoorpunten mee.
+  // De examinator oordeelt goed over verhaal, maar liet precies deze telbare
+  // fouten door — er is een script goedgekeurd waarvan de payoff letterlijk
+  // "[DE ZIN]" was.
+  const conceptRapport = keurScriptTekst(concept, {
+    duurSeconden: brief.duurSeconden,
+    briefing: brief.briefing,
+  });
+  const poortBlok = rapportVoorPrompt(conceptRapport);
 
   // Examinatie-pass: het concept wordt verhoord op zijn keuzes en herschreven
   // waar het faalt, vóórdat er iets naar buiten gaat. Twee ronden kosten twee
@@ -211,7 +243,7 @@ ${brief.briefing}
 === CAMPAGNEREGELS ===
 ${JSON.stringify(brief.campaignRules ?? {}, null, 2)}
 
-${STORYCRAFT}\n\n${STORYSTIJLEN}\n\n${ONDERZOEK}\n\n${EFFECTEN}\n\n${EDITCRAFT}${feedbackBlok}${stijlBlok}`,
+${STORYCRAFT}\n\n${SPREEKTAAL}\n\n${STORYSTIJLEN}\n\n${ONDERZOEK}\n\n${EFFECTEN}\n\n${EDITCRAFT}${feedbackBlok}${poortBlok}${stijlBlok}`,
     schema: scriptSchema,
     toolName: 'lever_verbeterd_script',
     toolDescription: 'Lever het volledige verbeterde script inclusief zelfkritiek.',
@@ -219,6 +251,15 @@ ${STORYCRAFT}\n\n${STORYSTIJLEN}\n\n${ONDERZOEK}\n\n${EFFECTEN}\n\n${EDITCRAFT}$
     effort: SCRIPT_EXAMEN_EFFORT,
     operation: 'scriptwriter_examen',
   });
+
+  // Eindkeuring: het rapport reist mee met het script. Staan er dan nóg harde
+  // fouten in, dan is dat zichtbaar in plaats van stil — en de volgende
+  // verbeterronde weet precies waar hij moet beginnen.
+  const eindRapport: ScriptPoortRapport = keurScriptTekst(script, {
+    duurSeconden: brief.duurSeconden,
+    briefing: brief.briefing,
+  });
+  script.poortrapport = eindRapport;
 
   return { script, vaultSnapshot: vault };
 }
