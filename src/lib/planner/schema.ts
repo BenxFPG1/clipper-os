@@ -1,8 +1,8 @@
 import { z } from 'zod';
 
 export const SCHEMA_VERSION = '1.0';
-export const PROMPT_VERSION_CHARACTER_MAP = 'charmap-1.0';
-export const PROMPT_VERSION_PLAN = 'plan-2.2';
+export const PROMPT_VERSION_CHARACTER_MAP = 'charmap-2.0';
+export const PROMPT_VERSION_PLAN = 'plan-3.0';
 
 // ------------------------------------------------------- stap 1: character map
 export const sleutelmomentSchema = z.object({
@@ -20,8 +20,22 @@ export const persoonSchema = z.object({
   ironie: z.string(),
 });
 
+/**
+ * Verhaalwaardige momenten uit gespreksmateriaal (podcasts, interviews):
+ * het letterlijke citaat is verplicht, want dat citaat wordt later de hook of
+ * de payoff van een clip — een parafrase is daar onbruikbaar voor.
+ */
+export const vondstSchema = z.object({
+  soort: z.enum(['claim', 'anekdote', 'bekentenis', 'botsing', 'getal', 'ontweken_vraag', 'callback']),
+  start: z.number(),
+  end: z.number(),
+  citaat: z.string().min(10),
+  waarom: z.string(),
+});
+
 export const characterMapSchema = z.object({
   personen: z.array(persoonSchema).min(1),
+  vondsten: z.array(vondstSchema).optional(),
   spanningslijnen: z.array(
     z.object({
       beschrijving: z.string(),
@@ -59,11 +73,43 @@ export const clipSchema = z.object({
   structure_type: z.string(),
   prioriteit: z.number().int().min(1),
   verwachte_sterkte: z.enum(['hoog', 'midden', 'vulling']),
+  /**
+   * De verhaallijn vóór de shots — dezelfde discipline die de scriptwriter
+   * beter maakte. Zonder expliciete belofte, open vraag, escalatie en payoff
+   * is een clip een fragment, geen verhaal; het schema dwingt af dat de
+   * planner dit eerst bouwt en er dan pas shots bij zoekt.
+   */
+  verhaallijn: z.object({
+    belofte: z.string().min(10),
+    open_vraag: z.string().min(10),
+    escalatie: z.array(z.string()).min(2),
+    payoff: z.string().min(10),
+  }),
   hook: z.object({
     type: z.string(),
     tekst_overlay: z.string(),
     gesproken_start: z.string(),
   }),
+  /**
+   * Drie hooks per verhaallijn: de gekozen winnaar (identiek aan "hook")
+   * plus twee volwaardige alternatieven uit ándere formules. Elke hook is
+   * meteen een publiceerbare variant van dezelfde clip — drie kansen op
+   * dezelfde montage.
+   */
+  hooks: z
+    .array(
+      z.object({
+        type: z.string(),
+        tekst_overlay: z.string(),
+        gesproken_start: z.string(),
+        waarom: z.string(),
+      }),
+    )
+    .min(3),
+  /** Uit de retentie-simulatie van het examen: waar swipet iemand weg, en wat is daaraan gedaan. */
+  uitval_risicos: z
+    .array(z.object({ seconde: z.number(), waarom: z.string(), fix: z.string() }))
+    .optional(),
   context_kaart: z.string().nullable(),
   shots: z.array(shotSchema).min(1),
   caption: z.object({

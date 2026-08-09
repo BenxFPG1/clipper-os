@@ -8,12 +8,13 @@ import { STORYSTIJLEN } from '../vault/storystijlen';
 import { ONDERZOEK } from '../vault/onderzoek';
 import { EFFECTEN } from '../vault/effecten';
 import { EDITCRAFT } from '../vault/editcraft';
+import { TranscriptSegment, renderTranscript } from '../ingest/transcript';
 import { geleerdeKennis } from '../vault/kennis';
 import { SPREEKTAAL } from '../vault/spreektaal';
 import { keurScriptTekst, rapportVoorPrompt, type ScriptPoortRapport } from './poort';
 
 export const SCRIPT_SCHEMA_VERSION = '1.0';
-export const SCRIPT_PROMPT_VERSION = 'script-4.0';
+export const SCRIPT_PROMPT_VERSION = 'script-5.0';
 
 export const scriptSchema = z.object({
   concept: z.string(),
@@ -77,6 +78,14 @@ export const scriptSchema = z.object({
   poortrapport: z
     .object({ goed: z.boolean(), fouten: z.array(z.string()), waarschuwingen: z.array(z.string()) })
     .optional(),
+  /**
+   * Retentie-simulatie uit het examen: de momenten waar een scrollende kijker
+   * het waarschijnlijkst wegswipet, met per moment de reden en wat eraan
+   * gedaan is. Een risico zonder fix hoort het examen niet te overleven.
+   */
+  uitval_risicos: z
+    .array(z.object({ seconde: z.number(), waarom: z.string(), fix: z.string() }))
+    .optional(),
   /** Ingevuld door de examinatie-pass: wat de eerste versie mankeerde en wat er is verbeterd. */
   zelfkritiek: z
     .object({
@@ -101,6 +110,7 @@ HET BELANGRIJKSTE: elk script is een mini-verhaal, geen opsomming. Je bouwt hem 
 
 HARDE TAALREGELS (mechanisch gecontroleerd — een overtreding komt terug):
 - Elk woord in "gesproken_tekst" is letterlijk uitspreekbaar. Geen placeholders, geen "[FRAGMENT]", geen "[hier het detail]". Ken je het bronmateriaal niet, dan schrijf je een script dat volledig op eigen tekst draait en zet je de fragmentkeuze in "benodigdheden".
+- Krijg je BRONMATERIAAL (letterlijke transcripten) mee en gaat de briefing over dat materiaal, dan citeer je LETTERLIJK: de gesproken tekst van zo'n shot is woord voor woord wat er in het transcript staat, met de tijdcode in de edit_notitie ([123-131]). Een citaat parafraseren of "ongeveer zoiets" opschrijven is verzinnen — de sterkste zin is altijd de zin die er echt staat. Gaat de briefing niet over het bronmateriaal, dan negeer je het.
 - Woordbudget: maximaal 3 woorden per seconde per shot. Tel na.
 - Nooit aankondigen ("kijk mee", "let op", "je gelooft nooit") en nooit sociale bewijskracht verzinnen die niet in de briefing staat.
 - Schrijf per zin en per shot een re-hook-ritme: elke 7 à 10 seconden gaat er iets nieuws open.
@@ -131,7 +141,9 @@ Werkwijze, in deze volgorde:
 3. STIJLREGELS: toets het concept tegen de harde regels van de gekozen stijl, inclusief de genoemde valkuil. Elke overtreding herstel je.
 4. STORYCRAFT: toets op de algemene regels — één spanningslijn; "maar/dus" tussen elke twee shots; escalatie per stap; payoff lost de belofte van de hook letterlijk in; niets na de payoff.
 5. BRIEFING EN CAMPAGNEREGELS: klopt het nog met wat er gevraagd is?
-6. Lever het VOLLEDIGE verbeterde script en vul "zelfkritiek" in: de stijl waartegen je toetste, je oordeel over die stijlkeuze, het zwakste punt van het concept, de verhoorde keuzes met oordeel, en wat je verbeterd hebt.
+6. CITATEN: staat er bronmateriaal bij deze opdracht, controleer dan elk citaat woord voor woord tegen het transcript. Een citaat dat er niet letterlijk in staat vervang je door de zin die er wél staat (met tijdcode in de edit_notitie), of je herschrijft het shot als eigen tekst.
+7. RETENTIE-SIMULATIE: speel het script af als iemand die scrolt en niets van deze video weet. Loop het seconde voor seconde langs en benoem de twee of drie momenten waar wegswipen het waarschijnlijkst is — met tijdstip en reden (belofte nog niet ingelost, geen nieuwe informatie, zin te lang, spanning gezakt). Zet ze in "uitval_risicos" en herstel elk moment in het script zelf: re-hook ernaartoe, dode seconden schrappen, detail naar voren. De "fix" beschrijft wat je veranderd hebt, niet wat er zou moeten.
+8. Lever het VOLLEDIGE verbeterde script en vul "zelfkritiek" in: de stijl waartegen je toetste, je oordeel over die stijlkeuze, het zwakste punt van het concept, de verhoorde keuzes met oordeel, en wat je verbeterd hebt.
 
 Elke aanmerking verwijst naar een regel uit de kaders, niet naar een gevoel. Een middelmatig script doorlaten kost echte views.`;
 
@@ -153,7 +165,7 @@ export type BriefInput = {
 export async function generateScript(
   brief: BriefInput,
   eerdereFeedback: { script: unknown; feedback: string }[] = [],
-  opties: { vermijdStijlen?: string[] } = {},
+  opties: { vermijdStijlen?: string[]; bronTranscripten?: string } = {},
 ): Promise<{ script: Script; vaultSnapshot: unknown }> {
   const vault = await loadVault({ platform: brief.platform, theme: brief.theme });
 
@@ -192,6 +204,13 @@ export async function generateScript(
 
   const bijgeleerd = await geleerdeKennis();
 
+  // Bestaand materiaal reist als letterlijk transcript mee. Zonder dit blok
+  // schrijft de agent om de bron heen ("dan zegt hij iets over geld") in
+  // plaats van de echte zin te pakken — en de echte zin is altijd sterker.
+  const bronBlok = opties.bronTranscripten
+    ? `\n\n=== BRONMATERIAAL (letterlijke transcripten, formaat [start-eind] tekst) ===\nCiteer hieruit letterlijk als de briefing over dit materiaal gaat; tijdcode in de edit_notitie.\n${opties.bronTranscripten}`
+    : '';
+
   const concept = await structuredCall({
     system: SCRIPT_SYSTEM + bijgeleerd,
     user: `=== BRIEFING ===
@@ -208,7 +227,7 @@ ${JSON.stringify(brief.campaignRules ?? {}, null, 2)}
 === VAULT (onze gemeten kennis) ===
 ${renderVaultForPrompt(vault)}
 
-${STORYCRAFT}\n\n${SPREEKTAAL}\n\n${STORYSTIJLEN}\n\n${ONDERZOEK}\n\n${EFFECTEN}\n\n${EDITCRAFT}${scoutBlok}${feedbackBlok}${stijlBlok}`,
+${STORYCRAFT}\n\n${SPREEKTAAL}\n\n${STORYSTIJLEN}\n\n${ONDERZOEK}\n\n${EFFECTEN}\n\n${EDITCRAFT}${scoutBlok}${bronBlok}${feedbackBlok}${stijlBlok}`,
     schema: scriptSchema,
     toolName: 'lever_script',
     toolDescription: 'Lever het volledige script voor deze briefing.',
@@ -243,7 +262,7 @@ ${brief.briefing}
 === CAMPAGNEREGELS ===
 ${JSON.stringify(brief.campaignRules ?? {}, null, 2)}
 
-${STORYCRAFT}\n\n${SPREEKTAAL}\n\n${STORYSTIJLEN}\n\n${ONDERZOEK}\n\n${EFFECTEN}\n\n${EDITCRAFT}${feedbackBlok}${poortBlok}${stijlBlok}`,
+${STORYCRAFT}\n\n${SPREEKTAAL}\n\n${STORYSTIJLEN}\n\n${ONDERZOEK}\n\n${EFFECTEN}\n\n${EDITCRAFT}${bronBlok}${feedbackBlok}${poortBlok}${stijlBlok}`,
     schema: scriptSchema,
     toolName: 'lever_verbeterd_script',
     toolDescription: 'Lever het volledige verbeterde script inclusief zelfkritiek.',
@@ -298,6 +317,11 @@ export async function runScriptwriterForBrief(briefId: string, aantal = 1) {
   };
   const feedback = (eerdere ?? []).map((e) => ({ script: e.script, feedback: e.feedback as string }));
 
+  // Transcripten van de campagnevideo's gaan mee als bronmateriaal, zodat de
+  // agent echte citaten gebruikt in plaats van eromheen te schrijven. Gecapt:
+  // een podcast van twee uur past niet naast de rest van de prompt.
+  const bronTranscripten = brief.campaign_id ? await haalBronTranscripten(brief.campaign_id) : undefined;
+
   const resultaten: { scriptId: string; script: Script }[] = [];
   const gebruikteStijlen: string[] = [];
 
@@ -306,6 +330,7 @@ export async function runScriptwriterForBrief(briefId: string, aantal = 1) {
   for (let i = 0; i < Math.max(1, Math.min(aantal, 11)); i++) {
     const { script, vaultSnapshot } = await generateScript(input, feedback, {
       vermijdStijlen: gebruikteStijlen,
+      bronTranscripten,
     });
 
     const stijl = script.zelfkritiek?.stijl;
@@ -327,4 +352,29 @@ export async function runScriptwriterForBrief(briefId: string, aantal = 1) {
   }
 
   return { scriptId: resultaten[0].scriptId, script: resultaten[0].script, varianten: resultaten };
+}
+
+/** Maximaal aantal tekens bronmateriaal in de prompt; ~90 minuten spraak. */
+const BRON_MAX_TEKENS = 60000;
+
+async function haalBronTranscripten(campaignId: string): Promise<string | undefined> {
+  const { data: videos } = await db()
+    .from('videos')
+    .select('title, transcript')
+    .eq('campaign_id', campaignId)
+    .not('transcript', 'is', null)
+    .order('created_at', { ascending: false })
+    .limit(5);
+  if (!videos || videos.length === 0) return undefined;
+
+  const blokken: string[] = [];
+  let over = BRON_MAX_TEKENS;
+  for (const video of videos) {
+    if (over <= 0) break;
+    const tekst = renderTranscript((video.transcript ?? []) as TranscriptSegment[]);
+    const deel = tekst.length > over ? `${tekst.slice(0, over)}\n[transcript afgekapt]` : tekst;
+    blokken.push(`--- ${video.title} ---\n${deel}`);
+    over -= deel.length;
+  }
+  return blokken.join('\n\n');
 }

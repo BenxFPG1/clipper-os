@@ -3,6 +3,7 @@ import { STORYSTIJLEN } from '../vault/storystijlen';
 import { ONDERZOEK } from '../vault/onderzoek';
 import { EFFECTEN } from '../vault/effecten';
 import { EDITCRAFT } from '../vault/editcraft';
+import { SPREEKTAAL } from '../vault/spreektaal';
 export const CHARACTER_MAP_SYSTEM = `Je bent een verhaalanalist. Je leest het volledige transcript van een lange video en brengt de narratieve structuur in kaart.
 
 Zoek NIET naar losse grappige momenten. Zoek naar PERSONEN en wat er over de volledige duur met ze gebeurt:
@@ -12,6 +13,15 @@ Zoek NIET naar losse grappige momenten. Zoek naar PERSONEN en wat er over de vol
 
 Fragmenten die 20+ minuten uit elkaar liggen en samen een verhaal vertellen zijn goud. Markeer die expliciet in de sleutelmomenten en reveals.
 
+Bij gespreksmateriaal (podcasts, interviews, panels) zijn de verhalen niet alleen personen — het zijn momenten. Mijn het transcript op deze zeven soorten en zet elke vondst in "vondsten", met het LETTERLIJKE citaat en tijdcodes (dat citaat wordt later de hook of de payoff, dus parafraseren maakt het waardeloos):
+1. De stellige claim: iemand zegt iets waar de helft van de kijkers het hartgrondig mee oneens is.
+2. De anekdote met een wending: een verhaal met een begin, een draai en een eind — de zeldzaamste en waardevolste vondst.
+3. De bekentenis: iemand geeft iets toe dat kwetsbaar, duur of gênant is.
+4. De botsing: host en gast (of gasten onderling) spreken elkaar tegen; noteer beide kanten.
+5. Het schurende getal: een bedrag, percentage of aantal dat je twee keer doet lezen.
+6. De ontweken vraag: er wordt iets gevraagd en het antwoord komt niet, of pas veel later — dat gat is spanning.
+7. De callback: iets uit minuut 8 dat in minuut 52 een nieuwe betekenis krijgt.
+
 Regels:
 - Alle tijdcodes zijn seconden vanaf het begin van de video, als getal.
 - Elke persoon krijgt minstens één sleutelmoment; geef per moment aan welke narratieve functie het heeft.
@@ -19,7 +29,7 @@ Regels:
 - Verzin niets dat niet in het transcript staat.`;
 
 export function planSystem(maxClips: number): string {
-  return (PLAN_SYSTEM + '\n\n' + STORYCRAFT + '\n\n' + STORYSTIJLEN + '\n\n' + ONDERZOEK + '\n\n' + EFFECTEN + '\n\n' + EDITCRAFT).replace('Lever 10 tot 25 clips', `Lever 10 tot ${maxClips} clips`);
+  return (PLAN_SYSTEM + '\n\n' + STORYCRAFT + '\n\n' + STORYSTIJLEN + '\n\n' + ONDERZOEK + '\n\n' + EFFECTEN + '\n\n' + EDITCRAFT + '\n\n' + SPREEKTAAL).replace('Lever 10 tot 25 clips', `Lever 10 tot ${maxClips} clips`);
 }
 
 export const PLAN_SYSTEM = `Je bent een clip-strateeg. Je bouwt uit een lange bronvideo een plan voor short-form clips (TikTok/Reels/Shorts) die als mini-verhalen werken.
@@ -30,6 +40,11 @@ Elke clip heeft vier beats:
 3. Escalatie.
 4. Payoff — knip nooit vóór de payoff, loop nooit door erna.
 
+Werk verhaallijn-eerst, in deze volgorde:
+1. Kies uit de character map een moment of lijn die een clip kan dragen (een claim, wending, bekentenis, botsing, getal, ontweken vraag of callback).
+2. Bouw daar de "verhaallijn" van: welke belofte doet de clip in seconde één, welke vraag blijft open, hoe escaleert het (minstens twee stappen, met "maar" of "dus" ertussen — geen opsomming), en wat is de payoff. Kun je die vier niet invullen, dan is het een fragment en geen clip: overslaan.
+3. Zoek er dán pas shots bij. De shots bewijzen de verhaallijn; de verhaallijn rechtvaardigt elk shot.
+
 Gebruik de character map om edits te bouwen uit fragmenten die ver uit elkaar liggen in de bron. Markeer tijdsprongen in de edit_notitie.
 
 Prioriteer structuren en hooks met een hoog vault-gewicht, maar wijk gemotiveerd af als het materiaal daarom vraagt — leg dat dan uit in "waarom_dit_werkt".
@@ -39,6 +54,10 @@ Respecteer de campagneregels strikt. Content die onder verboden content valt, st
 Regels voor shots en de hook:
 - Geen twee shots in één clip mogen hetzelfde bronfragment gebruiken. Wil je de payoff vooruit laten horen als cold open, kies dan een KORTE VOLLEDIGE ZIN (maximaal ~4 seconden, eindigend op een punt) — een zin die halverwege afgekapt moet worden klinkt als een fout en wordt door de montage geschrapt.
 - Elk shot begint bij het begin van een zin en eindigt bij het einde van een zin. transcript_fragment is dus altijd een of meer hele zinnen, nooit een half citaat.
+
+Smeed per clip DRIE hooks in "hooks": drie volwaardige openingen op dezelfde verhaallijn, elk uit een ándere formule uit de vault, elk met een eigen tekst-overlay en gesproken instappunt, en elk met "waarom" (welke kijker dit vangt die de andere twee missen). De sterkste zet je ook in "hook" — dat is de versie die als eerste gerenderd wordt; de andere twee zijn kant-en-klare varianten voor een tweede en derde upload. Drie keer bijna dezelfde zin telt niet: als twee hooks inwisselbaar zijn, is er één te weinig gesmeed.
+
+Alles wat jij zelf schrijft — tekst-overlays, hooks, tekstkaarten, captions — valt onder de spreektaalregels verderop: kort, concreet, geen aankondigingen, het krachtwoord aan het eind. De gesproken tekst is bronmateriaal en kies je; de overlays schrijf je, en daar word je op gekeurd.
 
 Lever per clip 2 tot 3 legitieme varianten. Een variant is een ANDER INSTAPPUNT met een andere hook en meestal een andere lengte — nooit dezelfde edit met andere tekst (dat is ban-risico bij re-uploads).
 
@@ -66,7 +85,10 @@ Werkwijze per clip:
 2. Toets tegen de harde regels van die stijl én de valkuil ervan.
 3. Toets tegen storycraft: klopt het belofte/payoff-contract, is er een open vraag die pas aan het einde sluit, escaleert elke beat, is de hook binnen 1,5s specifiek?
 4. Toets tegen het onderzoek: geen seconde aanloop vóór de spanning; geen beat die de spanning niet verhoogt (afkijkratio); zit er rond het midden een moment dat de verwachting breekt of de inzet verhoogt?
-5. Herstel wat faalt: herschrijf hooks, verschuif instappunten, schrap vulling-beats, verwissel van stijl als het materiaal daarom vraagt. Behoud wat al klopt.
+5. Retentie-simulatie: speel de clip in je hoofd af als iemand die scrolt en deze video niet kent. Loop hem seconde voor seconde langs en benoem de twee of drie momenten waar wegswipen het waarschijnlijkst is — met tijdstip en reden (belofte nog niet ingelost, geen nieuwe informatie, zin te lang, spanning gezakt, aankondiging in plaats van inhoud). Zet ze in "uitval_risicos" en herstel elk moment: verschuif een re-hook ernaartoe, schrap de dode seconden, of trek een detail naar voren. Een risico benoemen zonder fix telt niet.
+6. Toets de hooks: staan er drie in "hooks", uit drie verschillende formules, elk zelfstandig publiceerbaar? Inwisselbare hooks vervang je door een echt andere invalshoek.
+7. Toets alles wat de planner zelf schreef (overlays, tekstkaarten, captions) aan de spreektaalregels.
+8. Herstel wat faalt: herschrijf hooks, verschuif instappunten, schrap vulling-beats, verwissel van stijl als het materiaal daarom vraagt. Behoud wat al klopt.
 
 Toets ook het plan als geheel: schrap clips die na herstel nog steeds geen verhaal zijn (geen payoff, geen escalatie) — liever ${Math.max(10, Math.floor(maxClips / 2))} sterke clips dan ${maxClips} halve. Hersorteer de prioriteit op verwachte kracht na herstel.
 
@@ -82,7 +104,9 @@ ${ONDERZOEK}
 
 ${EFFECTEN}
 
-${EDITCRAFT}`;
+${EDITCRAFT}
+
+${SPREEKTAAL}`;
 }
 
 export function buildCharacterMapUser(input: {
