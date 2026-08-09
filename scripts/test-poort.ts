@@ -197,5 +197,18 @@ console.log('kadering centreert op het focuspunt, ook aan de rand');
     Math.abs((midden.x0 + midden.x1) / 2 - 0.5) < 0.001);
 }
 
+console.log('poort staat tussen elke correctie en de render');
+{
+  // Een correctielus die een grens verzet mag niet om de regels heen: de
+  // poort hoort dat bij de volgende doorloop recht te trekken.
+  const na: Shot = { ...shot(1, 10.0, 12.3), ankerStart: 10.0, ankerEind: 12.3 };
+  const eerste = poort([na], woorden).segmenten[0];
+  // Correctielus verzet de start naar binnen (zoals de aanloopcorrectie deed).
+  eerste.start = 10.3;
+  const tweede = poort([eerste], woorden).segmenten[0];
+  toets('herstelt een grens die na de eerste doorloop verzet is',
+    tweede.start <= 10.05, `start=${tweede.start}`);
+}
+
 console.log(`\n${gedaan - gefaald}/${gedaan} geslaagd`);
 process.exit(gefaald === 0 ? 0 : 1);

@@ -731,6 +731,22 @@ async function verwerk(job: Job) {
     let beeldRondeGedaan = false;
     let keuringsuitslag: Awaited<ReturnType<typeof keurMontage>> | null = null;
     for (let poging = 1; poging <= 4; poging++) {
+    // De poort staat vóór élke render, niet alleen vóór de eerste. De
+    // correctielussen hieronder (aanloop, ontbrekend fragment, beeldcontrole)
+    // verzetten grenzen ná de eerste poortdoorloop, en gingen daarmee om de
+    // regels heen — de keuring ving dat: "shot 2 start in ik" na een correctie
+    // die de eerste render nog wél netjes had. Geen weg naar de renderer
+    // omheen betekent: ook niet via een tweede poging.
+    {
+      const her = poort(segmenten, bronWoorden);
+      for (const ing of her.ingrepen) {
+        console.log(`     POORT (ronde ${poging}) shot ${ing.volgorde} [${ing.regel}]: ${ing.wat}`);
+      }
+      if (her.segmenten.length !== segmenten.length) {
+        segmenten.length = 0;
+        segmenten.push(...her.segmenten);
+      }
+    }
     montage = await maakRuweMontage({
       sourceUrl: video.source_url,
       shots: segmenten,

@@ -190,6 +190,11 @@ export async function maakRuweMontage(opties: {
   // naar het fragment in plaats van de hele video te decoderen (dat werd op de
   // runner afgeschoten). Per shot een eigen kaderketen: focuspunt en punch-in
   // verschillen per shot.
+  // Hoe lang de audio van twee shots over elkaar heen loopt. 0,14s is de
+  // vuistregel uit de montagepraktijk: lang genoeg om een harde overgang te
+  // verzachten, kort genoeg om geen echo of dubbele stem te horen.
+  const OVERLAP = Number(process.env.CROSSFADE ?? 0.14);
+
   const invoer: string[] = [];
   const delenFilter: string[] = [];
   let vorigeZoom = 1;
@@ -259,28 +264,57 @@ export async function maakRuweMontage(opties: {
       focusYExpr: spoorYRel ? (spoorExpressie(spoorYRel) ?? undefined) : undefined,
     });
     const effect = effectKeten(shot.beeld_effect, duur);
+    // Twee invoeren per shot: beeld precies op de knip, geluid met handles
+    // eromheen. Die handles zijn wat een crossfade mogelijk maakt — zonder
+    // materiaal vóór en ná het knippunt valt er niets te vervlechten en blijft
+    // het een harde overgang met een fade eroverheen.
+    //
+    // Alleen aan de kanten waar een naad zit: het begin van de clip en het
+    // einde blijven exact staan, zodat de totale lengte gelijk blijft aan de
+    // som van de shots en beeld en geluid synchroon blijven.
+    const handleVoor = i === 0 ? 0 : OVERLAP / 2;
+    const handleNa = i === gesorteerd.length - 1 ? 0 : OVERLAP / 2;
     invoer.push('-ss', shot.start.toFixed(3), '-t', duur.toFixed(3), '-i', bronBestand);
-    delenFilter.push(
-      `[${i}:v]setpts=PTS-STARTPTS,fps=30,${paneelKnip}${keten}${effect ? `,${effect}` : ''},setsar=1[v${i}]`,
+    invoer.push(
+      '-ss', Math.max(0, shot.start - handleVoor).toFixed(3),
+      '-t', (duur + handleVoor + handleNa).toFixed(3),
+      '-i', bronBestand,
     );
-    // Naadfades. Normaal 12ms — net genoeg om een klik te voorkomen. Kon de
-    // knipcontrole geen pauze vinden, dan valt de knip middenin spraak en helpt
-    // een langere fade: 70ms klinkt als een zachte overgang in plaats van een
-    // afgebroken woord.
-    // Zit er geen stilte naast de knip, dan verzacht een langere fade de
-    // overgang. 0,09s valt binnen de natuurlijke uitklank van een woord: lang
-    // genoeg om het abrupte eraf te halen, kort genoeg om niet te horen als
-    // een wegdraaiend volume.
-    const fadeIn = shot.zachtBegin ? 0.09 : 0.012;
-    const fadeUit = shot.zachtEind ? 0.09 : 0.012;
     delenFilter.push(
-      `[${i}:a]asetpts=PTS-STARTPTS,` +
-        `afade=t=in:st=0:d=${fadeIn},afade=t=out:st=${Math.max(0, duur - fadeUit).toFixed(3)}:d=${fadeUit},` +
-        `aformat=sample_rates=48000:channel_layouts=stereo[a${i}]`,
+      `[${i * 2}:v]setpts=PTS-STARTPTS,fps=30,${paneelKnip}${keten}${effect ? `,${effect}` : ''},setsar=1[v${i}]`,
+    );
+    // Per-shot fades zijn niet meer nodig: de crossfade hieronder vervlecht de
+    // naden. Alleen een minimale fade aan de buitenranden van de clip blijft,
+    // tegen een klik bij het starten en stoppen.
+
+    delenFilter.push(
+      `[${i * 2 + 1}:a]asetpts=PTS-STARTPTS,aformat=sample_rates=48000:channel_layouts=stereo[a${i}]`,
     );
   });
-  const koppel = gesorteerd.map((_, i) => `[v${i}][a${i}]`).join('');
-  let filter = `${delenFilter.join(';')};${koppel}concat=n=${gesorteerd.length}:v=1:a=1[vuit][aruw]`;
+
+  // Beeld: harde knip, want dat is wat een montage hoort te doen. Geluid:
+  // crossfade, zodat het laatste woord uitklinkt ónder het eerste woord van
+  // het volgende shot in plaats van dicht te klappen.
+  //
+  // De lengte klopt vanzelf. Elk shot behalve het eerste en laatste is aan
+  // beide kanten een halve overlap langer; de crossfades consumeren precies
+  // die extra lengte weer, dus het geluid duurt exact even lang als het beeld.
+  const beeldKoppel = gesorteerd.map((_, i) => `[v${i}]`).join('');
+  let filter = `${delenFilter.join(';')};${beeldKoppel}concat=n=${gesorteerd.length}:v=1:a=0[vuit]`;
+
+  if (gesorteerd.length === 1) {
+    filter += `;[a0]anull[aruw]`;
+  } else {
+    let vorigLabel = 'a0';
+    for (let i = 1; i < gesorteerd.length; i++) {
+      const uitLabel = i === gesorteerd.length - 1 ? 'aruw' : `ax${i}`;
+      // Driehoekig in- en uitfaden: samen houden die de luidheid over de naad
+      // constant, waar een gelijkmatige curve een dipje in het midden geeft.
+      filter +=
+        `;[${vorigLabel}][a${i}]acrossfade=d=${OVERLAP.toFixed(3)}:c1=tri:c2=tri[${uitLabel}]`;
+      vorigLabel = uitLabel;
+    }
+  }
 
   // Spraak schoonmaken. Ruisonderdrukking (afftdn) is een grof middel: op
   // schone studio-audio hoor je hem als een blikkerig, onderwaterachtig randje
@@ -311,7 +345,9 @@ export async function maakRuweMontage(opties: {
   }
 
   const extraInvoer: string[] = [];
-  let extraIndex = gesorteerd.length;
+  // Twee invoeren per shot (beeld en geluid), dus de extra invoeren — muziek,
+  // sfx, tekstkaarten — beginnen op het dubbele.
+  let extraIndex = gesorteerd.length * 2;
 
   if (opties.muziekPad && existsSync(opties.muziekPad)) {
     // Het bed net zo vaak herhalen als nodig en dan hard afkappen. Met
