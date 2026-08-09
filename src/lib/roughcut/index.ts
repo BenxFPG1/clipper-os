@@ -267,8 +267,12 @@ export async function maakRuweMontage(opties: {
     // knipcontrole geen pauze vinden, dan valt de knip middenin spraak en helpt
     // een langere fade: 70ms klinkt als een zachte overgang in plaats van een
     // afgebroken woord.
-    const fadeIn = shot.zachtBegin ? 0.07 : 0.012;
-    const fadeUit = shot.zachtEind ? 0.07 : 0.012;
+    // Zit er geen stilte naast de knip, dan verzacht een langere fade de
+    // overgang. 0,09s valt binnen de natuurlijke uitklank van een woord: lang
+    // genoeg om het abrupte eraf te halen, kort genoeg om niet te horen als
+    // een wegdraaiend volume.
+    const fadeIn = shot.zachtBegin ? 0.09 : 0.012;
+    const fadeUit = shot.zachtEind ? 0.09 : 0.012;
     delenFilter.push(
       `[${i}:a]asetpts=PTS-STARTPTS,` +
         `afade=t=in:st=0:d=${fadeIn},afade=t=out:st=${Math.max(0, duur - fadeUit).toFixed(3)}:d=${fadeUit},` +
@@ -648,6 +652,21 @@ function vulZoom(focusW?: number): number {
  * het kader loopt toch mee, dus de enige vraag is of de spreker ook op zijn
  * verste moment groot in beeld staat. Zonder spoor geldt het bewegingsplafond.
  */
+/**
+ * De kleinste zoom waarbij het kader nog op dit punt kán centreren.
+ *
+ * Tegen-intuïtief maar meetkundig onvermijdelijk: hoe verder de spreker naar de
+ * rand staat, hoe verder je moet ínzoomen om hem in het midden te krijgen. De
+ * uitsnede is dan smaller en past dichter tegen de rand. Bij zoom 1 beslaat hij
+ * een derde van de breedte en kan het midden dus nooit voorbij 0,84 komen;
+ * staat de spreker op 0,9, dan is zoom 1,58 het minimum.
+ */
+function centreerbaarVanaf(focusX: number): number {
+  const rand = Math.min(focusX, 1 - focusX);
+  if (rand <= 0.01) return 1.7;
+  return Math.min(1.7, (1080 / (1920 * (16 / 9))) / (2 * rand));
+}
+
 export function basisZoom(shot: Shot): number {
   const paneelBreed = shot.paneel ? shot.paneel[1] - shot.paneel[0] : 1;
   const inPaneel = (b?: number) => (b !== undefined ? b / paneelBreed : undefined);
@@ -655,13 +674,28 @@ export function basisZoom(shot: Shot): number {
     ? (inPaneel(shot.focusWmin) ?? inPaneel(shot.focusW))
     : inPaneel(shot.focusW);
   let zoom = vulZoom(breedte);
+
+  // Het gezicht hoort in het midden. Kan dat niet bij deze zoom, dan zoomt hij
+  // in tot het wél kan — bij een meelopend kader voor de meest naar de rand
+  // gelegen stand van het spoor.
+  const standen = shot.spoor?.length
+    ? shot.spoor.map((punt) =>
+        shot.paneel ? (punt.x - shot.paneel[0]) / (shot.paneel[1] - shot.paneel[0]) : punt.x,
+      )
+    : [shot.paneel && shot.focusX !== undefined
+        ? (shot.focusX - shot.paneel[0]) / (shot.paneel[1] - shot.paneel[0])
+        : (shot.focusX ?? 0.5)];
+  const nodig = Math.max(...standen.map(centreerbaarVanaf));
+  zoom = Math.max(zoom, nodig);
+
   if (!shot.spoor?.length) {
     zoom = Math.min(zoom, bewegingsPlafond(shot.spreiding, inPaneel(shot.focusW)));
   } else if ((shot.spreiding ?? 0) > 0.15) {
     // Grote glijbeweging (naar voren leunen, opstaan): het kader volgt, maar
-    // agressief inzoomen wordt dan benauwd — het gezicht verandert onderweg
-    // ook van grootte. Gematigd is hier het maximum dat prettig kijkt.
-    zoom = Math.min(zoom, 1.35);
+    // agressief inzoomen wordt dan benauwd. Gematigd is hier het maximum dat
+    // prettig kijkt — tenzij centreren méér vraagt, want in het midden staan
+    // weegt zwaarder dan de kadergrootte.
+    zoom = Math.min(zoom, Math.max(1.35, nodig));
   }
   return Math.max(1, Math.min(1.7, zoom));
 }

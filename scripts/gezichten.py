@@ -93,7 +93,19 @@ def detecteer(frame):
                 ooghoogte = (oy1 + oy2) / 2
                 if w > 0:
                     kijkt = max(-1.0, min(1.0, (nx - oogmid) / (w * 0.25)))
-            uit.append(((x, y, w, hh), mond, kijkt, ooghoogte))
+            # Waar zit het gezicht visueel? Niet in het midden van het vak.
+            # Bij een gedraaid hoofd loopt het detectievak door tot achter de
+            # schedel; gemeten stond het vakmidden op 0,516 terwijl de neus op
+            # 0,480 en het midden tussen de ogen op 0,496 lag. Een kader dat op
+            # het vakmidden centreert zet de spreker daardoor zichtbaar uit het
+            # midden — precies de klacht. De landmarks wijzen het echte
+            # middelpunt aan.
+            visueel = None
+            if len(g) >= 10:
+                oogR, oogL = float(g[4]), float(g[6])
+                neus = float(g[8])
+                visueel = (neus + (oogR + oogL) / 2) / 2
+            uit.append(((x, y, w, hh), mond, kijkt, ooghoogte, visueel))
         return uit
 
     grijs = cv2.equalizeHist(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY))
@@ -105,7 +117,7 @@ def detecteer(frame):
     # Zonder landmarks nemen we de onderste helft van het gezicht als mondzone,
     # en weten we niets over de kijkrichting.
     return [
-        ((x, y, w, h), (x, y + int(h * 0.55), w, int(h * 0.45)), 0.0, y + h * 0.38)
+        ((x, y, w, h), (x, y + int(h * 0.55), w, int(h * 0.45)), 0.0, y + h * 0.38, None)
         for (x, y, w, h) in gevonden
     ]
 
@@ -218,9 +230,10 @@ for t in tijden:
     beeldhoogte = frames[0].shape[0]
     groepen = []
     for frame in frames:
-        for (vak, mond, kijkt, ooghoogte) in detecteer(frame):
+        for (vak, mond, kijkt, ooghoogte, visueel) in detecteer(frame):
             x, y, w, h = vak
-            mid = (x + w / 2) / beeldbreedte
+            # Het visuele middelpunt als de landmarks er zijn, anders het vak.
+            mid = (visueel if visueel is not None else x + w / 2) / beeldbreedte
             oog = (ooghoogte if ooghoogte is not None else y + h * 0.38) / beeldhoogte
             for g in groepen:
                 if abs(g["mid"] - mid) < SAMEN:

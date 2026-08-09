@@ -162,7 +162,6 @@ export function maakSpoor(
   opties: { maxSnelheid?: number; demping?: number } = {},
 ): { t: number; x: number }[] {
   const maxSnelheid = opties.maxSnelheid ?? 0.22; // fractie beeldbreedte per seconde
-  const demping = opties.demping ?? 0.45;
 
   // Gaten opvullen met de laatst bekende positie; blijft het begin leeg, dan
   // pakken we de eerste meting die er wel is.
@@ -175,25 +174,35 @@ export function maakSpoor(
 
   // Gladstrijken met een lopend gemiddelde over drie punten: haalt de ruis van
   // de detectie eruit zonder de beweging zelf plat te slaan.
+  // Gladstrijken met een zwaartepunt op het punt zelf (1-2-1). Een plat
+  // gemiddelde over drie punten haalt de ruis er wel uit maar trekt het spoor
+  // ook merkbaar van de werkelijke positie af — en gecentreerd staan is de eis.
   const glad = gevuld.map((m, i) => {
-    const buren = [gevuld[i - 1], m, gevuld[i + 1]].filter(Boolean) as { t: number; x: number }[];
-    return { t: m.t, x: buren.reduce((som, b) => som + b.x, 0) / buren.length };
+    const vorige = gevuld[i - 1] ?? m;
+    const volgende = gevuld[i + 1] ?? m;
+    return { t: m.t, x: (vorige.x + 2 * m.x + volgende.x) / 4 };
   });
 
-  // Volgen met demping en een snelheidsplafond. Het eerste punt is de gemeten
-  // positie zelf, niet het gladgestreken gemiddelde: een shot moet meteen goed
-  // staan. Met een aanloop stond de spreker de eerste seconde links in beeld
-  // terwijl het kader nog bijtrok — precies wat er aan het begin van het
-  // slotshot te zien was.
+  // Het spoor volgt de meting zelf, zonder demping.
+  //
+  // Demping klinkt als een goed idee — een camera die zachtjes bijtrekt — maar
+  // hij loopt per definitie achter, en dat is meetbaar fout gegaan: het gezicht
+  // stond in de bron op 0,52 terwijl het kader nog op 0,67 stuurde, en dan
+  // staat de spreker een derde uit het midden. In het midden staan weegt
+  // zwaarder dan een zachte camerabeweging, en het gladstrijken hierboven maakt
+  // de beweging al vloeiend genoeg.
+  //
+  // Wat blijft is een snelheidsplafond, maar ruim: alleen om een sprong die
+  // door de filters heen glipt niet als schok in beeld te zetten.
+  const maxPerStap = maxSnelheid * 4;
   const uit: { t: number; x: number }[] = [];
-  let positie = gevuld[0].x;
+  let positie = glad[0].x;
   for (const [i, punt] of glad.entries()) {
     const dt = i === 0 ? 0 : punt.t - glad[i - 1].t;
-    const doel = punt.x;
-    const stap = (doel - positie) * demping;
-    const plafond = maxSnelheid * Math.max(dt, 0.001);
-    positie += Math.max(-plafond, Math.min(plafond, stap));
+    const plafond = Math.max(0.05, maxPerStap * Math.max(dt, 0.001));
+    positie = i === 0 ? punt.x : positie + Math.max(-plafond, Math.min(plafond, punt.x - positie));
     uit.push({ t: punt.t, x: Math.min(1, Math.max(0, positie)) });
   }
+
   return uit;
 }

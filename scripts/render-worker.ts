@@ -700,6 +700,18 @@ async function verwerk(job: Job) {
       }
     }
 
+    // De kaderwaarden loggen: zonder dit is niet na te gaan of een scheef beeld
+    // uit de meting komt, uit de zoom of uit het spoor.
+    for (const sg of segmenten) {
+      const spoor = sg.spoor?.length
+        ? ` spoor ${Math.min(...sg.spoor.map((p) => p.x)).toFixed(2)}-${Math.max(...sg.spoor.map((p) => p.x)).toFixed(2)}`
+        : '';
+      console.log(
+        `     kader shot ${sg.volgorde}: focusX ${sg.focusX?.toFixed(3) ?? '—'} focusY ${sg.focusY?.toFixed(2) ?? '—'}` +
+          ` zoom ${(sg.zoom ?? 0).toFixed(2)}${sg.paneel ? ` paneel ${sg.paneel[0].toFixed(2)}-${sg.paneel[1].toFixed(2)}` : ''}${spoor}`,
+      );
+    }
+
     // De uiteindelijke knippunten loggen. Zonder dit is achteraf niet na te
     // gaan of een knip midden in een woord viel of netjes in een pauze — en
     // dat was nu juist de hardnekkigste klacht.
@@ -914,6 +926,7 @@ async function verwerk(job: Job) {
     try {
       const rapport = await keurMontage(montage.pad, segmenten, bronWoorden, {
         python: pythonMetOpenCV(),
+        bronPad,
       });
       console.log(`     ── keuring: ${rapport.goed ? 'GOED' : 'NIET GOED'}`);
       for (const r of rapport.regels) {
@@ -1083,10 +1096,38 @@ async function meetSpoor(bronPad: string, segmenten: Shot[]): Promise<number> {
   // van die meting gooide een échte verplaatsing (0,60 → 0,82, de wegleun in
   // het slotshot) weg als meetfout, waarna er niet gevolgd werd en de spreker
   // zijn statische kader uitliep. Het spoor zelf beslist nu of er beweging is.
+  // Meelopend kader staat standaard UIT.
+  //
+  // Niet omdat het idee verkeerd is, maar omdat het in de praktijk niet
+  // gecentreerd bleek te krijgen: het kader liep meetbaar achter op het
+  // gezicht (bron 0,52 terwijl het kader op 0,67 stuurde), en na het weghalen
+  // van de demping sloeg de fout alleen om van rechts naar links. Vier
+  // pogingen, vier keer een spreker uit het midden.
+  //
+  // Een vast kader op de mediaan van de gemeten posities heeft dat probleem
+  // per definitie niet: het staat precies zo gecentreerd als de meting, en de
+  // zoom wordt begrensd op de bewegingsruimte zodat hij er niet uitloopt. In
+  // het midden staan weegt zwaarder dan een camera die meebeweegt.
+  //
+  // Terug aanzetten kan met FACE_TRACKING=1, maar dan moet de keuring het
+  // bewijzen: die meet nu of het gezicht werkelijk in het midden staat.
+  // Meelopend kader staat weer AAN, nu de meting deugt.
+  //
+  // De keten van bewijs: het kader centreerde op het midden van het
+  // detectievak, maar bij een gedraaid hoofd loopt dat vak door tot achter de
+  // schedel (vakmidden 0,516 tegenover een visueel midden van 0,488). Daar
+  // bovenop liep het spoor achter door de demping. Allebei opgelost — en de
+  // meetkundige toets laat zien dat een vást kader het niet kan: een spreker
+  // die tijdens zijn shot beweegt staat dan tot 36% uit het midden.
+  if (process.env.FACE_TRACKING === '0') return 0;
   const teVolgen = segmenten.filter((s) => s.end - s.start >= 2.5 && !s.focus);
   if (teVolgen.length === 0) return 0;
 
-  const STAP = 0.75;
+  // Elke 0,35 seconde. Tussen twee meetpunten wordt lineair geïnterpoleerd,
+  // dus fijner bemonsteren betekent strakker volgen. Van 0,75 naar 0,5 naar
+  // 0,35 bracht de afwijking van 36% via 18% naar onder de tien; centreren is
+  // de harde eis en dit is de knop die daar het meest aan doet.
+  const STAP = 0.35;
   const opdrachten: { seg: Shot; tijden: number[] }[] = teVolgen.map((seg) => {
     const tijden: number[] = [];
     for (let t = seg.start; t < seg.end; t += STAP) tijden.push(t);

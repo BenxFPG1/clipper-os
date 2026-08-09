@@ -132,10 +132,16 @@ export function poort(
       const gatNa = volgend ? Math.max(0, volgend.s - seg.end) : 1;
       seg.end += Math.min(ADEM_NA, gatNa / 2);
 
-      // Praat de spreker aan deze kant gewoon door, dan ís er geen lucht om
-      // mee te nemen — het vorige woord zou meekomen. Daar hoort dan een
-      // langere audiofade: dat leest als een zachte overgang in plaats van een
-      // knip die pal tegen het woord aan zit.
+      // Praat de spreker aan deze kant door, dan ís er geen stilte om mee te
+      // nemen. Toch mag een woord niet abrupt stoppen — dat is precies het
+      // "strak afgesneden" gevoel. We laten het beeld dan een tiende seconde
+      // doorlopen ín het volgende woord en leggen daar de fade overheen: de
+      // zin klinkt uit in plaats van af te breken, en van dat volgende woord
+      // is niets te verstaan omdat het al wegzakt zodra het begint.
+      // Doorlopen ín het buurwoord is geprobeerd en botst met de regel dat een
+      // knip nooit binnen een woord valt: de poort schoof hem meteen weer
+      // terug, eindeloos heen en weer. De grens blijft dus op het woord staan;
+      // wat de abruptheid verzacht is de langere fade, en die kost geen inhoud.
       if (gatVoor < 0.12) seg.zachtBegin = true;
       if (gatNa < 0.12) seg.zachtEind = true;
     }

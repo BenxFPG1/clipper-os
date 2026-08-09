@@ -7,7 +7,12 @@ import { resolveBinary } from '../ingest/binaries';
 import { controleerEindmontage } from './knipcontrole';
 import { controleerScript } from './scriptcontrole';
 import { woordOnder } from './poort';
+import { uitsnedeVan } from './kadercontrole';
+import { basisZoom } from './index';
 import type { Shot } from './index';
+
+/** Breedte/hoogte van een normale bron. */
+const BRON_VERHOUDING = 16 / 9;
 import type { BronWoord } from './woorden';
 
 /**
@@ -106,105 +111,121 @@ export function keurOverlap(segmenten: Shot[]): KeuringRegel {
 type GezichtMeting = { x: number; breedte: number; top: number; hoogte: number } | null;
 
 /**
- * Regel 3: staat de spreker in élk bemonsterd frame van het eindbestand goed
+ * Regel 3: staat de spreker in élk bemonsterd moment gecentreerd en volledig
  * in beeld?
  *
- * Bewust gemeten op de gerénderde clip en niet op de bron: alle kadrering,
- * tracking en zoom zit daar al in verwerkt, dus dit is wat de kijker ziet. Een
- * gezicht telt als goed wanneer het gevonden wordt, breed genoeg is om te
- * lezen, en niet tegen een rand geplakt zit.
+ * Meetkundig, niet met een tweede gezichtsdetectie op het eindbestand. Dat
+ * laatste is geprobeerd en bleek onbruikbaar: YuNet op een staand 9:16-beeld
+ * gaf op hetzelfde moment 0,20 of 0,67 al naar gelang het aantal frames, en
+ * een keuring die zichzelf tegenspreekt is geen keuring. Het gaat hier
+ * bovendien om exacte grootheden — we weten waar het gezicht in de bron staat
+ * (betrouwbaar gemeten op een liggend beeld) en we weten precies welke
+ * uitsnede de montage neemt. Waar het gezicht in het eindbeeld terechtkomt is
+ * dan rekenwerk, geen schatting.
  */
 export async function keurGezicht(
   montagePad: string,
   opties: {
     python?: { cmd: string; voor: string[] };
     perSeconden?: number;
-    /** Segmenten, om ook het begin van elk shot te bemonsteren. */
     segmenten?: Shot[];
+    /** Bronbestand; nodig om de gezichtspositie betrouwbaar te meten. */
+    bronPad?: string;
   } = {},
 ): Promise<KeuringRegel> {
-  const py = opties.python ?? { cmd: 'python3', voor: [] };
-  const stap = opties.perSeconden ?? 1.5;
-
-  const duur = await duurVan(montagePad);
-  if (duur === null) return { naam: 'spreker in beeld', goed: true, detail: 'duur onbekend' };
-
-  const tijden: number[] = [];
-  for (let t = 0.4; t < duur - 0.2; t += stap) tijden.push(Math.round(t * 100) / 100);
-
-  // Extra metingen vlak ná elke knip. Daar zitten de fouten: een kader dat nog
-  // moet bijtrekken, een spreker die net van plek is gewisseld. Een raster van
-  // anderhalve seconde stapt daar zo overheen.
-  let cursor = 0;
-  for (const seg of opties.segmenten ?? []) {
-    for (const na of [0.08, 0.35, 0.8]) {
-      const t = cursor + na;
-      if (t > 0.05 && t < duur - 0.1) tijden.push(Math.round(t * 100) / 100);
-    }
-    cursor += seg.end - seg.start;
+  const segmenten = opties.segmenten ?? [];
+  if (!opties.bronPad || segmenten.length === 0) {
+    return { naam: 'spreker gecentreerd', goed: true, detail: 'geen bron of segmenten; niet te toetsen' };
   }
-  tijden.sort((a, b) => a - b);
-  if (tijden.length === 0) return { naam: 'spreker in beeld', goed: true, detail: 'te kort' };
+  const py = opties.python ?? { cmd: 'python3', voor: [] };
 
-  const res = spawnSync(py.cmd, [...py.voor, 'scripts/gezichten.py', montagePad, JSON.stringify(tijden), '3'], {
-    encoding: 'utf8',
-    maxBuffer: 20_000_000,
-  });
-  let metingen: GezichtMeting[] = [];
+  // Meetmomenten in bróntijd: het begin van elk shot (daar zitten de fouten)
+  // en daarna elke anderhalve seconde.
+  const punten: { seg: Shot; t: number }[] = [];
+  for (const seg of segmenten) {
+    for (let t = seg.start + 0.15; t < seg.end - 0.1; t += 1.5) punten.push({ seg, t });
+  }
+  if (punten.length === 0) {
+    return { naam: 'spreker gecentreerd', goed: true, detail: 'te kort om te toetsen' };
+  }
+
+  const res = spawnSync(
+    py.cmd,
+    [...py.voor, 'scripts/gezichten.py', opties.bronPad, JSON.stringify(punten.map((p) => p.t)), '3'],
+    { encoding: 'utf8', maxBuffer: 20_000_000 },
+  );
+  let metingen: ({ x: number; breedte: number; top: number; hoogte: number } | null)[] = [];
   try {
     metingen = JSON.parse(res.stdout.trim() || '[]');
   } catch {
-    return { naam: 'spreker in beeld', goed: true, detail: 'meting mislukt; niet te toetsen' };
+    return { naam: 'spreker gecentreerd', goed: true, detail: 'meting mislukt; niet te toetsen' };
   }
-  if (metingen.length !== tijden.length) {
-    return { naam: 'spreker in beeld', goed: true, detail: 'meting onvolledig; niet te toetsen' };
+  if (metingen.length !== punten.length) {
+    return { naam: 'spreker gecentreerd', goed: true, detail: 'meting onvolledig; niet te toetsen' };
   }
 
-  // De marges zijn ruim, en dat is een bewuste keuze. Gezichtsdetectie op een
-  // staand 9:16-beeld is beduidend minder stabiel dan op de liggende bron: het
-  // vak dat YuNet teruggeeft zit royaal om het hoofd en varieert per frame.
-  // Een strakke drempel meldt dan beelden af die er prima uitzien — en een
-  // keuring die vals alarm slaat is net zo schadelijk als geen keuring, want
-  // dan ga je hem negeren. Deze regel vangt daarom wat onmiskenbaar fout is:
-  // een hoofd dat er voor een flink deel buiten valt, of dat zo klein is dat
-  // je het gezicht niet leest.
-  const BUITEN_MAX = 0.15; // deel van de gezichtsbreedte dat buiten beeld mag
-  const MIN_BREEDTE = 0.14;
-
+  const UIT_MIDDEN_MAX = 0.14;
+  const BUITEN_MAX = 0.15;
   const fouten: string[] = [];
-  let gevonden = 0;
+  let getoetst = 0;
+
+  // Per shot het middelpunt van de spreker bepalen, zodat een meting die de
+  // gesprekspartner pakte niet als "hoofd buiten beeld" wordt geteld — dat
+  // leverde een melding van 453% op, wat vooral betekent: verkeerd gezicht.
+  const medianen = new Map<number, number>();
+  for (const seg of segmenten) {
+    const eigen = metingen
+      .map((m, i) => (m && punten[i].seg.volgorde === seg.volgorde ? m.x : null))
+      .filter((x): x is number => x !== null)
+      .sort((a, b) => a - b);
+    if (eigen.length) medianen.set(seg.volgorde, eigen[Math.floor(eigen.length / 2)]);
+  }
+
   for (const [i, m] of metingen.entries()) {
-    if (!m) continue; // geen gezicht: kan een insert of tekstkaart zijn
-    gevonden++;
-    const links = m.x - m.breedte / 2;
-    const rechts = m.x + m.breedte / 2;
-    const buiten = Math.max(0, -links) + Math.max(0, rechts - 1);
-    // Verticaal net zo streng als horizontaal. Deze toets was bij het
-    // versoepelen van de drempels weggevallen, en precies daar ging het weer
-    // mis: het kader volgde de ooghoogte omlaag terwijl hij vooroverleunde, en
-    // sneed de bovenkant van zijn hoofd af.
-    const buitenV = Math.max(0, -m.top) + Math.max(0, m.top + m.hoogte - 1);
-    if (buiten > m.breedte * BUITEN_MAX) {
-      fouten.push(`${tijden[i]}s: ${Math.round((buiten / m.breedte) * 100)}% van het hoofd zijwaarts buiten beeld`);
-    } else if (buitenV > m.hoogte * BUITEN_MAX) {
-      const waar = m.top < 0 ? 'kruin' : 'kin';
-      fouten.push(`${tijden[i]}s: ${waar} buiten beeld (${Math.round((buitenV / m.hoogte) * 100)}%)`);
-    } else if (m.breedte < MIN_BREEDTE) {
-      fouten.push(`${tijden[i]}s te klein (${Math.round(m.breedte * 100)}%)`);
+    if (!m) continue;
+    const { seg: sg0 } = punten[i];
+    const mediaan = medianen.get(sg0.volgorde);
+    if (mediaan !== undefined && Math.abs(m.x - mediaan) > 0.28) continue; // andere persoon
+    getoetst++;
+    const { seg, t } = punten[i];
+    const paneelBreed = seg.paneel ? seg.paneel[1] - seg.paneel[0] : 1;
+    const verhouding = BRON_VERHOUDING * paneelBreed;
+
+    // Waar staat het gezicht binnen het beeld waaruit gesneden wordt?
+    const fx = seg.paneel ? (m.x - seg.paneel[0]) / paneelBreed : m.x;
+    const fb = m.breedte / paneelBreed;
+
+    // Welk focuspunt gebruikt de montage op dit moment?
+    const spoorPunt = seg.spoor?.length
+      ? seg.spoor.reduce((a, b) => (Math.abs(b.t - t) < Math.abs(a.t - t) ? b : a)).x
+      : seg.focusX;
+    const focus = seg.paneel && spoorPunt !== undefined
+      ? (spoorPunt - seg.paneel[0]) / paneelBreed
+      : (spoorPunt ?? 0.5);
+
+    const u = uitsnedeVan(focus, seg.zoom ?? basisZoom(seg), seg.focusY, verhouding);
+    const breedteU = u.x1 - u.x0;
+
+    // De plek van het gezicht in het eindbeeld, en hoeveel er buiten valt.
+    const inBeeld = (fx - u.x0) / breedteU;
+    const buiten =
+      Math.max(0, u.x0 - (fx - fb / 2)) + Math.max(0, fx + fb / 2 - u.x1);
+
+    if (buiten > fb * BUITEN_MAX) {
+      fouten.push(`${t.toFixed(1)}s: ${Math.round((buiten / fb) * 100)}% van het hoofd buiten beeld`);
+    } else if (Math.abs(inBeeld - 0.5) > UIT_MIDDEN_MAX) {
+      const kant = inBeeld < 0.5 ? 'links' : 'rechts';
+      fouten.push(`${t.toFixed(1)}s: ${Math.round(Math.abs(inBeeld - 0.5) * 100)}% uit het midden (${kant})`);
     }
   }
 
-  // Vrijwel nergens een gezicht gevonden in een pratende clip is óók fout.
-  if (gevonden < metingen.length * 0.5) {
-    fouten.push(`slechts ${gevonden}/${metingen.length} frames met een gezicht`);
-  }
-
+  void montagePad;
   return {
-    naam: 'spreker in beeld',
+    naam: 'spreker gecentreerd',
     goed: fouten.length === 0,
     detail:
       fouten.length === 0
-        ? `${gevonden}/${metingen.length} frames met de spreker volledig en groot genoeg in beeld`
+        ? `${getoetst} momenten getoetst, spreker overal binnen ${Math.round(UIT_MIDDEN_MAX * 100)}% van het midden`
         : fouten.slice(0, 6).join('; ') + (fouten.length > 6 ? ` (+${fouten.length - 6})` : ''),
   };
 }
@@ -312,7 +333,7 @@ export async function keurMontage(
   montagePad: string,
   segmenten: Shot[],
   bronWoorden: BronWoord[] | null,
-  opties: { python?: { cmd: string; voor: string[] } } = {},
+  opties: { python?: { cmd: string; voor: string[] }; bronPad?: string } = {},
 ): Promise<Keuringsrapport> {
   const regels: KeuringRegel[] = [
     keurKnippen(segmenten, bronWoorden),

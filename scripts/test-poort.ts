@@ -13,7 +13,7 @@
 import { poort, woordOnder } from '../src/lib/roughcut/poort';
 import { keurKnippen, keurOverlap } from '../src/lib/roughcut/keuring';
 import { corrigeerKadrering, uitsnedeVan } from '../src/lib/roughcut/kadercontrole';
-import type { Shot } from '../src/lib/roughcut';
+import { basisZoom, type Shot } from '../src/lib/roughcut';
 import type { BronWoord } from '../src/lib/roughcut/woorden';
 
 let gefaald = 0;
@@ -135,6 +135,25 @@ console.log('poort — regel 0: een fragment wordt nooit gehalveerd');
   toets('en houdt de volledige zin over',
     (segmenten[0]?.start ?? 1) <= 10.0 && (segmenten[0]?.end ?? 0) >= 12.3,
     `${segmenten[0]?.start}-${segmenten[0]?.end}`);
+}
+
+console.log('poort — doorlopende spraak krijgt uitklinkruimte');
+{
+  // "wou" eindigt precies waar "dat" begint: geen stilte. Dan hoort de knip
+  // door te lopen en zacht te zijn.
+  const { segmenten: s2 } = poort([shot(2, 10.0, 11.0)], woorden);
+  toets('grens blijft op het woord staan', s2[0].end <= 11.05, `eind=${s2[0].end}`);
+  toets('en krijgt een zachte overgang', s2[0].zachtEind === true);
+}
+
+console.log('zoom maakt centreren mogelijk');
+{
+  const zijkant: Shot = { ...shot(1, 0, 6), focusX: 0.9, focusW: 0.12,
+    gezicht: { x: 0.9, breedte: 0.12, top: 0.25, hoogte: 0.3 } };
+  const z = basisZoom(zijkant);
+  const u = uitsnedeVan(0.9, z, 0.5);
+  toets('kader kan centreren op een spreker aan de rand',
+    Math.abs((u.x0 + u.x1) / 2 - 0.9) < 0.02, `zoom=${z.toFixed(2)} midden=${((u.x0+u.x1)/2).toFixed(3)}`);
 }
 
 console.log('kadercontrole — een gevolgd shot past over het hele spoor');
