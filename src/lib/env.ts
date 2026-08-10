@@ -28,10 +28,20 @@ function effortFromEnv(name: string, fallback: Effort): Effort {
 }
 
 export const CHARMAP_EFFORT = effortFromEnv('CHARMAP_EFFORT', 'high');
-export const PLAN_EFFORT = effortFromEnv('PLAN_EFFORT', 'xhigh');
+// Was 'xhigh': met het toernooi (brede kandidatenset) is dit al verreweg de
+// grootste en langzaamste call van de pijplijn (~100k tokens op een uur
+// podcast — meer dan character map en examenpas samen). Het concept hoeft
+// niet perfect te zijn, alleen breed: de examen- en verhaaldokterpas bestaan
+// juist om te herstellen wat het concept mist. 'high' scheelt ruwweg de helft
+// van de doorlooptijd van deze call.
+export const PLAN_EFFORT = effortFromEnv('PLAN_EFFORT', 'high');
 // De examenpass toetst een bestaand plan tegen vaste kaders; dat vraagt minder
 // denkwerk dan het plan bedenken, en scheelt de helft van de wachttijd.
 export const PLAN_EXAMEN_EFFORT = effortFromEnv('PLAN_EXAMEN_EFFORT', 'high');
+// De verhaaldokter is bewust smal: hij raakt alleen verhaallijn, score en
+// welke clips overblijven aan, op een plan dat al door het toernooi is. Dat
+// is een begrensde taak, geen open denkwerk — 'medium' volstaat.
+export const PLAN_VERHAALDOKTER_EFFORT = effortFromEnv('PLAN_VERHAALDOKTER_EFFORT', 'medium');
 export const SCRIPT_EFFORT = effortFromEnv('SCRIPT_EFFORT', 'xhigh');
 // Zelfde redenering als bij het plan: de examinator toetst tegen vaste kaders.
 export const SCRIPT_EXAMEN_EFFORT = effortFromEnv('SCRIPT_EXAMEN_EFFORT', 'high');

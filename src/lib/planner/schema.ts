@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 export const SCHEMA_VERSION = '1.0';
 export const PROMPT_VERSION_CHARACTER_MAP = 'charmap-3.1';
-export const PROMPT_VERSION_PLAN = 'plan-4.0';
+export const PROMPT_VERSION_PLAN = 'plan-6.0';
 
 // ------------------------------------------------------- stap 1: character map
 export const sleutelmomentSchema = z.object({
@@ -113,6 +113,13 @@ export const clipSchema = z.object({
     open_vraag: z.string().min(10),
     escalatie: z.array(z.string()).min(2),
     payoff: z.string().min(10),
+    /**
+     * De verhaaldokter (bouwsteen: narratieve kwaliteit): wat de kijker vlak
+     * vóór de payoff denkt, en hoe de payoff dat omdraait. Verplicht zodat
+     * "de payoff is gewoon het logische antwoord op de open vraag" niet meer
+     * ongemerkt door de poort komt — een verhaal zonder omslag is een feit.
+     */
+    omslag: z.string().min(10),
   }),
   hook: z.object({
     type: z.string(),
@@ -168,3 +175,52 @@ export const clipPlanSchema = z.object({
 
 export type Clip = z.infer<typeof clipSchema>;
 export type ClipPlan = z.infer<typeof clipPlanSchema>;
+
+// ------------------------------------------------- stap 2a: schets (toernooi)
+/**
+ * De schets: alles wat nodig is om een kandidaat te BEOORDELEN (verhaallijn,
+ * ruwe shots, een voorlopige score) zonder alles te schrijven wat nodig is om
+ * hem te PUBLICEREN (hooks, sfx, captions, varianten). Van de brede
+ * kandidatenset overleeft maar een deel het toernooi — dat deel krijgt pas in
+ * de volgende pas de volledige, dure uitwerking. Een apart, lichter schema in
+ * plaats van optionele velden op clipSchema: een optioneel veld liet het
+ * model het er in de praktijk soms gewoon stilzwijgend uit (zie "vondsten"
+ * in de character map) — een apart schema dwingt precies het juiste af, niet
+ * meer en niet minder, in élke fase.
+ */
+export const schetsShotSchema = z.object({
+  volgorde: z.number().int().min(1),
+  start: z.number(),
+  end: z.number(),
+  functie: z.enum(['hook', 'setup', 'escalatie', 'barst', 'payoff', 'button']),
+  transcript_fragment: z.string(),
+  edit_notitie: z.string(),
+});
+
+export const schetsClipSchema = z.object({
+  titel_intern: z.string(),
+  structure_type: z.string(),
+  verwachte_sterkte: z.enum(['hoog', 'midden', 'vulling']),
+  score: z.number().min(1).max(10),
+  verhaallijn: z.object({
+    belofte: z.string().min(10),
+    open_vraag: z.string().min(10),
+    escalatie: z.array(z.string()).min(2),
+    payoff: z.string().min(10),
+    omslag: z.string().min(10),
+  }),
+  /** Alleen het anker (type + instappunt), geen overlaytekst — dat is copywriting voor de uitwerkingspas. */
+  hook_richting: z.object({
+    type: z.string(),
+    gesproken_start: z.string(),
+  }),
+  shots: z.array(schetsShotSchema).min(1),
+  risico: z.enum(['geen', 'check_regels']),
+});
+
+export const schetsPlanSchema = z.object({
+  clips: z.array(schetsClipSchema).min(1),
+});
+
+export type SchetsClip = z.infer<typeof schetsClipSchema>;
+export type SchetsPlan = z.infer<typeof schetsPlanSchema>;

@@ -104,6 +104,10 @@ function ClipCard({ clip, row, variants }: { clip: Clip; row?: ClipRow; variants
               <span className="text-neutral-500">Payoff: </span>
               {clip.verhaallijn.payoff}
             </p>
+            <p>
+              <span className="text-neutral-500">Omslag: </span>
+              {clip.verhaallijn.omslag}
+            </p>
           </div>
         )}
 
