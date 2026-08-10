@@ -19,9 +19,11 @@ on:
       - 'scripts/gezichten.py'
       - 'scripts/align.py'
       - 'src/lib/scriptwriter/**'
+      - 'src/lib/planner/**'
       - 'src/lib/vault/**'
       - 'scripts/test-poort.ts'
       - 'scripts/test-scriptpoort.ts'
+      - 'scripts/test-verhaaldokterpoort.ts'
       - 'scripts/eval-montage.ts'
       - '.github/workflows/montage-tests.yml'
   pull_request:
@@ -43,6 +45,8 @@ jobs:
         run: npm run test:poort
       - name: Regels van de scriptpoort
         run: npm run test:scriptpoort
+      - name: Regels van de verhaaldokter-poort
+        run: npm run test:verhaaldokter
 
   keuring:
     runs-on: ubuntu-latest
