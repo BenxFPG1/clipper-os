@@ -49,32 +49,41 @@ export default async function VideoDetailPage({ params }: { params: { id: string
 
       {latest && (
         <div className="rounded border border-neutral-800 p-4">
-          <div className="flex flex-wrap items-center gap-3">
-            <a
-              href={`/api/videos/${video.id}/project`}
-              className="rounded bg-neutral-100 px-4 py-2 text-sm font-medium text-neutral-900"
-              download
-            >
-              Premiere-project downloaden ({(latest.plan as ClipPlan).clips.length} clips + varianten)
-            </a>
-            <span className="text-sm text-neutral-400">
-              Klaar in een seconde — de cuts staan op V2, met V1 vrij voor je eigen laag.
-            </span>
-            <a
-              href={`/api/videos/${video.id}/project?varianten=0`}
-              className="text-xs text-neutral-500 hover:text-neutral-300"
-              download
-            >
-              alleen de hoofdmontages
-            </a>
-          </div>
-          <p className="mt-2 text-sm text-neutral-500">
-            Elke clip is een eigen sequence met de knippen los op de tijdlijn, dus je verschuift ze zonder opnieuw
-            te renderen. Per clip zitten er gratis varianten bij — kort skelet, ander instappunt, en een part
-            1/part 2-knip — dus uit één plan komen drie tot vier keer zoveel posts.
-            {!video.fps &&
-              ' Let op: de framerate is nog niet gemeten, dus het project gaat uit van 25 fps — draai npm run project voor zekerheid.'}
-          </p>
+          {video.fps ? (
+            <>
+              <div className="flex flex-wrap items-center gap-3">
+                <a
+                  href={`/api/videos/${video.id}/project`}
+                  className="rounded bg-neutral-100 px-4 py-2 text-sm font-medium text-neutral-900"
+                  download
+                >
+                  Premiere-project downloaden ({(latest.plan as ClipPlan).clips.length} clips + varianten)
+                </a>
+                <span className="text-sm text-neutral-400">
+                  Klaar in een seconde — de cuts staan op V2, met V1 vrij voor je eigen laag.
+                </span>
+                <a
+                  href={`/api/videos/${video.id}/project?varianten=0`}
+                  className="text-xs text-neutral-500 hover:text-neutral-300"
+                  download
+                >
+                  alleen de hoofdmontages
+                </a>
+              </div>
+              <p className="mt-2 text-sm text-neutral-500">
+                Elke clip is een eigen sequence met de knippen los op de tijdlijn, dus je verschuift ze zonder
+                opnieuw te renderen. Per clip zitten er gratis varianten bij — kort skelet, ander instappunt, en
+                een part 1/part 2-knip — dus uit één plan komen drie tot vier keer zoveel posts.
+              </p>
+            </>
+          ) : (
+            <div className="rounded border border-amber-900/60 bg-amber-950/20 px-3 py-2 text-sm text-amber-200">
+              Nog niet klaar om te downloaden: de framerate van deze bron is nog niet gemeten. Zonder die meting
+              schuiven alle knippunten in Premiere systematisch op — bruikbaar lijkend, maar structureel fout.
+              Render eerst één clip (hieronder), of draai lokaal <code>npm run project -- {video.id}</code> — beide
+              meten de echte framerate en dan werkt de downloadknop hierboven vanzelf.
+            </div>
+          )}
 
           <div className="mt-3 rounded bg-neutral-900/60 px-3 py-2 text-xs text-neutral-400">
             <span className="text-neutral-300">Openen in Premiere:</span> File → Import (Cmd+I) → kies de .xml.
