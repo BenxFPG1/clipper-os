@@ -108,7 +108,7 @@ export async function haalNieuweBronvideos(): Promise<{
 
   const { data: campagnes, error } = await supabase
     .from('campaigns')
-    .select('id, name, bron_kanaal_url, bron_kanalen, auto_plan, platform_rules')
+    .select('id, name, bron_kanaal_url, bron_kanalen, auto_plan, platform_rules, kanaal_check_gestart_at')
     .eq('status', 'active');
   if (error) throw error;
 
@@ -136,7 +136,20 @@ export async function haalNieuweBronvideos(): Promise<{
       }
       uniek = alleenVideos;
     }
-    if (uniek.length === 0) continue;
+    if (uniek.length === 0) {
+      // Geen bron geconfigureerd, dus deze campagne wordt niet gecheckt. Was
+      // hij (bijvoorbeeld door een handmatige klik) toch als "bezig" gezet,
+      // dan zou hij anders voor altijd op "bezig" blijven staan in de UI.
+      if (campagne.kanaal_check_gestart_at) {
+        await supabase.from('campaigns').update({ kanaal_check_gestart_at: null }).eq('id', campagne.id);
+      }
+      continue;
+    }
+
+    // Zichtbaar maken dat deze campagne nu daadwerkelijk gecheckt wordt —
+    // niet alleen dat de cloudrun is gestart (dat kan een minuut duren voor
+    // hij hier komt), maar het moment dat de scan van déze campagne begint.
+    await supabase.from('campaigns').update({ kanaal_check_gestart_at: new Date().toISOString() }).eq('id', campagne.id);
 
     const foutenVoorCampagne = fouten.length;
     try {
@@ -222,10 +235,12 @@ export async function haalNieuweBronvideos(): Promise<{
         .update({
           laatste_kanaal_check: new Date().toISOString(),
           laatste_kanaal_fouten: eigenFouten.slice(-10),
+          kanaal_check_gestart_at: null,
         })
         .eq('id', campagne.id);
     } catch (e) {
       fouten.push(`${campagne.name}: ${e instanceof Error ? e.message : String(e)}`);
+      await supabase.from('campaigns').update({ kanaal_check_gestart_at: null }).eq('id', campagne.id);
     }
   }
 

@@ -1,8 +1,11 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { datumTijd } from '@/lib/format';
+
+/** Ouder dan dit is vastgelopen, niet "nog bezig" — zie ook lib/status.ts. */
+const KANAAL_STALE_MS = 20 * 60 * 1000;
 
 /**
  * Bronkanalen van de campagne. Meerdere bronnen kunnen: een hoofdkanaal, een
@@ -16,12 +19,14 @@ export function KanaalForm({
   autoPlan,
   laatsteCheck,
   laatsteFouten,
+  checkGestartAt,
 }: {
   campaignId: string;
   kanalen: string[];
   autoPlan: boolean;
   laatsteCheck: string | null;
   laatsteFouten: string[];
+  checkGestartAt: string | null;
 }) {
   const router = useRouter();
   const [lijst, setLijst] = useState<string[]>(kanalen.length ? kanalen : ['']);
@@ -29,6 +34,17 @@ export function KanaalForm({
   const [busy, setBusy] = useState(false);
   const [melding, setMelding] = useState<string | null>(null);
   const [fouten, setFouten] = useState<string[]>([]);
+
+  const loopt = Boolean(checkGestartAt) && Date.now() - new Date(checkGestartAt!).getTime() < KANAAL_STALE_MS;
+
+  // Zolang de check loopt elke 15s verversen, zodat "bezig" vanzelf verdwijnt
+  // zodra de worker klaar is (of stilstaat na de staleness-grens hierboven) —
+  // zonder dit zag je na een klik niets meer gebeuren tot je zelf herlaadde.
+  useEffect(() => {
+    if (!loopt) return;
+    const timer = setInterval(() => router.refresh(), 15_000);
+    return () => clearInterval(timer);
+  }, [loopt, router]);
 
   function wijzig(i: number, waarde: string) {
     setLijst((l) => l.map((k, n) => (n === i ? waarde : k)));
@@ -78,6 +94,13 @@ export function KanaalForm({
         <h2 className="text-sm uppercase tracking-wide text-neutral-500">Bronnen (automatisch ophalen)</h2>
         {laatsteCheck && <span className="text-xs text-neutral-500">laatst gecheckt {datumTijd(laatsteCheck)}</span>}
       </div>
+
+      {loopt && (
+        <div className="flex items-center gap-2 rounded border border-emerald-900/60 bg-emerald-950/20 px-3 py-2 text-sm text-emerald-200">
+          <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-emerald-400" />
+          Nieuwe uploads zoeken — bezig sinds {duurSinds(checkGestartAt!)}
+        </div>
+      )}
 
       <div className="space-y-2">
         {lijst.map((kanaal, i) => (
@@ -153,4 +176,11 @@ export function KanaalForm({
       </div>
     </form>
   );
+}
+
+function duurSinds(iso: string): string {
+  const seconden = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 1000));
+  if (seconden < 60) return `${seconden}s`;
+  const m = Math.round(seconden / 60);
+  return `${m} min`;
 }

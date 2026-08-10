@@ -60,7 +60,7 @@ export async function laadWerkStatus(): Promise<WerkStatus> {
   const supabase = db();
 
   const [campagnes, videos, plannen, briefs, scripts, clips, aiJobs, renderJobs] = await Promise.all([
-    supabase.from('campaigns').select('id, name').eq('status', 'active'),
+    supabase.from('campaigns').select('id, name, kanaal_check_gestart_at').eq('status', 'active'),
     supabase.from('videos').select('id, title, campaign_id').is('archived_at', null),
     supabase.from('clip_plans').select('video_id'),
     supabase.from('briefs').select('id, titel, campaign_id'),
@@ -103,6 +103,9 @@ export async function laadWerkStatus(): Promise<WerkStatus> {
     return Math.round(gesorteerd[Math.floor(gesorteerd.length / 2)]);
   };
   const nu = Date.now();
+  // Ouder dan dit behandelen we als vastgelopen (workflow gecrasht, nooit
+  // gestart) in plaats van voor altijd "bezig" te blijven tonen.
+  const KANAAL_STALE_MS = 20 * 60 * 1000;
 
   // Verbruik van vandaag: hoe hard drukken we op de abonnementslimiet?
   const vandaag = new Date();
@@ -158,6 +161,24 @@ export async function laadWerkStatus(): Promise<WerkStatus> {
         wachtrijPlek: j.status === 'wachtend' ? plek : null,
       };
     }),
+    // Kanaalcheck ("nu nieuwe uploads ophalen"): geen ai_jobs-rij (dat draait
+    // over alle campagnes tegelijk, niet één doel_id), dus een eigen entry op
+    // basis van campaigns.kanaal_check_gestart_at.
+    ...(campagnes.data ?? [])
+      .filter(
+        (c) =>
+          c.kanaal_check_gestart_at &&
+          nu - new Date(c.kanaal_check_gestart_at as string).getTime() < KANAAL_STALE_MS,
+      )
+      .map((c) => ({
+        soort: 'Kanaalcheck',
+        wat: `${c.name}: nieuwe uploads zoeken`,
+        status: 'bezig',
+        sinds: c.kanaal_check_gestart_at as string,
+        bezigSeconden: Math.round((nu - new Date(c.kanaal_check_gestart_at as string).getTime()) / 1000),
+        schattingSeconden: null,
+        wachtrijPlek: null,
+      })),
     ...(renderJobs.data ?? []).map((r) => ({
       soort: 'Montage',
       wat:

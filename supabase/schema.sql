@@ -448,3 +448,13 @@ alter table clip_plans add column if not exists montageplan jsonb;
 -- meting verandert niet tussen twee planruns op dezelfde video, en opnieuw
 -- audio downloaden en analyseren bij elk plan is zonde.
 alter table videos add column if not exists energie_momenten jsonb;
+
+-- ============================================================ uitbreiding v1.6
+-- Zichtbare status voor de kanaalcheck. Zonder dit liet "nu nieuwe uploads
+-- ophalen" alleen een toastje "gestart in de cloud" zien en verder niets: geen
+-- voortgang, geen "hij loopt nog", geen moment waarop je weet dat hij klaar
+-- is. Gezet bij het starten (de klik, én het moment dat de worker de
+-- campagne echt oppakt), leeggemaakt zodra haalNieuweBronvideos() bij deze
+-- campagne klaar is. De UI behandelt een waarde ouder dan ~20 minuten als
+-- vastgelopen in plaats van voor altijd "bezig" te blijven tonen.
+alter table campaigns add column if not exists kanaal_check_gestart_at timestamptz;

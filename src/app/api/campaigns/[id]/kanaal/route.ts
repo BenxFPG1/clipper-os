@@ -49,6 +49,14 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
       r.fouten.every((f) => /yt-dlp|ENOENT|spawn|not found|niet gevonden/i.test(f));
     if (alleenGeenTools) {
       const gestart = await startCloudRun('ai-jobs.yml');
+      // Optimistisch: de klik zélf is het startmoment. De worker overschrijft
+      // dit zodra hij deze campagne daadwerkelijk oppakt (dat kan een minuut
+      // of twee duren door de installatiestappen van de workflow), en wist
+      // het weer zodra hij klaar is. Zonder dit zag je na de klik niets meer
+      // gebeuren totdat de nieuwe video's er ineens waren.
+      if (gestart) {
+        await db().from('campaigns').update({ kanaal_check_gestart_at: new Date().toISOString() }).eq('id', params.id);
+      }
       return NextResponse.json({
         inWachtrij: true,
         melding: gestart
@@ -70,6 +78,9 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
     const geenTools = /yt-dlp|ENOENT|niet gevonden|spawn/i.test(bericht);
     if (geenTools) {
       const gestart = await startCloudRun('ai-jobs.yml');
+      if (gestart) {
+        await db().from('campaigns').update({ kanaal_check_gestart_at: new Date().toISOString() }).eq('id', params.id);
+      }
       return NextResponse.json({
         melding: gestart
           ? 'Ophalen gestart in de cloud; nieuwe videos staan er over een paar minuten.'
