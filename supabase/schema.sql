@@ -458,3 +458,10 @@ alter table videos add column if not exists energie_momenten jsonb;
 -- campagne klaar is. De UI behandelt een waarde ouder dan ~20 minuten als
 -- vastgelopen in plaats van voor altijd "bezig" te blijven tonen.
 alter table campaigns add column if not exists kanaal_check_gestart_at timestamptz;
+
+-- ============================================================ uitbreiding v1.7
+-- Dode accounts snel opruimen. ruimOpgedroogdeAccountsOp (scout.ts) ruimt na
+-- 30 dagen stilte op, maar een 404/gedeactiveerd account is een hard signaal
+-- vanaf de eerste keer, niet iets waar je een maand geduld mee hoeft te
+-- hebben — elke run tussentijds verspilt credits aan exact dezelfde fout.
+alter table tracked_accounts add column if not exists opeenvolgende_fouten int not null default 0;

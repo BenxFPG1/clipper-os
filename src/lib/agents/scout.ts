@@ -54,6 +54,12 @@ export const MAX_GEVOLGDE_ACCOUNTS = Number(process.env.MAX_TRACKED_ACCOUNTS ?? 
  * lijst zichzelf ververst in plaats van vol te lopen met eenmalige toevalstreffers.
  */
 export const OPRUIM_NA_DAGEN = 30;
+/**
+ * Een 404/gedeactiveerd account is een hard signaal, geen ruis — na dit
+ * aantal opeenvolgende mislukkingen (dus dagen, bij 2 runs/dag) is verder
+ * proberen zonde van de credits.
+ */
+export const MAX_OPEENVOLGENDE_FOUTEN = 3;
 
 const decodedSchema = z.object({
   posts: z.array(
@@ -120,7 +126,7 @@ export async function runScoutAgent(options?: { limitPerAccount?: number }): Pro
   const provider = getMetricsProvider();
 
   const [accountsRes, queriesRes] = await Promise.all([
-    supabase.from('tracked_accounts').select('id, handle, platform, theme').eq('our_own', false),
+    supabase.from('tracked_accounts').select('id, handle, platform, theme, opeenvolgende_fouten, auto_added').eq('our_own', false),
     supabase.from('search_queries').select('id, query, platform, theme').eq('actief', true),
   ]);
   if (accountsRes.error) throw accountsRes.error;
@@ -146,6 +152,13 @@ export async function runScoutAgent(options?: { limitPerAccount?: number }): Pro
         options?.limitPerAccount ?? 30,
       );
       await logProviderUsage(provider.name, 'fetch_account_posts', 1, provider.costPerCallEur);
+
+      // Een geslaagde fetch bewijst dat het account leeft, ongeacht of hij
+      // deze keer de mediaan-drempel haalt — dat telt niet als "fout" en mag
+      // de teller resetten.
+      if (((account.opeenvolgende_fouten as number | null) ?? 0) > 0) {
+        await supabase.from('tracked_accounts').update({ opeenvolgende_fouten: 0 }).eq('id', account.id);
+      }
 
       // Alleen recente posts: zo vergelijken we appels met appels.
       const recent = posts.filter((p) => binnenVenster(p.posted_at));
@@ -186,6 +199,23 @@ export async function runScoutAgent(options?: { limitPerAccount?: number }): Pro
         .eq('id', account.id);
     } catch (e) {
       fouten.push({ bron: `account:@${account.handle}`, error: e instanceof Error ? e.message : String(e) });
+
+      // Een account dat 3 runs op rij hard faalt (404, gedeactiveerd) is dood,
+      // niet tijdelijk stil — dat hoeft niet op de trage 30-dagen-opruiming
+      // (ruimOpgedroogdeAccountsOp) te wachten, die alleen stille-maar-levende
+      // accounts opruimt. Zonder dit werd elke run opnieuw credits verspild aan
+      // exact dezelfde vaste 404's. Alleen automatisch ontdekte accounts: een
+      // handmatig toegevoegd account verwijderen we niet zonder het te zeggen.
+      const fouten_nu = ((account.opeenvolgende_fouten as number | null) ?? 0) + 1;
+      if (fouten_nu >= MAX_OPEENVOLGENDE_FOUTEN && account.auto_added) {
+        await supabase.from('tracked_accounts').delete().eq('id', account.id);
+        fouten.push({
+          bron: `account:@${account.handle}`,
+          error: `verwijderd na ${fouten_nu} mislukte runs op rij`,
+        });
+      } else {
+        await supabase.from('tracked_accounts').update({ opeenvolgende_fouten: fouten_nu }).eq('id', account.id);
+      }
     }
   }
 
