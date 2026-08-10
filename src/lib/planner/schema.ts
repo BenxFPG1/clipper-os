@@ -1,8 +1,8 @@
 import { z } from 'zod';
 
 export const SCHEMA_VERSION = '1.0';
-export const PROMPT_VERSION_CHARACTER_MAP = 'charmap-2.0';
-export const PROMPT_VERSION_PLAN = 'plan-3.0';
+export const PROMPT_VERSION_CHARACTER_MAP = 'charmap-3.1';
+export const PROMPT_VERSION_PLAN = 'plan-4.0';
 
 // ------------------------------------------------------- stap 1: character map
 export const sleutelmomentSchema = z.object({
@@ -33,9 +33,25 @@ export const vondstSchema = z.object({
   waarom: z.string(),
 });
 
+/**
+ * Audio-gemeten momenten (bouwsteen A): stiltes, volumepieken en
+ * tempowisselingen. Puur meetkundig, geen oordeel — de analist gebruikt ze om
+ * vondsten te onderbouwen of te vinden die in de tekst alleen niet opvallen.
+ */
+export const energiemomentSchema = z.object({
+  soort: z.enum(['stilte', 'volumepiek', 'tempowisseling']),
+  start: z.number(),
+  end: z.number(),
+  sterkte: z.number().min(0).max(1),
+});
+export type Energiemoment = z.infer<typeof energiemomentSchema>;
+
 export const characterMapSchema = z.object({
   personen: z.array(persoonSchema).min(1),
-  vondsten: z.array(vondstSchema).optional(),
+  // Verplicht (niet .optional()): bij een optioneel veld liet het model het
+  // in de praktijk soms gewoon helemaal weg in plaats van leeg te laten.
+  // Verplicht in het schema dwingt de tool-call het mee te leveren.
+  vondsten: z.array(vondstSchema),
   spanningslijnen: z.array(
     z.object({
       beschrijving: z.string(),
@@ -66,6 +82,13 @@ export const shotSchema = z.object({
   beeld_effect: z.string().optional(),
   effect_waarom: z.string().optional(),
   focus: z.enum(['links', 'midden', 'rechts']).optional(),
+  /**
+   * De emotiecurve (bouwsteen D): 1 = rustige opbouw, 10 = climax/payoff.
+   * Moet oplopen naar de payoff toe, niet vlak blijven. De montage gebruikt
+   * dit om muziek en effecten mee te laten bewegen; optioneel zodat oudere
+   * plannen zonder dit veld exact hetzelfde blijven renderen.
+   */
+  spanning: z.number().min(1).max(10).optional(),
 });
 
 export const clipSchema = z.object({
@@ -73,6 +96,12 @@ export const clipSchema = z.object({
   structure_type: z.string(),
   prioriteit: z.number().int().min(1),
   verwachte_sterkte: z.enum(['hoog', 'midden', 'vulling']),
+  /**
+   * Het toernooi (bouwsteen B): in het concept een eigen voorlopige
+   * inschatting, in het examen het definitieve, hard onderbouwde oordeel
+   * waarop genadeloos gesnoeid wordt. 1-10.
+   */
+  score: z.number().min(1).max(10).optional(),
   /**
    * De verhaallijn vóór de shots — dezelfde discipline die de scriptwriter
    * beter maakte. Zonder expliciete belofte, open vraag, escalatie en payoff

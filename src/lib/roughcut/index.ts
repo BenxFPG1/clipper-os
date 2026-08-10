@@ -79,6 +79,13 @@ export type Shot = {
    */
   breed?: boolean;
   beeld_effect?: string;
+  /**
+   * De emotiecurve (bouwsteen D), 1-10, uit het plan. Stuurt de muziek-
+   * ducking bij: rustige shots laten iets meer bed door, shots die een piek
+   * moeten voelen duiken dieper weg. Ontbreekt dit (oudere plannen), dan
+   * blijft de vaste 0,34 van vroeger gewoon gelden — geen gedragswijziging.
+   */
+  spanning?: number;
 };
 
 export type BurnOverlay = {
@@ -333,12 +340,25 @@ export async function maakRuweMontage(opties: {
   // moet zijn: payoff-shots en shots met sfx 'stilte'. Dit is het
   // muziek-valt-weg-moment dat de onthulling groot maakt.
   const stilteVensters: { van: number; tot: number }[] = [];
+  // De emotiecurve (bouwsteen D): het bed staat niet overal even hard. Een
+  // shot zonder "spanning" (oudere plannen) krijgt gewoon de oude vaste 0,34
+  // — dat is exact het gedrag van vóór dit veld bestond. Is spanning gezet,
+  // dan zakt het bed dieper weg naarmate de spanning oploopt (0,40 bij rustig
+  // tot 0,22 vlak voor de payoff): het is stiller om de stem juist ván het
+  // moment te laten voelen, niet om het bed harder te laten zwellen — een
+  // opzwellend bed onder pratende mensen klinkt al snel als een fout.
+  const duckVensters: { van: number; tot: number; vol: number }[] = [];
   {
     let cursor = 0;
     for (const shot of gesorteerd) {
       const duur = shot.end - shot.start;
       if (shot.functie === 'payoff' || shot.sfx === 'stilte') {
         stilteVensters.push({ van: Math.max(0, cursor - 0.4), tot: cursor + duur });
+      }
+      if (shot.spanning !== undefined) {
+        const spanning = Math.min(10, Math.max(1, shot.spanning));
+        const vol = 0.4 - ((spanning - 1) / 9) * 0.18;
+        duckVensters.push({ van: cursor, tot: cursor + duur, vol: Math.round(vol * 100) / 100 });
       }
       cursor += duur;
     }
@@ -361,6 +381,15 @@ export async function maakRuweMontage(opties: {
       ? stilteVensters.map((v) => `between(t\,${v.van.toFixed(2)}\,${v.tot.toFixed(2)})`).join('+')
       : '0';
 
+    // Basisniveau van het bed: 0,34 zonder emotiecurve (het oude gedrag,
+    // ongewijzigd), of per shot opgebouwd uit duckVensters als die er zijn.
+    // Geneste if()'s, van laatste naar eerste shot, met 0,34 als bodem voor
+    // elk shot dat geen spanning meekreeg.
+    const basisVolExpr = duckVensters.reduceRight(
+      (acc, v) => `if(between(t\\,${v.van.toFixed(2)}\\,${v.tot.toFixed(2)})\\,${v.vol}\\,${acc})`,
+      '0.34',
+    );
+
     // Ducking in twee lagen. De sidechain volgt de spraak op de voet (snel
     // dicht, traag open, zodat hij niet tussen twee woorden omhoog pompt), en
     // daar bovenop staat de harde nul op de payoff: dát is het moment dat
@@ -370,7 +399,7 @@ export async function maakRuweMontage(opties: {
       `;[${extraIndex}:a]aformat=sample_rates=48000:channel_layouts=stereo,` +
       `atrim=0:${(totaleDuur + 0.5).toFixed(3)},asetpts=PTS-STARTPTS,` +
       `afade=t=in:st=0:d=1.2,afade=t=out:st=${Math.max(0, totaleDuur - 1.2).toFixed(3)}:d=1.2,` +
-      `volume='if(${stilExpr}\,0\,0.34)':eval=frame[muz]` +
+      `volume='if(${stilExpr}\,0\,${basisVolExpr})':eval=frame[muz]` +
       // De spraak wordt hier twee keer gebruikt: als stuursignaal voor de
       // ducking én in de uiteindelijke mix. Eén filterlabel kan maar door één
       // filter opgegeten worden, dus eerst splitsen. Zonder die split loopt de

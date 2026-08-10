@@ -441,3 +441,10 @@ alter table clip_plans add column if not exists edit_prompt_versie text;
 -- (zelfde plan, zelfde bestand) en de evaluatieset kan exact deze grenzen
 -- keuren in plaats van ze opnieuw af te leiden.
 alter table clip_plans add column if not exists montageplan jsonb;
+
+-- ============================================================ uitbreiding v1.5
+-- De oor-laag (bouwsteen A): mechanisch gemeten stiltes, volumepieken en
+-- tempowisselingen uit de bronaudio. Gecached net als character_map — de
+-- meting verandert niet tussen twee planruns op dezelfde video, en opnieuw
+-- audio downloaden en analyseren bij elk plan is zonde.
+alter table videos add column if not exists energie_momenten jsonb;

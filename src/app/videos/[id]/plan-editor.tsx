@@ -49,6 +49,16 @@ export function PlanEditor({
 function ClipCard({ clip, row, variants }: { clip: Clip; row?: ClipRow; variants: ClipRow[] }) {
   const [open, setOpen] = useState(false);
 
+  async function maakHookVariant(hook: { type: string; tekst_overlay: string }) {
+    if (!row) return;
+    await fetch(`/api/clips/${row.id}/variant`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ hook_type: hook.type, hook_text: hook.tekst_overlay }),
+    });
+    window.location.reload();
+  }
+
   return (
     <article className="rounded border border-neutral-800">
       <header className="flex flex-wrap items-center justify-between gap-2 px-4 py-3">
@@ -56,6 +66,11 @@ function ClipCard({ clip, row, variants }: { clip: Clip; row?: ClipRow; variants
           <div className="font-medium">
             <span className="mr-2 text-neutral-500">#{clip.prioriteit}</span>
             {clip.titel_intern}
+            {clip.score !== undefined && (
+              <span className="ml-2 rounded bg-neutral-800 px-2 py-0.5 text-xs text-neutral-300">
+                score {clip.score}/10
+              </span>
+            )}
           </div>
           <div className="text-sm text-neutral-400">
             {clip.structure_type} · {clip.hook.type} · {clip.verwachte_sterkte}
@@ -74,6 +89,63 @@ function ClipCard({ clip, row, variants }: { clip: Clip; row?: ClipRow; variants
         </p>
         <p className="text-sm text-neutral-400">Audio start op: &ldquo;{clip.hook.gesproken_start}&rdquo;</p>
         {clip.context_kaart && <p className="mt-1 text-sm text-neutral-400">Contextkaart: {clip.context_kaart}</p>}
+
+        {clip.verhaallijn && (
+          <div className="mt-2 space-y-0.5 text-sm text-neutral-400">
+            <p>
+              <span className="text-neutral-500">Belofte: </span>
+              {clip.verhaallijn.belofte}
+            </p>
+            <p>
+              <span className="text-neutral-500">Open vraag: </span>
+              {clip.verhaallijn.open_vraag}
+            </p>
+            <p>
+              <span className="text-neutral-500">Payoff: </span>
+              {clip.verhaallijn.payoff}
+            </p>
+          </div>
+        )}
+
+        {clip.hooks && clip.hooks.length > 0 && (
+          <div className="mt-3">
+            <div className="text-xs uppercase tracking-wide text-neutral-500">
+              Drie hooks — elk een publiceerbare variant
+            </div>
+            <ul className="mt-1 space-y-1.5 text-sm">
+              {clip.hooks.map((h, i) => (
+                <li key={i} className="flex flex-wrap items-center gap-2">
+                  <span className="text-neutral-500">{h.type}:</span>
+                  <span>&ldquo;{h.tekst_overlay}&rdquo;</span>
+                  {row && h.tekst_overlay !== clip.hook.tekst_overlay && (
+                    <button
+                      onClick={() => maakHookVariant(h)}
+                      className="rounded border border-neutral-700 px-1.5 py-0.5 text-xs text-neutral-300 hover:text-neutral-100"
+                    >
+                      + als variant posten
+                    </button>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {clip.uitval_risicos && clip.uitval_risicos.length > 0 && (
+          <div className="mt-3">
+            <div className="text-xs uppercase tracking-wide text-neutral-500">
+              Retentie-simulatie: hersteld in het examen
+            </div>
+            <ul className="mt-1 space-y-1 text-sm text-neutral-400">
+              {clip.uitval_risicos.map((u, i) => (
+                <li key={i}>
+                  <span className="font-mono text-xs text-neutral-500">{formatTime(u.seconde)}</span> {u.waarom} —{' '}
+                  <span className="text-neutral-300">{u.fix}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
       </div>
 
       <button
@@ -92,6 +164,7 @@ function ClipCard({ clip, row, variants }: { clip: Clip; row?: ClipRow; variants
                   <th className="py-1 pr-3">#</th>
                   <th className="py-1 pr-3">Tijd</th>
                   <th className="py-1 pr-3">Functie</th>
+                  <th className="py-1 pr-3">Spanning</th>
                   <th className="py-1 pr-3">Fragment</th>
                   <th className="py-1">Edit</th>
                 </tr>
@@ -104,6 +177,7 @@ function ClipCard({ clip, row, variants }: { clip: Clip; row?: ClipRow; variants
                       {formatTime(shot.start)}–{formatTime(shot.end)}
                     </td>
                     <td className="py-1 pr-3 text-neutral-400">{shot.functie}</td>
+                    <td className="py-1 pr-3 text-neutral-400">{shot.spanning ?? '—'}</td>
                     <td className="py-1 pr-3">{shot.transcript_fragment}</td>
                     <td className="py-1 text-neutral-400">{shot.edit_notitie}</td>
                   </tr>

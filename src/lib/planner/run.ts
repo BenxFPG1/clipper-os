@@ -2,7 +2,8 @@ import { db } from '../supabase';
 import { loadVault } from '../vault';
 import { TranscriptSegment, transcriptDuration } from '../ingest/transcript';
 import { generateCharacterMap, generateClipPlan, PROMPT_VERSION } from './index';
-import { SCHEMA_VERSION } from './schema';
+import { SCHEMA_VERSION, Energiemoment } from './schema';
+import { mijnEnergie, renderEnergie } from './energie';
 
 /**
  * Draait de volledige pipeline voor één video en slaat het resultaat op:
@@ -36,10 +37,27 @@ export async function runPlannerForVideo(
   const campaign = video.campaigns as { platform_rules?: unknown; theme?: string | null } | null;
   const vault = await loadVault({ theme: campaign?.theme ?? null });
 
+  // De oor-laag (bouwsteen A): best-effort, en gecached net als de character
+  // map — opnieuw audio downloaden en analyseren bij elk plan is zonde, de
+  // meting verandert niet tussen twee runs op dezelfde video.
+  const energie: Energiemoment[] =
+    !options?.opnieuwAnalyseren && video.energie_momenten
+      ? (video.energie_momenten as Energiemoment[])
+      : await mijnEnergie(video.source_url ?? null, transcript).catch(() => []);
+
+  if (energie !== video.energie_momenten) {
+    await supabase.from('videos').update({ energie_momenten: energie }).eq('id', videoId);
+  }
+
   const characterMap =
     !options?.opnieuwAnalyseren && video.character_map
       ? video.character_map
-      : await generateCharacterMap({ title: video.title, durationSeconds, transcript });
+      : await generateCharacterMap({
+          title: video.title,
+          durationSeconds,
+          transcript,
+          energieText: renderEnergie(energie),
+        });
 
   if (characterMap !== video.character_map) {
     await supabase.from('videos').update({ character_map: characterMap }).eq('id', videoId);

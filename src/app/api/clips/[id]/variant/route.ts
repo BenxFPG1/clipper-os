@@ -7,7 +7,11 @@ import { db } from '@/lib/supabase';
  * wat de Retro-agent nodig heeft om hooks tegen elkaar af te zetten.
  */
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
-  const body = (await req.json()) as { hook_text?: string; titel_intern?: string };
+  // hook_type/hook_text laten toe om een van de drie gesmede hooks (bouwsteen
+  // B) als aparte, los te tracken variant te posten — dat is precies wat de
+  // Retro-agent nodig heeft om de drie hookformules tegen elkaar af te zetten
+  // in plaats van alleen de gekozen winnaar te meten.
+  const body = (await req.json()) as { hook_text?: string; hook_type?: string; titel_intern?: string };
   const supabase = db();
 
   const { data: parent, error } = await supabase.from('clips').select('*').eq('id', params.id).single();
@@ -20,7 +24,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       plan_index: parent.plan_index,
       titel_intern: body.titel_intern ?? `${parent.titel_intern} (variant)`,
       structure_type: parent.structure_type,
-      hook_type: parent.hook_type,
+      hook_type: body.hook_type ?? parent.hook_type,
       hook_text: body.hook_text ?? parent.hook_text,
       status: 'planned',
       variant_of: parent.id,

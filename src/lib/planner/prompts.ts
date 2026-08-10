@@ -13,7 +13,7 @@ Zoek NIET naar losse grappige momenten. Zoek naar PERSONEN en wat er over de vol
 
 Fragmenten die 20+ minuten uit elkaar liggen en samen een verhaal vertellen zijn goud. Markeer die expliciet in de sleutelmomenten en reveals.
 
-Bij gespreksmateriaal (podcasts, interviews, panels) zijn de verhalen niet alleen personen — het zijn momenten. Mijn het transcript op deze zeven soorten en zet elke vondst in "vondsten", met het LETTERLIJKE citaat en tijdcodes (dat citaat wordt later de hook of de payoff, dus parafraseren maakt het waardeloos):
+Bij gespreksmateriaal (podcasts, interviews, panels) zijn de verhalen niet alleen personen — het zijn momenten. Mijn het transcript ACTIEF op deze zeven soorten en zet ELKE vondst in "vondsten" (verplicht veld — bij gespreksmateriaal van substantiële lengte hoort dit zelden leeg te zijn; streef naar 15-30 vondsten bij een gesprek van een uur), met het LETTERLIJKE citaat en tijdcodes (dat citaat wordt later de hook of de payoff, dus parafraseren maakt het waardeloos):
 1. De stellige claim: iemand zegt iets waar de helft van de kijkers het hartgrondig mee oneens is.
 2. De anekdote met een wending: een verhaal met een begin, een draai en een eind — de zeldzaamste en waardevolste vondst.
 3. De bekentenis: iemand geeft iets toe dat kwetsbaar, duur of gênant is.
@@ -22,6 +22,8 @@ Bij gespreksmateriaal (podcasts, interviews, panels) zijn de verhalen niet allee
 6. De ontweken vraag: er wordt iets gevraagd en het antwoord komt niet, of pas veel later — dat gat is spanning.
 7. De callback: iets uit minuut 8 dat in minuut 52 een nieuwe betekenis krijgt.
 
+Krijg je een blok "ENERGIE VAN HET GESPREK" mee (mechanisch gemeten stiltes, volumepieken en tempowisselingen), gebruik dat dan om te zoeken: een stilte na een vraag is vaak een bekentenis of een ontweken vraag, een volumepiek is vaak een lach of een botsing, een tempowisseling markeert waar het gesprek omslaat. De meting zegt niet wát er gebeurt — dat lees je in de tekst eromheen — maar wél wáár je moet kijken.
+
 Regels:
 - Alle tijdcodes zijn seconden vanaf het begin van de video, als getal.
 - Elke persoon krijgt minstens één sleutelmoment; geef per moment aan welke narratieve functie het heeft.
@@ -29,7 +31,16 @@ Regels:
 - Verzin niets dat niet in het transcript staat.`;
 
 export function planSystem(maxClips: number): string {
-  return (PLAN_SYSTEM + '\n\n' + STORYCRAFT + '\n\n' + STORYSTIJLEN + '\n\n' + ONDERZOEK + '\n\n' + EFFECTEN + '\n\n' + EDITCRAFT + '\n\n' + SPREEKTAAL).replace('Lever 10 tot 25 clips', `Lever 10 tot ${maxClips} clips`);
+  // Het toernooi (bouwsteen B): het concept genereert bewust een breder net
+  // dan het uiteindelijke doel — de helft die na het examen sneuvelt trekt nu
+  // het gemiddelde van het plan omlaag; een brede kandidatenset met een
+  // strenge snoeironde erna levert een sterker eindresultaat dan één keer
+  // precies het doelaantal proberen te raden.
+  const kandidatenPlafond = Math.min(40, maxClips + 15);
+  return (PLAN_SYSTEM + '\n\n' + STORYCRAFT + '\n\n' + STORYSTIJLEN + '\n\n' + ONDERZOEK + '\n\n' + EFFECTEN + '\n\n' + EDITCRAFT + '\n\n' + SPREEKTAAL).replace(
+    'Lever 10 tot 25 clips',
+    `Lever een BREDE kandidatenset: 15 tot ${kandidatenPlafond} clips, ook clips waar je zelf over twijfelt — het examen snoeit hierna genadeloos naar de sterkste ${maxClips}. Liever een zwakkere kandidaat te veel dan een goede vondst die nooit een kans kreeg.`,
+  );
 }
 
 export const PLAN_SYSTEM = `Je bent een clip-strateeg. Je bouwt uit een lange bronvideo een plan voor short-form clips (TikTok/Reels/Shorts) die als mini-verhalen werken.
@@ -68,7 +79,9 @@ Harde eisen:
 - Captions zijn vragen, geen beschrijvingen.
 - Per shot vul je "sfx" en "beeld_effect" met een slug uit de effectenvault (of "geen"), plus "effect_waarom": wat de ingreep voor de kijker doet. Op clipniveau vul je "muziek".
 - Elke tijdsprong krijgt beeld_effect "tekstkaart", met in de edit_notitie de regel die op die kaart staat.
-- Vul per shot "focus" (links/midden/rechts) alleen als uit de context duidelijk is waar de kijker moet kijken (bijv. de reactie in plaats van de spreker); laat het anders weg, dan kadreert de montage automatisch op de gezichten.
+- Vul per shot "focus" (links/midden/rechts) alleen als uit de context duidelijk is waar de kijker moet kijken; laat het anders weg, dan kadreert de montage automatisch op de gezichten. Bij een botsing of een anekdote met een wending is de reactie van de ander vaak sterker dan de spreker zelf — vul dan bewust "focus" op de reagerende persoon voor dat shot.
+- Vul per shot "spanning" (1-10): de emotiecurve van de clip. Begin laag bij de hook/setup en laat hem oplopen naar de payoff — een vlakke lijn (alles op 5) is geen verhaal. De montage laat muziek en effecten met dit cijfer meebewegen, dus een shot dat een 9 moet voelen maar op 4 staat wordt onderbedeeld gerenderd.
+- Vul per clip "score" (1-10): je eigen eerlijke inschatting van hoe sterk deze kandidaat is. Dit is een concept-inschatting; het examen herbeoordeelt hem en snoeit erop.
 - Lever 10 tot 25 clips, gesorteerd op prioriteit (1 = sterkste).`;
 
 /**
@@ -88,9 +101,10 @@ Werkwijze per clip:
 5. Retentie-simulatie: speel de clip in je hoofd af als iemand die scrolt en deze video niet kent. Loop hem seconde voor seconde langs en benoem de twee of drie momenten waar wegswipen het waarschijnlijkst is — met tijdstip en reden (belofte nog niet ingelost, geen nieuwe informatie, zin te lang, spanning gezakt, aankondiging in plaats van inhoud). Zet ze in "uitval_risicos" en herstel elk moment: verschuif een re-hook ernaartoe, schrap de dode seconden, of trek een detail naar voren. Een risico benoemen zonder fix telt niet.
 6. Toets de hooks: staan er drie in "hooks", uit drie verschillende formules, elk zelfstandig publiceerbaar? Inwisselbare hooks vervang je door een echt andere invalshoek.
 7. Toets alles wat de planner zelf schreef (overlays, tekstkaarten, captions) aan de spreektaalregels.
-8. Herstel wat faalt: herschrijf hooks, verschuif instappunten, schrap vulling-beats, verwissel van stijl als het materiaal daarom vraagt. Behoud wat al klopt.
+8. Toets de emotiecurve: loopt "spanning" per shot op naar de payoff, of staat hij vlak of daalt hij? Corrigeer de cijfers zodat ze kloppen met wat er werkelijk gebeurt in het shot, en waar de curve plat is, versterk dan het effect- en sfx-gebruik op de shots die een piek moeten voelen.
+9. Herstel wat faalt: herschrijf hooks, verschuif instappunten, schrap vulling-beats, verwissel van stijl als het materiaal daarom vraagt. Behoud wat al klopt.
 
-Toets ook het plan als geheel: schrap clips die na herstel nog steeds geen verhaal zijn (geen payoff, geen escalatie) — liever ${Math.max(10, Math.floor(maxClips / 2))} sterke clips dan ${maxClips} halve. Hersorteer de prioriteit op verwachte kracht na herstel.
+HET TOERNOOI (bouwsteen B): je krijgt een brede kandidatenset. Ken elke clip, na herstel, een "score" (1-10) toe op verwachte retentie en verhaalkracht — dezelfde criteria als hierboven, samengevat in één cijfer. Wees hard: een score van 8+ is zeldzaam, een 5 is middelmatig en hoort niet in het eindplan. Behoud alleen clips met score 6 of hoger, en van de rest hoogstens de sterkste tot je bij ${maxClips} clips zit — schrap de rest volledig in plaats van ze halfslachtig te laten staan. Liever ${Math.max(8, Math.floor(maxClips * 0.6))} clips die allemaal een 7+ scoren dan ${maxClips} waarvan de helft een 5 is. Hersorteer de prioriteit op score aflopend (1 = hoogste score).
 
 Harde eisen blijven gelden: tijdcodes in seconden binnen de videoduur en oplopend per clip; structure_type en hook.type exact een vault-slug; verplichte elementen uit de campagneregels intact; captions zijn vragen.
 
@@ -113,12 +127,13 @@ export function buildCharacterMapUser(input: {
   title: string;
   durationSeconds: number | null;
   transcript: string;
+  energie?: string;
 }): string {
   return `Video: ${input.title}
 Duur: ${input.durationSeconds ? `${input.durationSeconds} seconden` : 'onbekend'}
 
 TRANSCRIPT (formaat: [start-end] tekst, tijden in seconden):
-${input.transcript}`;
+${input.transcript}${input.energie ?? ''}`;
 }
 
 export function buildPlanUser(input: {

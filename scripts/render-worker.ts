@@ -682,6 +682,7 @@ async function verwerk(job: Job) {
                     start: sg.start,
                     end: sg.end,
                     functie: sg.functie,
+                    spanning: (sg as { spanning?: number }).spanning,
                     focusX: sg.focusX,
                     focusY: sg.focusY,
                     zoom: sg.zoom,

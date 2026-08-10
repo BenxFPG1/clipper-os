@@ -32,6 +32,7 @@ export async function generateCharacterMap(input: {
   title: string;
   durationSeconds: number | null;
   transcript: TranscriptSegment[];
+  energieText?: string;
 }): Promise<CharacterMap> {
   return structuredCall({
     system: CHARACTER_MAP_SYSTEM,
@@ -39,6 +40,7 @@ export async function generateCharacterMap(input: {
       title: input.title,
       durationSeconds: input.durationSeconds,
       transcript: renderTranscript(input.transcript),
+      energie: input.energieText,
     }),
     schema: characterMapSchema,
     toolName: 'lever_character_map',
@@ -143,11 +145,24 @@ function repairPlan(plan: ClipPlan, input: PlannerInput): ClipPlan {
         ...clip.hook,
         type: hookSlugs.has(clip.hook.type) ? clip.hook.type : fallbackHook,
       },
+      hooks: clip.hooks?.map((h) => ({
+        ...h,
+        type: hookSlugs.has(h.type) ? h.type : fallbackHook,
+      })),
       shots,
     };
   });
 
-  return { clips: clips.sort((a, b) => a.prioriteit - b.prioriteit) };
+  // Het toernooi (bouwsteen B): sorteert op het examenoordeel (score) als dat
+  // er is, anders op de oorspronkelijke prioriteit. Prioriteit wordt daarna
+  // altijd hernummerd 1..n zodat de dashboardvolgorde klopt, ook als het
+  // model gaten of dubbele nummers leverde.
+  const gesorteerd = [...clips].sort((a, b) => {
+    if (a.score !== undefined && b.score !== undefined && a.score !== b.score) return b.score - a.score;
+    return a.prioriteit - b.prioriteit;
+  });
+
+  return { clips: gesorteerd.map((clip, i) => ({ ...clip, prioriteit: i + 1 })) };
 }
 
 function clamp(value: number, min: number, max: number): number {
