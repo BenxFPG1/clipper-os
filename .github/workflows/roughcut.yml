@@ -56,6 +56,15 @@ jobs:
           sudo unzip -oq /tmp/deno.zip -d /usr/local/bin
           deno --version | head -1
 
+      # pip's wheel-cache bewaren tussen runs: OpenCV en faster-whisper zijn
+      # zwaar genoeg (native builds) dat dit een paar minuten per run scheelt.
+      # Bij een cache-miss (eerste run, of een lege cache) valt dit gewoon
+      # terug op een normale install — geen ander gedrag, alleen sneller.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-roughcut-${{ runner.os }}
+
       # Gezichtsdetectie voor het kadreren van de verticale uitsnede.
       - name: Installeer OpenCV en faster-whisper
         run: pip3 install --quiet "opencv-python-headless<5" "numpy<2.3" faster-whisper

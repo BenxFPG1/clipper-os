@@ -64,6 +64,11 @@ jobs:
           if which ffmpeg; then ffmpeg -version | head -1
           else sudo apt-get update -q && sudo apt-get install -y -q ffmpeg; fi
 
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-montage-tests-${{ runner.os }}
+
       - name: Installeer OpenCV en faster-whisper
         run: pip3 install --quiet opencv-python-headless faster-whisper
 

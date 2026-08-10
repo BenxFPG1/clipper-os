@@ -42,7 +42,11 @@ export const PLAN_EXAMEN_EFFORT = effortFromEnv('PLAN_EXAMEN_EFFORT', 'high');
 // welke clips overblijven aan, op een plan dat al door het toernooi is. Dat
 // is een begrensde taak, geen open denkwerk — 'medium' volstaat.
 export const PLAN_VERHAALDOKTER_EFFORT = effortFromEnv('PLAN_VERHAALDOKTER_EFFORT', 'medium');
-export const SCRIPT_EFFORT = effortFromEnv('SCRIPT_EFFORT', 'xhigh');
+// Was 'xhigh', net als PLAN_EFFORT dat was — dezelfde winst geldt hier: de
+// examenpas bestaat om te herstellen wat het concept mist, dus het concept
+// hoeft niet op het duurste niveau te draaien. 'high' scheelt ruwweg de helft
+// van de doorlooptijd van deze call.
+export const SCRIPT_EFFORT = effortFromEnv('SCRIPT_EFFORT', 'high');
 // Zelfde redenering als bij het plan: de examinator toetst tegen vaste kaders.
 export const SCRIPT_EXAMEN_EFFORT = effortFromEnv('SCRIPT_EXAMEN_EFFORT', 'high');
 export const AGENT_EFFORT = effortFromEnv('AGENT_EFFORT', 'high');
