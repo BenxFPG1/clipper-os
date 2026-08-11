@@ -107,7 +107,7 @@ export async function controleerScript(
     let dekking = 1;
     if (fragmenten.length > 0) {
       const scores = fragmenten.map((f) => {
-        const doel = f.split(/\s+/).map(norm).filter((w) => w.length >= 3);
+        const doel = f.split(/[\s-]+/).map(norm).filter((w) => w.length >= 3);
         if (doel.length === 0) return 1;
         return doel.filter((w) => inClip.has(w)).length / doel.length;
       });
@@ -115,8 +115,21 @@ export async function controleerScript(
     }
 
     // Per segment: vind de kop van zijn fragment terug in wat er klinkt.
+    // Zelfde meetbug als bij de aanloop-detectie hieronder, en hier: een
+    // fragment dat begint met een kort woordje ("en dat is Platina") werd
+    // stelselmatig gemist, omdat de kandidatenlijst woorden onder de 3
+    // letters wegfiltert — en dus precies de eigen openingswoorden niet
+    // herkent. Eerst een exacte match op de eerste twee woorden proberen
+    // (zonder lengte-ondergrens); de oude, ruimere heuristiek blijft de
+    // terugval voor als whisper het allereerste woord anders hoorde.
     const zoekKop = (fragment: string): number | null => {
-      const kop = fragment.split(/\s+/).map(norm).filter((w) => w.length >= 3).slice(0, 5);
+      const kopRuw = fragment.split(/[\s-]+/).map(norm).filter(Boolean);
+      if (kopRuw[0] && kopRuw[1]) {
+        for (let i = 0; i < woorden.length; i++) {
+          if (woorden[i].n === kopRuw[0] && woorden[i + 1]?.n === kopRuw[1]) return i;
+        }
+      }
+      const kop = fragment.split(/[\s-]+/).map(norm).filter((w) => w.length >= 3).slice(0, 5);
       for (let i = 0; i < woorden.length; i++) {
         if (kop.includes(woorden[i].n) && (kop.includes(woorden[i + 1]?.n) || kop.includes(woorden[i + 2]?.n))) {
           return i;
@@ -154,7 +167,7 @@ export async function controleerScript(
       // dát verklaarde waarom een clip die exact op zijn scripttekst begon
       // ("En dan is er nog het waterstofverhaal") toch als "aanloop: En dan
       // is er" werd afgekeurd.
-      const kopRuw = eersteFragment.split(/\s+/).map(norm).filter(Boolean);
+      const kopRuw = eersteFragment.split(/[\s-]+/).map(norm).filter(Boolean);
       if (kopRuw[0] && kopRuw[1]) {
         for (let i = 0; i < Math.min(woorden.length, 30) && beginIndex < 0; i++) {
           if (woorden[i].n === kopRuw[0] && woorden[i + 1]?.n === kopRuw[1]) beginIndex = i;
@@ -165,7 +178,7 @@ export async function controleerScript(
       // 3+ letters ergens dicht bij elkaar) — voor als whisper het allereerste
       // woord van de zin anders hoorde en de exacte match hierboven mist.
       if (beginIndex < 0) {
-        const kop = eersteFragment.split(/\s+/).map(norm).filter((w) => w.length >= 3).slice(0, 5);
+        const kop = eersteFragment.split(/[\s-]+/).map(norm).filter((w) => w.length >= 3).slice(0, 5);
         for (let i = 0; i < Math.min(woorden.length, 30) && beginIndex < 0; i++) {
           // Twee opeenvolgende kopwoorden is genoeg bewijs; transcriptie mist er
           // altijd wel een.
