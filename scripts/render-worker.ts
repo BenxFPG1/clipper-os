@@ -784,24 +784,62 @@ async function verwerk(job: Job) {
         // vraag). Dat is alleen betrouwbaar te horen in het eindbestand — dus
         // corrigeren we het beginpunt en renderen we één keer opnieuw.
         const eerste = segmenten[0];
-        if (script.aanloop && poging === 1 && eerste && eerste.end - eerste.start - script.aanloop.seconden > 1) {
-          console.log(
-            `     scriptcontrole: clip begint met "${script.aanloop.tekst}" (${script.aanloop.seconden}s vóór het script); beginpunt gecorrigeerd, opnieuw renderen`,
-          );
-          // Een minder strakke marge dan je zou willen: de woordtijden van het
-          // transcriptiemodel zitten er zomaar drie tienden naast, en te strak
-          // corrigeren sneed het eerste scriptwoord aan. Een restje aanloop
-          // valt onder de zachte fade; een half eerste woord hoor je altijd.
-          eerste.start += Math.max(0, script.aanloop.seconden - 0.45);
-          eerste.zachtBegin = true;
-          // De grens is verschoven, dus alle metingen van dit segment zijn
-          // ongeldig — ook het spoor, anders volgt de camera het oude tijdvak.
-          eerste.gezicht = undefined;
-          eerste.spoor = undefined;
-          await vulGezichtsFocus(bronPad, [eerste]);
-          await meetSpoor(bronPad, [eerste]);
-          corrigeerKadrering([eerste]);
-          continue;
+        // Was 'poging === 1': één poging bleek soms niet genoeg. Tot poging 2
+        // mag hij het nog een keer proberen; de poort hieronder blijft sowieso
+        // elke ronde controleren.
+        //
+        // LET OP — geverifieerd met echte re-renders, nog niet opgelost: bij
+        // een deel van de gevallen trekt de POORT halfFragment-regel (regel 0,
+        // hierboven) de correctie van hier weer voor een groot deel terug —
+        // die regel ziet een beginpunt ná het gemeten ankerpunt aan voor "start
+        // ligt middenin het fragment" en herstelt naar het anker, ook als het
+        // ankerpunt zelf de bron van de aanloop is. De twee regels trekken dan
+        // over meerdere rondes tegen elkaar in en komen ergens halverwege tot
+        // stilstand — vaak nog altijd met meetbare aanloop in de uiteindelijke
+        // keuring. Bij een enkel shot met een heel kort, generiek scriptzinnetje
+        // ("En dat is Platina") bleek het onderliggende ankerpunt zelf fout: de
+        // woordanker vond met hoge score een eerder, verkeerd voorkomen van
+        // diezelfde korte zin in de bron. Dat is een apart, dieper probleem in
+        // de ankerbetrouwbaarheid bij korte/generieke fragmenten, niet iets wat
+        // deze correctielus kan oplossen door simpelweg te blijven proberen.
+        if (script.aanloop && poging <= 2 && eerste) {
+          const resterend = eerste.end - eerste.start - script.aanloop.seconden;
+          if (resterend > 1) {
+            console.log(
+              `     scriptcontrole: clip begint met "${script.aanloop.tekst}" (${script.aanloop.seconden}s vóór het script); beginpunt gecorrigeerd, opnieuw renderen`,
+            );
+            // Een minder strakke marge dan je zou willen: de woordtijden van het
+            // transcriptiemodel zitten er zomaar drie tienden naast, en te strak
+            // corrigeren sneed het eerste scriptwoord aan. Een restje aanloop
+            // valt onder de zachte fade; een half eerste woord hoor je altijd.
+            eerste.start += Math.max(0, script.aanloop.seconden - 0.45);
+            eerste.zachtBegin = true;
+            // De grens is verschoven, dus alle metingen van dit segment zijn
+            // ongeldig — ook het spoor, anders volgt de camera het oude tijdvak.
+            eerste.gezicht = undefined;
+            eerste.spoor = undefined;
+            await vulGezichtsFocus(bronPad, [eerste]);
+            await meetSpoor(bronPad, [eerste]);
+            corrigeerKadrering([eerste]);
+            continue;
+          } else if (eerste.planStart !== undefined && eerste.planStart > eerste.start + 0.3) {
+            // De aanloop is bijna het hele shot: trimmen zou er vrijwel niets
+            // van overlaten, dus vertrouwen we de gemeten aanloop-lengte hier
+            // niet blind (die kwam kennelijk van een verkeerd zinsbegin, niet
+            // van een paar losse woorden). Terugvallen op het plan, zelfde
+            // reddingspunt als bij een niet-teruggevonden kop hieronder.
+            console.log(
+              `     scriptcontrole: aanloop (${script.aanloop.seconden}s) beslaat vrijwel het hele shot; beginpunt terug naar plan ${eerste.planStart.toFixed(2)}`,
+            );
+            eerste.start = Math.max(0, eerste.planStart - 0.1);
+            eerste.zachtBegin = true;
+            eerste.gezicht = undefined;
+            eerste.spoor = undefined;
+            await vulGezichtsFocus(bronPad, [eerste]);
+            await meetSpoor(bronPad, [eerste]);
+            corrigeerKadrering([eerste]);
+            continue;
+          }
         }
 
         // Fragmenten waarvan de kop nergens klinkt zijn middenin de zin
