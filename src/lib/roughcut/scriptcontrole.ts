@@ -38,7 +38,52 @@ export type ScriptOordeel = {
   perShot: { volgorde: number; gevonden: boolean; opSeconde: number | null }[];
 };
 
-const norm = (t: string) => t.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+export const norm = (t: string) => t.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+
+/**
+ * Zoekt waar de kop van een fragment voor het eerst voorkomt in een
+ * woordenreeks. Dit is de kern van zowel de aanloop-detectie als "script
+ * gevolgd" — allebei vroegen ze zich af "waar begint dit stukje tekst
+ * écht in wat er te horen is", en allebei hadden ze onafhankelijk
+ * dezelfde twee meetbugs, tot ze hier samengevoegd werden:
+ *
+ * 1. Een fragment dat begint met een kort woordje ("en", "is", "er", "het")
+ *    werd gemist als de kandidatenlijst woorden onder de 3 letters
+ *    wegfiltert — de zoektocht sloeg dan de eigen, correcte openingswoorden
+ *    van de zin over en vond "bewijs" pas bij het eerste lange woord erna.
+ *    Zo werd een clip die exact op zijn scripttekst begon ("En dan is er
+ *    nog het waterstofverhaal") afgekeurd als "aanloop: En dan is er".
+ * 2. Een koppelteken in de scripttekst ("Platina-markt") werd door de
+ *    tokenizer tot één woord samengeplakt, terwijl whisper het losgesproken
+ *    hoort als twee woorden ("platina" + "markt") — waardoor de exacte
+ *    match zijn doel domweg miste.
+ *
+ * Twee stappen: eerst een exacte match op de eerste twee woorden van het
+ * fragment (geen lengte-ondergrens, koppeltekens tellen als woordgrens) —
+ * het sterkste bewijs. Lukt dat niet (whisper hoorde het allereerste woord
+ * anders), dan de ruimere terugval: twee van de eerste vijf woorden van
+ * 3+ letters ergens dicht bij elkaar; transcriptie mist er altijd wel een.
+ */
+export function vindKopIndex(
+  fragment: string,
+  woorden: { n: string }[],
+  limiet = woorden.length,
+): number | null {
+  const grens = Math.min(limiet, woorden.length);
+  const kopRuw = fragment.split(/[\s-]+/).map(norm).filter(Boolean);
+  if (kopRuw[0] && kopRuw[1]) {
+    for (let i = 0; i < grens; i++) {
+      if (woorden[i].n === kopRuw[0] && woorden[i + 1]?.n === kopRuw[1]) return i;
+    }
+  }
+  const kop = fragment.split(/[\s-]+/).map(norm).filter((w) => w.length >= 3).slice(0, 5);
+  for (let i = 0; i < grens; i++) {
+    if (kop.includes(woorden[i].n) && (kop.includes(woorden[i + 1]?.n) || kop.includes(woorden[i + 2]?.n))) {
+      return i;
+    }
+  }
+  return null;
+}
 
 export async function controleerScript(
   montagePad: string,
@@ -115,32 +160,10 @@ export async function controleerScript(
     }
 
     // Per segment: vind de kop van zijn fragment terug in wat er klinkt.
-    // Zelfde meetbug als bij de aanloop-detectie hieronder, en hier: een
-    // fragment dat begint met een kort woordje ("en dat is Platina") werd
-    // stelselmatig gemist, omdat de kandidatenlijst woorden onder de 3
-    // letters wegfiltert — en dus precies de eigen openingswoorden niet
-    // herkent. Eerst een exacte match op de eerste twee woorden proberen
-    // (zonder lengte-ondergrens); de oude, ruimere heuristiek blijft de
-    // terugval voor als whisper het allereerste woord anders hoorde.
-    const zoekKop = (fragment: string): number | null => {
-      const kopRuw = fragment.split(/[\s-]+/).map(norm).filter(Boolean);
-      if (kopRuw[0] && kopRuw[1]) {
-        for (let i = 0; i < woorden.length; i++) {
-          if (woorden[i].n === kopRuw[0] && woorden[i + 1]?.n === kopRuw[1]) return i;
-        }
-      }
-      const kop = fragment.split(/[\s-]+/).map(norm).filter((w) => w.length >= 3).slice(0, 5);
-      for (let i = 0; i < woorden.length; i++) {
-        if (kop.includes(woorden[i].n) && (kop.includes(woorden[i + 1]?.n) || kop.includes(woorden[i + 2]?.n))) {
-          return i;
-        }
-      }
-      return null;
-    };
     const perShot = segmenten
       .filter((sg) => sg.transcript_fragment && sg.transcript_fragment.length > 10)
       .map((sg) => {
-        const idx = zoekKop(sg.transcript_fragment as string);
+        const idx = vindKopIndex(sg.transcript_fragment as string, woorden);
         return {
           volgorde: sg.volgorde,
           gevonden: idx !== null,
@@ -150,43 +173,13 @@ export async function controleerScript(
 
     // Aanloop: zoek waar de eerste scriptzin begint in wat er werkelijk
     // klinkt. Alles daarvóór is meegenomen bronmateriaal dat het plan niet
-    // vroeg. Kleine adempauzes zijn prima; hele woorden niet.
+    // vroeg. Kleine adempauzes zijn prima; hele woorden niet. Alleen de
+    // eerste 30 woorden van de clip zijn relevant — dit gaat over het begín,
+    // niet over de rest.
     let aanloop: ScriptOordeel['aanloop'] = null;
     const eersteFragment = fragmenten[0];
     if (eersteFragment) {
-      let beginIndex = -1;
-
-      // Sterkste bewijs eerst: de eerste twee woorden van het fragment zélf,
-      // zónder de drieletter-ondergrens. Nederlandse zinnen beginnen bijna
-      // altijd met een kort woordje ("en", "is", "er", "het") — dat woordje
-      // hoort bij de zin, niet bij de aanloop. Met alleen 3+ letters in de
-      // kandidatenlijst (zie hieronder) sloeg de zoektocht die korte
-      // woordjes stelselmatig over en vond hij het "bewijs" pas bij het
-      // eerste lange woord erna — waarmee de eigen, correcte openingswoorden
-      // van de zin zelf als ongewenste aanloop werden aangemerkt. Precies
-      // dát verklaarde waarom een clip die exact op zijn scripttekst begon
-      // ("En dan is er nog het waterstofverhaal") toch als "aanloop: En dan
-      // is er" werd afgekeurd.
-      const kopRuw = eersteFragment.split(/[\s-]+/).map(norm).filter(Boolean);
-      if (kopRuw[0] && kopRuw[1]) {
-        for (let i = 0; i < Math.min(woorden.length, 30) && beginIndex < 0; i++) {
-          if (woorden[i].n === kopRuw[0] && woorden[i + 1]?.n === kopRuw[1]) beginIndex = i;
-        }
-      }
-
-      // Terugval op het oude, ruimere patroon (2 van de eerste woorden van
-      // 3+ letters ergens dicht bij elkaar) — voor als whisper het allereerste
-      // woord van de zin anders hoorde en de exacte match hierboven mist.
-      if (beginIndex < 0) {
-        const kop = eersteFragment.split(/[\s-]+/).map(norm).filter((w) => w.length >= 3).slice(0, 5);
-        for (let i = 0; i < Math.min(woorden.length, 30) && beginIndex < 0; i++) {
-          // Twee opeenvolgende kopwoorden is genoeg bewijs; transcriptie mist er
-          // altijd wel een.
-          const hit = kop.includes(woorden[i].n) && (kop.includes(woorden[i + 1]?.n) || kop.includes(woorden[i + 2]?.n));
-          if (hit) beginIndex = i;
-        }
-      }
-
+      const beginIndex = vindKopIndex(eersteFragment, woorden, 30) ?? -1;
       if (beginIndex > 0) {
         const seconden = woorden[beginIndex].s;
         if (seconden > 0.7) {

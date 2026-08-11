@@ -69,6 +69,29 @@ console.log('poort — regel 1: geen knip in een woord');
   const { ingrepen } = poort([shot(1, 10.75, 12.3)], woorden);
   toets('laat een correcte knip met rust', ingrepen.length === 0, JSON.stringify(ingrepen));
 }
+{
+  // De bug die "geen vreemde aanloop" keer op keer liet falen: een correctie
+  // verzette start/eind, maar liet ankerStart/ankerEind op de oude waarde
+  // staan — waarna regel 0 (halfFragment) de grens de eerstvolgende ronde
+  // straal terugtrok naar dat oude, inmiddels foute anker. Hier gesimuleerd:
+  // een stale ankerStart die nog op de oude (foute) waarde staat vóórdat
+  // regel 1 de knip naar de woordgrens verzet — het anker moet meeverzetten,
+  // anders vecht een volgende poort()-ronde het weer terug.
+  const s = shot(1, 11.3, 12.3);
+  (s as { ankerStart?: number }).ankerStart = 11.3;
+  const { segmenten } = poort([s], woorden);
+  // Regel 1b (ademruimte) mag de grens ná regel 1 nog een fractie verzetten
+  // zonder het anker te synchroniseren — dat is bewust onaangeroerd gelaten
+  // omdat de marge (max 0,12s) ruim onder de 0,15s zit waarop regel 0
+  // ingrijpt. De echte garantie is dus niet "exact gelijk", maar "blijft
+  // binnen de tolerantie van regel 0" — anders vecht de eerstvolgende
+  // poort()-ronde het alsnog terug.
+  toets(
+    'ankerStart blijft binnen regel 0s tolerantie van de woordgrens-correctie',
+    Math.abs((segmenten[0].ankerStart ?? 0) - segmenten[0].start) < 0.15,
+    `ankerStart=${segmenten[0].ankerStart} start=${segmenten[0].start}`,
+  );
+}
 
 console.log('poort — regel 1b: ademruimte rond de knip');
 {

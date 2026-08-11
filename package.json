@@ -18,7 +18,8 @@
     "test:poort": "tsx scripts/test-poort.ts",
     "eval:montage": "tsx scripts/eval-montage.ts",
     "test:scriptpoort": "tsx scripts/test-scriptpoort.ts",
-    "test:verhaaldokter": "tsx scripts/test-verhaaldokterpoort.ts"
+    "test:verhaaldokter": "tsx scripts/test-verhaaldokterpoort.ts",
+    "test:scriptcontrole": "tsx scripts/test-scriptcontrole.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.115.0",

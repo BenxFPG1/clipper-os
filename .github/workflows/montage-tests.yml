@@ -24,6 +24,7 @@ on:
       - 'scripts/test-poort.ts'
       - 'scripts/test-scriptpoort.ts'
       - 'scripts/test-verhaaldokterpoort.ts'
+      - 'scripts/test-scriptcontrole.ts'
       - 'scripts/eval-montage.ts'
       - '.github/workflows/montage-tests.yml'
   pull_request:
@@ -47,6 +48,8 @@ jobs:
         run: npm run test:scriptpoort
       - name: Regels van de verhaaldokter-poort
         run: npm run test:verhaaldokter
+      - name: Regels van de scriptcontrole
+        run: npm run test:scriptcontrole
 
   keuring:
     runs-on: ubuntu-latest
