@@ -64,6 +64,20 @@ export const norm = (t: string) => t.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '
  * anders), dan de ruimere terugval: twee van de eerste vijf woorden van
  * 3+ letters ergens dicht bij elkaar; transcriptie mist er altijd wel een.
  */
+/**
+ * Verdraagt whisper-verhaspelingen: exact gelijk, of (bij woorden van 5+
+ * letters) dezelfde eerste vier letters. Zelfde principe als lijkt() in
+ * woorden.ts. Nodig omdat ongebruikelijke woorden ("future-positionering")
+ * in de terugluistering nét anders uit de transcriptie komen dan in het
+ * script staan — en een shot dan als "niet terug te horen" werd afgekeurd
+ * terwijl de knip gewoon klopte.
+ */
+function lijktOp(a: string | undefined, b: string | undefined): boolean {
+  if (!a || !b) return false;
+  if (a === b) return true;
+  return a.length >= 5 && b.length >= 5 && a.slice(0, 4) === b.slice(0, 4);
+}
+
 export function vindKopIndex(
   fragment: string,
   woorden: { n: string }[],
@@ -77,8 +91,9 @@ export function vindKopIndex(
     }
   }
   const kop = fragment.split(/[\s-]+/).map(norm).filter((w) => w.length >= 3).slice(0, 5);
+  const inKop = (w: string | undefined) => kop.some((k) => lijktOp(k, w));
   for (let i = 0; i < grens; i++) {
-    if (kop.includes(woorden[i].n) && (kop.includes(woorden[i + 1]?.n) || kop.includes(woorden[i + 2]?.n))) {
+    if (inKop(woorden[i].n) && (inKop(woorden[i + 1]?.n) || inKop(woorden[i + 2]?.n))) {
       return i;
     }
   }

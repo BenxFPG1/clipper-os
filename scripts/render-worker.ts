@@ -30,7 +30,7 @@ import {
 } from '../src/lib/roughcut/knipcontrole';
 import { controleerScript } from '../src/lib/roughcut/scriptcontrole';
 import { haalBronWoorden, vindFragment } from '../src/lib/roughcut/woorden';
-import { poort } from '../src/lib/roughcut/poort';
+import { poort, verzetGrens } from '../src/lib/roughcut/poort';
 import { keurMontage } from '../src/lib/roughcut/keuring';
 import { resolveBinary } from '../src/lib/ingest/binaries';
 import { pythonMetOpenCV } from '../src/lib/python';
@@ -412,13 +412,7 @@ async function verwerk(job: Job) {
             // dan een knip midden op een klinker.
             const dal = await zoekStilstePunt(bronPad, o.seconde, o.kant);
             if (dal) {
-              if (o.kant === 'begin') {
-                seg.start = dal.seconde;
-                seg.ankerStart = dal.seconde;
-              } else {
-                seg.end = dal.seconde;
-                seg.ankerEind = dal.seconde;
-              }
+              verzetGrens(seg, o.kant === 'begin' ? { start: dal.seconde } : { end: dal.seconde });
               verzet++;
               console.log(
                 `     knip ${o.volgorde} ${o.kant}: geen pauze, wel een dal → ${dal.seconde.toFixed(2)}s (${dal.db} dB)`,
@@ -436,13 +430,7 @@ async function verwerk(job: Job) {
             continue;
           }
           geprobeerd.set(sleutel, [...eerder, nieuwPunt]);
-          if (o.kant === 'begin') {
-            seg.start = nieuwPunt;
-            seg.ankerStart = nieuwPunt;
-          } else {
-            seg.end = nieuwPunt;
-            seg.ankerEind = nieuwPunt;
-          }
+          verzetGrens(seg, o.kant === 'begin' ? { start: nieuwPunt } : { end: nieuwPunt });
           verzet++;
           console.log(
             `     knip ${o.volgorde} ${o.kant}: ${o.db} dB op ${o.seconde.toFixed(2)}s → ${nieuwPunt.toFixed(2)}s`,
@@ -469,8 +457,7 @@ async function verwerk(job: Job) {
           console.log(
             `     overlap: shot ${a.volgorde} liep ${overlap.toFixed(1)}s in shot ${b.volgorde}; eind terug naar ${b.start.toFixed(2)}s`,
           );
-          a.end = b.start;
-          a.ankerEind = b.start;
+          verzetGrens(a, { end: b.start });
         }
       }
     }
@@ -540,8 +527,7 @@ async function verwerk(job: Job) {
           zachtBegin: false,
         };
         (tweede as { subKnip?: boolean }).subKnip = true;
-        seg.end = wissel;
-        seg.ankerEind = wissel;
+        verzetGrens(seg, { end: wissel });
         seg.exact = false;
         seg.focusX = voor;
         seg.spoor = undefined;
@@ -754,6 +740,11 @@ async function verwerk(job: Job) {
     let montage!: Awaited<ReturnType<typeof maakRuweMontage>>;
     let beeldRondeGedaan = false;
     let keuringsuitslag: Awaited<ReturnType<typeof keurMontage>> | null = null;
+    // Touwtrek-detectie: dezelfde poort-ingreep op hetzelfde shot in
+    // opeenvolgende rondes betekent dat een correctielaag en een poortregel
+    // tegen elkaar in werken — precies de stille oscillatie die de
+    // aanloop-bug wekenlang verborg. Dat mag nooit meer geruisloos gebeuren.
+    const eerdereIngrepen = new Map<string, number>();
     for (let poging = 1; poging <= 4; poging++) {
     // De poort staat vóór élke render, niet alleen vóór de eerste. De
     // correctielussen hieronder (aanloop, ontbrekend fragment, beeldcontrole)
@@ -765,6 +756,16 @@ async function verwerk(job: Job) {
       const her = poort(segmenten, bronWoorden);
       for (const ing of her.ingrepen) {
         console.log(`     POORT (ronde ${poging}) shot ${ing.volgorde} [${ing.regel}]: ${ing.wat}`);
+        const sleutel = `${ing.volgorde}|${ing.regel}`;
+        const keer = (eerdereIngrepen.get(sleutel) ?? 0) + 1;
+        eerdereIngrepen.set(sleutel, keer);
+        if (keer >= 3) {
+          console.log(
+            `     ⚠ POORT-TEGENWERKING shot ${ing.volgorde} [${ing.regel}]: dezelfde ingreep voor de ${keer}e ronde op rij — ` +
+              `een correctielaag en een poortregel trekken tegen elkaar in. Dit wijst op een verweesd anker of een fout meetpunt; ` +
+              `zie verzetGrens() in poort.ts.`,
+          );
+        }
       }
       if (her.segmenten.length !== segmenten.length) {
         segmenten.length = 0;
@@ -834,16 +835,8 @@ async function verwerk(job: Job) {
             // transcriptiemodel zitten er zomaar drie tienden naast, en te strak
             // corrigeren sneed het eerste scriptwoord aan. Een restje aanloop
             // valt onder de zachte fade; een half eerste woord hoor je altijd.
-            eerste.start += Math.max(0, script.aanloop.seconden - 0.45);
+            verzetGrens(eerste, { start: eerste.start + Math.max(0, script.aanloop.seconden - 0.45) });
             eerste.zachtBegin = true;
-            // KERN VAN DE FIX: ankerStart meeverschuiven. Zonder dit denkt
-            // poort-regel 0 (halfFragment) op de eerstvolgende ronde nog
-            // steeds dat het OUDE ankerpunt de waarheid is, en trekt de net
-            // gecorrigeerde grens er meteen weer naartoe terug — een
-            // correctie die zichzelf ongedaan maakt, ronde na ronde, zonder
-            // ooit een foutmelding. Precies dit was de reden dat "geen
-            // vreemde aanloop" bleef falen ondanks de correctie hierboven.
-            eerste.ankerStart = eerste.start;
             // De grens is verschoven, dus alle metingen van dit segment zijn
             // ongeldig — ook het spoor, anders volgt de camera het oude tijdvak.
             eerste.gezicht = undefined;
@@ -861,11 +854,8 @@ async function verwerk(job: Job) {
             console.log(
               `     scriptcontrole: aanloop (${script.aanloop.seconden}s) beslaat vrijwel het hele shot; beginpunt terug naar plan ${eerste.planStart.toFixed(2)}`,
             );
-            eerste.start = Math.max(0, eerste.planStart - 0.1);
+            verzetGrens(eerste, { start: Math.max(0, eerste.planStart - 0.1) });
             eerste.zachtBegin = true;
-            // Zelfde reden als hierboven: het oude (foute) ankerpunt moet
-            // niet blijven staan, anders trekt regel 0 dit weer terug.
-            eerste.ankerStart = eerste.start;
             eerste.gezicht = undefined;
             eerste.spoor = undefined;
             await vulGezichtsFocus(bronPad, [eerste]);
@@ -889,11 +879,7 @@ async function verwerk(job: Job) {
               console.log(
                 `     scriptcontrole shot ${ps.volgorde}: fragmentbegin niet terug te horen; start terug van ${seg.start.toFixed(2)} naar plan ${seg.planStart.toFixed(2)}`,
               );
-              seg.start = Math.max(0, seg.planStart - 0.1);
-              // Zelfde reddingspunt als bij de aanloop-correctie hierboven:
-              // zonder dit trekt poort-regel 0 de grens de eerstvolgende
-              // ronde terug naar het oude, inmiddels foute ankerpunt.
-              seg.ankerStart = seg.start;
+              verzetGrens(seg, { start: Math.max(0, seg.planStart - 0.1) });
             } else {
               // We staan al op het plan en de kop is alsnog niet terug te
               // horen. Vroeger stapte hij hier blind 1,5s terug — dat was een
@@ -1384,10 +1370,20 @@ async function vulGezichtsFocus(bronPad: string, segmenten: Shot[]): Promise<voi
   // split screen springt om. Eén meting op het midden gaf dan een kadrering die
   // de rest van het shot nergens op sloeg — letterlijk een uitsnede van de
   // boekenkast.
+  //
+  // Plus het instapmoment (start + 0,15s): dat is exact het eerste punt
+  // waarop de keuring de centrering toetst. Zonder deze meting beoordeelde
+  // het systeem een moment dat het nooit gemeten had — een spreker die net ná
+  // de knip nog in beweging is stond dan structureel uit het midden op
+  // precies de seconde die de keuring pakt, terwijl alle drie de gemeten
+  // momenten keurig klopten. Meet wat je beoordeelt.
   const MOMENTEN = [0.25, 0.5, 0.75];
-  const tijden = zonderScriptFocus.flatMap((s) =>
-    MOMENTEN.map((f) => s.start + (s.end - s.start) * f),
-  );
+  const PUNTEN_PER_SHOT = MOMENTEN.length + 1;
+  const tijden = zonderScriptFocus.flatMap((s) => {
+    const duur = s.end - s.start;
+    const instap = s.start + Math.min(0.15, duur * 0.2);
+    return [instap, ...MOMENTEN.map((f) => s.start + duur * f)];
+  });
   try {
     const uit = await new Promise<string>((klaar, fout) => {
       const py = pythonMetOpenCV();
@@ -1423,11 +1419,25 @@ async function vulGezichtsFocus(bronPad: string, segmenten: Shot[]): Promise<voi
 
     let breedGeteld = 0;
     zonderScriptFocus.forEach((s, i) => {
-      const groep = posities.slice(i * MOMENTEN.length, (i + 1) * MOMENTEN.length).filter(Boolean) as Meting[];
+      const groep = posities.slice(i * PUNTEN_PER_SHOT, (i + 1) * PUNTEN_PER_SHOT).filter(Boolean) as Meting[];
       if (groep.length === 0) return;
 
       const xs = groep.map((m) => m.x).sort((a, b) => a - b);
-      s.focusX = xs[Math.floor(xs.length / 2)];
+      // Eerst de mediaan — puur als referentie om uitschieters (de
+      // gesprekspartner) uit te filteren.
+      const mediaanX = xs[Math.floor(xs.length / 2)];
+      const dichtbijX = xs.filter((x) => Math.abs(x - mediaanX) <= 0.2);
+      const kernX = dichtbijX.length >= 2 ? dichtbijX : xs;
+      // Dan het kader op het MIDDEN VAN DE UITERSTEN van wat overblijft, niet
+      // op de mediaan. De keuring eist "overal binnen 14% van het midden" —
+      // een minimax-eis — en die haal je door de grootste afwijking te
+      // minimaliseren. Met de mediaan bleef een spreker die alleen op het
+      // instapmoment iets verschoven staat (net na de knip, nog in beweging)
+      // structureel buiten de norm op precies dat ene moment, terwijl alle
+      // andere momenten perfect waren; het midden van de uitersten verdeelt
+      // die afwijking over beide kanten en blijft bij geclusterde metingen
+      // gewoon gelijk aan de mediaan.
+      s.focusX = (kernX[0] + kernX[kernX.length - 1]) / 2;
       const ws = groep.map((m) => m.breedte).sort((a, b) => a - b);
       s.focusW = ws[Math.floor(ws.length / 2)];
       // Ook de kleinste meting bewaren: bij een gevolgd shot moet de zoom
@@ -1446,17 +1456,10 @@ async function vulGezichtsFocus(bronPad: string, segmenten: Shot[]): Promise<voi
 
       // Hoe ver beweegt de spreker binnen dit shot? Dat begrenst straks de
       // zoom: precies genoeg om hem de hele tijd in beeld te houden, in plaats
-      // van uit voorzorg helemaal niet inzoomen.
-      //
-      // Niet het verschil tussen de uiterste metingen nemen: pakt de detectie op
-      // één van de drie momenten de gesprekspartner in plaats van de spreker,
-      // dan lijkt hij een halve beeldbreedte te verspringen en zoomen we
-      // helemaal niet meer in. Daarom eerst de uitschieters eruit, en dan pas de
-      // spreiding van wat overblijft.
-      const mediaan = s.focusX;
-      const dichtbij = xs.filter((x) => Math.abs(x - mediaan) <= 0.2);
-      const kern = dichtbij.length >= 2 ? dichtbij : xs;
-      s.spreiding = kern[kern.length - 1] - kern[0];
+      // van uit voorzorg helemaal niet inzoomen. De kern (uitschieters er al
+      // uit, zie hierboven) is hier de maat — de gesprekspartner op één van de
+      // meetmomenten mag de spreiding niet opblazen.
+      s.spreiding = kernX[kernX.length - 1] - kernX[0];
       if (s.spreiding > 0.15) breedGeteld++;
 
       // Alleen binnen een paneel kadreren als alle metingen het eens zijn; is

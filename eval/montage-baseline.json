@@ -1,0 +1,74 @@
+[
+  {
+    "naam": "koen-de-leus-vlaams-tweegesprek",
+    "goed": true,
+    "regels": {
+      "knippen op woordgrenzen": true,
+      "hele zinnen": true,
+      "geen gedeeld bronmateriaal": true,
+      "spreker gecentreerd": true,
+      "script gevolgd": true,
+      "geen dubbele zinnen": true,
+      "geen vreemde aanloop": true,
+      "naden schoon": true
+    },
+    "details": {
+      "knippen op woordgrenzen": "0 grenzen, geen enkele in een woord",
+      "hele zinnen": "elk shot bevat zijn volledige scriptfragment",
+      "geen gedeeld bronmateriaal": "alle segmenten uniek",
+      "spreker gecentreerd": "geen bron of segmenten; niet te toetsen",
+      "script gevolgd": "alle 0 fragmenten terug te horen (100% woorddekking)",
+      "geen dubbele zinnen": "geen zin klinkt twee keer",
+      "geen vreemde aanloop": "clip begint op de scripttekst",
+      "naden schoon": "alle 0 naden stil"
+    }
+  },
+  {
+    "naam": "platina-macrocheck-studio-solo",
+    "goed": true,
+    "regels": {
+      "knippen op woordgrenzen": true,
+      "hele zinnen": true,
+      "geen gedeeld bronmateriaal": true,
+      "spreker gecentreerd": true,
+      "script gevolgd": true,
+      "geen dubbele zinnen": true,
+      "geen vreemde aanloop": true,
+      "naden schoon": true
+    },
+    "details": {
+      "knippen op woordgrenzen": "10 grenzen, geen enkele in een woord",
+      "hele zinnen": "elk shot bevat zijn volledige scriptfragment",
+      "geen gedeeld bronmateriaal": "alle segmenten uniek",
+      "spreker gecentreerd": "geen bron of segmenten; niet te toetsen",
+      "script gevolgd": "alle 5 fragmenten terug te horen (77% woorddekking)",
+      "geen dubbele zinnen": "geen zin klinkt twee keer",
+      "geen vreemde aanloop": "clip begint op de scripttekst",
+      "naden schoon": "4 naden: 3 stil, 1 op een woordgrens in doorlopende spraak"
+    }
+  },
+  {
+    "naam": "platina-macrocheck-koppelteken-en-jargon",
+    "goed": true,
+    "regels": {
+      "knippen op woordgrenzen": true,
+      "hele zinnen": true,
+      "geen gedeeld bronmateriaal": true,
+      "spreker gecentreerd": true,
+      "script gevolgd": true,
+      "geen dubbele zinnen": true,
+      "geen vreemde aanloop": true,
+      "naden schoon": true
+    },
+    "details": {
+      "knippen op woordgrenzen": "10 grenzen, geen enkele in een woord",
+      "hele zinnen": "elk shot bevat zijn volledige scriptfragment",
+      "geen gedeeld bronmateriaal": "alle segmenten uniek",
+      "spreker gecentreerd": "geen bron of segmenten; niet te toetsen",
+      "script gevolgd": "alle 5 fragmenten terug te horen (81% woorddekking)",
+      "geen dubbele zinnen": "geen zin klinkt twee keer",
+      "geen vreemde aanloop": "clip begint op de scripttekst",
+      "naden schoon": "4 naden: 2 stil, 2 op een woordgrens in doorlopende spraak"
+    }
+  }
+]

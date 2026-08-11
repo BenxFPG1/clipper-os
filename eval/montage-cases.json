@@ -4,5 +4,17 @@
     "video_id": "a48414d1-cb86-4d88-9769-ebd22f80a096",
     "clip_index": 1,
     "waarom": "Vlaams waar spraakherkenning op struikelt, houten lambrisering die op een montagegrens lijkt, spreker die ver wegleunt. Het moeilijkste geval dat we kennen."
+  },
+  {
+    "naam": "platina-macrocheck-studio-solo",
+    "video_id": "82df1c6f-fc95-4c5e-a78d-2a713a5fbfee",
+    "clip_index": 1,
+    "waarom": "Schone studio-opname, één spreker, maar met precies de twee bugs die hier gevonden zijn: een spreker die net na de knip nog beweegt (instapmoment-centrering) en zinnen die met korte woordjes beginnen (aanloop-detectie). Dit geval bewaakt beide fixes."
+  },
+  {
+    "naam": "platina-macrocheck-koppelteken-en-jargon",
+    "video_id": "82df1c6f-fc95-4c5e-a78d-2a713a5fbfee",
+    "clip_index": 5,
+    "waarom": "Scripttekst met een koppelteken (Platina-markt) en Engels-Nederlands jargon (future-positionering) dat whisper verhaspelt. Bewaakt de tokenisatie- en fuzzy-match-fixes in de scriptcontrole."
   }
 ]

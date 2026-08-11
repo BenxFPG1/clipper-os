@@ -39,6 +39,29 @@ export type PoortIngreep = {
   wat: string;
 };
 
+/**
+ * De enige juiste manier om een segmentgrens bewust te verzetten.
+ *
+ * ankerStart/ankerEind zijn de waarheid waar regel 0 (halfFragment) op
+ * vertrouwt. Elke correctielaag die start/end verzette maar het anker liet
+ * staan, kreeg zijn correctie de eerstvolgende poortronde straal
+ * teruggetrokken naar het oude, inmiddels foute anker — een stille
+ * touwtrekwedstrijd die rondenlang doorging zonder één foutmelding. Die bug
+ * is op negen losse plekken gevonden; deze helper maakt de hele klasse
+ * onmogelijk in plaats van per plek gefixt. Verzet een grens dus nooit met
+ * een kale toewijzing, maar hiermee.
+ */
+export function verzetGrens(seg: Shot, wijziging: { start?: number; end?: number }): void {
+  if (wijziging.start !== undefined) {
+    seg.start = wijziging.start;
+    seg.ankerStart = wijziging.start;
+  }
+  if (wijziging.end !== undefined) {
+    seg.end = wijziging.end;
+    seg.ankerEind = wijziging.end;
+  }
+}
+
 /** Het woord waar dit tijdstip middenin valt, of null. */
 export function woordOnder(woorden: BronWoord[], t: number, marge = 0.02): BronWoord | null {
   for (const w of woorden) {
@@ -100,13 +123,7 @@ export function poort(
           regel: 'woordgrens',
           wat: `start ${seg.start.toFixed(2)} lag in "${bijStart.w}" → ${bijStart.s.toFixed(2)}`,
         });
-        seg.start = bijStart.s;
-        // Vanaf hier ís dit het ankerpunt. Zonder dit blijft een oud
-        // ankerStart (uit de woorduitlijning, vóór deze correctie) staan, en
-        // trekt regel 0 in de eerstvolgende ronde de grens er weer naartoe
-        // terug — precies dezelfde fout als bij de renderlus-correcties in
-        // render-worker.ts, maar dan hier binnen de poort zelf.
-        seg.ankerStart = bijStart.s;
+        verzetGrens(seg, { start: bijStart.s });
       }
 
       const bijEind = woordOnder(bronWoorden, seg.end);
@@ -116,8 +133,7 @@ export function poort(
           regel: 'woordgrens',
           wat: `eind ${seg.end.toFixed(2)} lag in "${bijEind.w}" → ${bijEind.e.toFixed(2)}`,
         });
-        seg.end = bijEind.e;
-        seg.ankerEind = bijEind.e;
+        verzetGrens(seg, { end: bijEind.e });
       }
     }
   }

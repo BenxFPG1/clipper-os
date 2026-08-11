@@ -63,15 +63,21 @@ async function main() {
     // resultaat van deze clip uit de opslag.
     let pad = geval.bestand;
     if (!pad) {
-      const { data } = await supabase
+      // Niet blind de nieuwste opdracht pakken: die kan een losse render van
+      // een ándere clip van dezelfde video zijn. Zoek in de recente opdrachten
+      // naar een bestand dat bij déze clip_index hoort (bestandsnamen beginnen
+      // met het clipnummer: "05-...").
+      const { data: jobs } = await supabase
         .from('render_jobs')
         .select('bestanden')
         .eq('video_id', geval.video_id)
         .eq('status', 'klaar')
         .order('klaar_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      const bestand = (data?.bestanden as { naam: string; pad: string }[] | null)?.[0];
+        .limit(10);
+      const voorvoegsel = `${String(geval.clip_index).padStart(2, '0')}-`;
+      const bestand = (jobs ?? [])
+        .flatMap((j) => (j.bestanden as { naam: string; pad: string }[] | null) ?? [])
+        .find((b) => b.naam.startsWith(voorvoegsel));
       if (!bestand) {
         console.log('   geen gerenderde clip gevonden; overgeslagen');
         continue;

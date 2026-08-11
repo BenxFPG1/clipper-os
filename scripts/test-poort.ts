@@ -10,7 +10,7 @@
  *
  * Draaien: npm run test:poort
  */
-import { poort, woordOnder } from '../src/lib/roughcut/poort';
+import { poort, verzetGrens, woordOnder } from '../src/lib/roughcut/poort';
 import { keurKnippen, keurOverlap } from '../src/lib/roughcut/keuring';
 import { corrigeerKadrering, uitsnedeVan } from '../src/lib/roughcut/kadercontrole';
 import { basisZoom, type Shot } from '../src/lib/roughcut';
@@ -91,6 +91,22 @@ console.log('poort — regel 1: geen knip in een woord');
     Math.abs((segmenten[0].ankerStart ?? 0) - segmenten[0].start) < 0.15,
     `ankerStart=${segmenten[0].ankerStart} start=${segmenten[0].start}`,
   );
+}
+{
+  // verzetGrens is de enige juiste manier om een grens te verzetten: het
+  // anker gaat altijd mee, zodat regel 0 een bewuste correctie nooit meer
+  // terugvecht (de "verweesde anker"-klasse bug).
+  const s = shot(1, 10.0, 12.3);
+  (s as { ankerStart?: number; ankerEind?: number }).ankerStart = 10.0;
+  (s as { ankerStart?: number; ankerEind?: number }).ankerEind = 12.3;
+  verzetGrens(s, { start: 10.75 });
+  toets('verzetGrens synchroniseert ankerStart', s.ankerStart === 10.75 && s.start === 10.75);
+  verzetGrens(s, { end: 11.9 });
+  toets('verzetGrens synchroniseert ankerEind', s.ankerEind === 11.9 && s.end === 11.9);
+  // En de poort accepteert het resultaat zonder terug te trekken.
+  const { ingrepen } = poort([s], null);
+  toets('poort vecht een verzetGrens-correctie niet terug', !ingrepen.some((i) => i.regel === 'halfFragment'),
+    JSON.stringify(ingrepen));
 }
 
 console.log('poort — regel 1b: ademruimte rond de knip');

@@ -71,6 +71,16 @@ console.log('fragment dat nergens in de woordenreeks voorkomt');
   toets('levert null, geen valse hit', idx === null, `idx=${idx}`);
 }
 
+console.log('verhaspeld woord in de terugluistering (whisper-ruis)');
+{
+  // Precies clip 5: "future-positionering" komt verhaspeld uit whisper terug
+  // ("futuur positionering"). Prefix-4-matching moet dat opvangen, anders
+  // wordt een correcte knip afgekeurd als "niet terug te horen".
+  const woorden = woordenVan('voorraad futuur positioneering en beleggerstromen kunnen schaarste');
+  const idx = vindKopIndex('Voorraad, future-positionering en beleggersstromen kunnen schaarste tijdelijk overschaduwen.', woorden);
+  toets('vindt het fragment ondanks verhaspelingen', idx !== null && idx <= 1, `idx=${idx}`);
+}
+
 console.log('limiet beperkt de zoekruimte (voor de aanloop-check)');
 {
   // Het kopwoord staat pas ver na de limiet — daarbinnen mag hij niet
