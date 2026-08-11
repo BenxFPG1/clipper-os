@@ -101,6 +101,12 @@ export function poort(
           wat: `start ${seg.start.toFixed(2)} lag in "${bijStart.w}" → ${bijStart.s.toFixed(2)}`,
         });
         seg.start = bijStart.s;
+        // Vanaf hier ís dit het ankerpunt. Zonder dit blijft een oud
+        // ankerStart (uit de woorduitlijning, vóór deze correctie) staan, en
+        // trekt regel 0 in de eerstvolgende ronde de grens er weer naartoe
+        // terug — precies dezelfde fout als bij de renderlus-correcties in
+        // render-worker.ts, maar dan hier binnen de poort zelf.
+        seg.ankerStart = bijStart.s;
       }
 
       const bijEind = woordOnder(bronWoorden, seg.end);
@@ -111,6 +117,7 @@ export function poort(
           wat: `eind ${seg.end.toFixed(2)} lag in "${bijEind.w}" → ${bijEind.e.toFixed(2)}`,
         });
         seg.end = bijEind.e;
+        seg.ankerEind = bijEind.e;
       }
     }
   }

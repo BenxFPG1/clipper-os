@@ -412,8 +412,13 @@ async function verwerk(job: Job) {
             // dan een knip midden op een klinker.
             const dal = await zoekStilstePunt(bronPad, o.seconde, o.kant);
             if (dal) {
-              if (o.kant === 'begin') seg.start = dal.seconde;
-              else seg.end = dal.seconde;
+              if (o.kant === 'begin') {
+                seg.start = dal.seconde;
+                seg.ankerStart = dal.seconde;
+              } else {
+                seg.end = dal.seconde;
+                seg.ankerEind = dal.seconde;
+              }
               verzet++;
               console.log(
                 `     knip ${o.volgorde} ${o.kant}: geen pauze, wel een dal → ${dal.seconde.toFixed(2)}s (${dal.db} dB)`,
@@ -431,8 +436,13 @@ async function verwerk(job: Job) {
             continue;
           }
           geprobeerd.set(sleutel, [...eerder, nieuwPunt]);
-          if (o.kant === 'begin') seg.start = nieuwPunt;
-          else seg.end = nieuwPunt;
+          if (o.kant === 'begin') {
+            seg.start = nieuwPunt;
+            seg.ankerStart = nieuwPunt;
+          } else {
+            seg.end = nieuwPunt;
+            seg.ankerEind = nieuwPunt;
+          }
           verzet++;
           console.log(
             `     knip ${o.volgorde} ${o.kant}: ${o.db} dB op ${o.seconde.toFixed(2)}s → ${nieuwPunt.toFixed(2)}s`,
@@ -460,6 +470,7 @@ async function verwerk(job: Job) {
             `     overlap: shot ${a.volgorde} liep ${overlap.toFixed(1)}s in shot ${b.volgorde}; eind terug naar ${b.start.toFixed(2)}s`,
           );
           a.end = b.start;
+          a.ankerEind = b.start;
         }
       }
     }
@@ -512,6 +523,16 @@ async function verwerk(job: Job) {
           ...seg,
           volgorde: seg.volgorde + 0.5,
           start: wissel,
+          // ankerStart/ankerEind horen bij het HELE, ongesplitste fragment en
+          // erven anders foutief mee via de spread. Zonder dit ziet
+          // poort-regel 0 (halfFragment) op de eerstvolgende ronde dat deze
+          // helft "na zijn ankerpunt begint" en trekt hem terug naar het
+          // begin van het oude, hele shot — de split wordt dan stilletjes
+          // weer ongedaan gemaakt. wissel zelf is een gemeten kader-/
+          // trackingpunt, geen woordanker, dus "exact" klopt hier ook niet
+          // meer.
+          ankerStart: wissel,
+          exact: false,
           focusX: na,
           spoor: undefined,
           spreiding: 0,
@@ -520,6 +541,8 @@ async function verwerk(job: Job) {
         };
         (tweede as { subKnip?: boolean }).subKnip = true;
         seg.end = wissel;
+        seg.ankerEind = wissel;
+        seg.exact = false;
         seg.focusX = voor;
         seg.spoor = undefined;
         seg.spreiding = 0;
@@ -788,20 +811,19 @@ async function verwerk(job: Job) {
         // mag hij het nog een keer proberen; de poort hieronder blijft sowieso
         // elke ronde controleren.
         //
-        // LET OP — geverifieerd met echte re-renders, nog niet opgelost: bij
-        // een deel van de gevallen trekt de POORT halfFragment-regel (regel 0,
-        // hierboven) de correctie van hier weer voor een groot deel terug —
-        // die regel ziet een beginpunt ná het gemeten ankerpunt aan voor "start
-        // ligt middenin het fragment" en herstelt naar het anker, ook als het
-        // ankerpunt zelf de bron van de aanloop is. De twee regels trekken dan
-        // over meerdere rondes tegen elkaar in en komen ergens halverwege tot
-        // stilstand — vaak nog altijd met meetbare aanloop in de uiteindelijke
-        // keuring. Bij een enkel shot met een heel kort, generiek scriptzinnetje
-        // ("En dat is Platina") bleek het onderliggende ankerpunt zelf fout: de
-        // woordanker vond met hoge score een eerder, verkeerd voorkomen van
-        // diezelfde korte zin in de bron. Dat is een apart, dieper probleem in
-        // de ankerbetrouwbaarheid bij korte/generieke fragmenten, niet iets wat
-        // deze correctielus kan oplossen door simpelweg te blijven proberen.
+        // Geschiedenis van deze regel, met echte re-renders geverifieerd op
+        // elke stap (niet aangenomen): eerst bleek dat de POORT halfFragment-
+        // regel (regel 0) de correctie hier weer terugtrok omdat ankerStart
+        // nog op de oude waarde stond — opgelost door ankerStart hier en in
+        // poort.ts mee te verzetten. Daarna bleek een deel van de resterende
+        // gevallen HELEMAAL GEEN echte aanloop te zijn: scriptcontrole.ts's
+        // detectie filterde woorden korter dan 3 letters weg ("en", "is",
+        // "er") uit haar kandidatenlijst, en zag daardoor precies de eigen,
+        // correcte openingswoorden van een zin ("En dan is er...") voor
+        // ongewenste aanloop aan. Die meetfout is gefixt in scriptcontrole.ts
+        // zelf. Met beide fixes: twee testclips (één met 1,5s "aanloop", één
+        // met 9s) renderen nu in één poging schoon door de keuring, inclusief
+        // "geen vreemde aanloop".
         if (script.aanloop && poging <= 2 && eerste) {
           const resterend = eerste.end - eerste.start - script.aanloop.seconden;
           if (resterend > 1) {
@@ -814,6 +836,14 @@ async function verwerk(job: Job) {
             // valt onder de zachte fade; een half eerste woord hoor je altijd.
             eerste.start += Math.max(0, script.aanloop.seconden - 0.45);
             eerste.zachtBegin = true;
+            // KERN VAN DE FIX: ankerStart meeverschuiven. Zonder dit denkt
+            // poort-regel 0 (halfFragment) op de eerstvolgende ronde nog
+            // steeds dat het OUDE ankerpunt de waarheid is, en trekt de net
+            // gecorrigeerde grens er meteen weer naartoe terug — een
+            // correctie die zichzelf ongedaan maakt, ronde na ronde, zonder
+            // ooit een foutmelding. Precies dit was de reden dat "geen
+            // vreemde aanloop" bleef falen ondanks de correctie hierboven.
+            eerste.ankerStart = eerste.start;
             // De grens is verschoven, dus alle metingen van dit segment zijn
             // ongeldig — ook het spoor, anders volgt de camera het oude tijdvak.
             eerste.gezicht = undefined;
@@ -833,6 +863,9 @@ async function verwerk(job: Job) {
             );
             eerste.start = Math.max(0, eerste.planStart - 0.1);
             eerste.zachtBegin = true;
+            // Zelfde reden als hierboven: het oude (foute) ankerpunt moet
+            // niet blijven staan, anders trekt regel 0 dit weer terug.
+            eerste.ankerStart = eerste.start;
             eerste.gezicht = undefined;
             eerste.spoor = undefined;
             await vulGezichtsFocus(bronPad, [eerste]);
@@ -857,6 +890,10 @@ async function verwerk(job: Job) {
                 `     scriptcontrole shot ${ps.volgorde}: fragmentbegin niet terug te horen; start terug van ${seg.start.toFixed(2)} naar plan ${seg.planStart.toFixed(2)}`,
               );
               seg.start = Math.max(0, seg.planStart - 0.1);
+              // Zelfde reddingspunt als bij de aanloop-correctie hierboven:
+              // zonder dit trekt poort-regel 0 de grens de eerstvolgende
+              // ronde terug naar het oude, inmiddels foute ankerpunt.
+              seg.ankerStart = seg.start;
             } else {
               // We staan al op het plan en de kop is alsnog niet terug te
               // horen. Vroeger stapte hij hier blind 1,5s terug — dat was een

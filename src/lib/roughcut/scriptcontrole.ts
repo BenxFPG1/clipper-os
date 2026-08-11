@@ -141,14 +141,39 @@ export async function controleerScript(
     let aanloop: ScriptOordeel['aanloop'] = null;
     const eersteFragment = fragmenten[0];
     if (eersteFragment) {
-      const kop = eersteFragment.split(/\s+/).map(norm).filter((w) => w.length >= 3).slice(0, 5);
       let beginIndex = -1;
-      for (let i = 0; i < Math.min(woorden.length, 30) && beginIndex < 0; i++) {
-        // Twee opeenvolgende kopwoorden is genoeg bewijs; transcriptie mist er
-        // altijd wel een.
-        const hit = kop.includes(woorden[i].n) && (kop.includes(woorden[i + 1]?.n) || kop.includes(woorden[i + 2]?.n));
-        if (hit) beginIndex = i;
+
+      // Sterkste bewijs eerst: de eerste twee woorden van het fragment zélf,
+      // zónder de drieletter-ondergrens. Nederlandse zinnen beginnen bijna
+      // altijd met een kort woordje ("en", "is", "er", "het") — dat woordje
+      // hoort bij de zin, niet bij de aanloop. Met alleen 3+ letters in de
+      // kandidatenlijst (zie hieronder) sloeg de zoektocht die korte
+      // woordjes stelselmatig over en vond hij het "bewijs" pas bij het
+      // eerste lange woord erna — waarmee de eigen, correcte openingswoorden
+      // van de zin zelf als ongewenste aanloop werden aangemerkt. Precies
+      // dát verklaarde waarom een clip die exact op zijn scripttekst begon
+      // ("En dan is er nog het waterstofverhaal") toch als "aanloop: En dan
+      // is er" werd afgekeurd.
+      const kopRuw = eersteFragment.split(/\s+/).map(norm).filter(Boolean);
+      if (kopRuw[0] && kopRuw[1]) {
+        for (let i = 0; i < Math.min(woorden.length, 30) && beginIndex < 0; i++) {
+          if (woorden[i].n === kopRuw[0] && woorden[i + 1]?.n === kopRuw[1]) beginIndex = i;
+        }
       }
+
+      // Terugval op het oude, ruimere patroon (2 van de eerste woorden van
+      // 3+ letters ergens dicht bij elkaar) — voor als whisper het allereerste
+      // woord van de zin anders hoorde en de exacte match hierboven mist.
+      if (beginIndex < 0) {
+        const kop = eersteFragment.split(/\s+/).map(norm).filter((w) => w.length >= 3).slice(0, 5);
+        for (let i = 0; i < Math.min(woorden.length, 30) && beginIndex < 0; i++) {
+          // Twee opeenvolgende kopwoorden is genoeg bewijs; transcriptie mist er
+          // altijd wel een.
+          const hit = kop.includes(woorden[i].n) && (kop.includes(woorden[i + 1]?.n) || kop.includes(woorden[i + 2]?.n));
+          if (hit) beginIndex = i;
+        }
+      }
+
       if (beginIndex > 0) {
         const seconden = woorden[beginIndex].s;
         if (seconden > 0.7) {
