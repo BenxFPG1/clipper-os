@@ -3,6 +3,8 @@ import { db } from '../src/lib/supabase';
 import { runPlannerForVideo } from '../src/lib/planner/run';
 import { runScriptwriterForBrief } from '../src/lib/scriptwriter';
 import { bedenkConcepten } from '../src/lib/concepten';
+import { haalBrollUitDrive } from '../src/lib/broll/ingest';
+import { genereerBrollPlan } from '../src/lib/broll/plan';
 
 /**
  * Voert wachtende denkopdrachten uit met de abonnements-token. De live site kan
@@ -95,6 +97,26 @@ async function main() {
       } else if (job.soort === 'concepten') {
         const r = await bedenkConcepten(job.doel_id, params.aantal ?? 8);
         resultaat = { concepten: r.length };
+      } else if (job.soort === 'broll_ingest') {
+        // doel_id = campaign_id; drive-url in de parameters. Na een geslaagde
+        // ingest meteen het editplan erachteraan — dat is waarvoor je de
+        // beelden ophaalt.
+        const driveUrl = (job.parameters as { drive_url?: string })?.drive_url;
+        if (!driveUrl) throw new Error('broll_ingest zonder drive_url');
+        const r = await haalBrollUitDrive(job.doel_id, driveUrl);
+        let plan: { clips: unknown[] } | null = null;
+        if (r.toegevoegd.length > 0) {
+          plan = (await genereerBrollPlan(job.doel_id)).plan;
+        }
+        resultaat = {
+          toegevoegd: r.toegevoegd.length,
+          overgeslagen: r.overgeslagen.length,
+          fouten: r.fouten.slice(0, 10),
+          clips: plan?.clips.length ?? 0,
+        };
+      } else if (job.soort === 'broll_plan') {
+        const r = await genereerBrollPlan(job.doel_id);
+        resultaat = { clips: r.plan.clips.length };
       } else {
         throw new Error(`Onbekende soort: ${job.soort}`);
       }

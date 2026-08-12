@@ -128,6 +128,13 @@ async function verwerk(job: Job) {
     .single();
   if (error) throw new Error('Geen clip-plan gevonden.');
 
+  // B-roll-plannen gaan een compleet eigen route: meerdere bronbestanden,
+  // geen spraak — dus ook geen woordankers, poort of scriptcontrole. Bewust
+  // vóór alles wat de spraakketen aanraakt.
+  if ((plan.plan as { vorm?: string }).vorm === 'broll') {
+    return verwerkBroll(job, plan.plan as import('../src/lib/broll/plan').BrollPlan);
+  }
+
   const clips = ((plan.plan as { clips?: unknown[] }).clips ?? []) as {
     titel_intern: string;
     shots: Shot[];
@@ -1090,6 +1097,93 @@ async function verwerk(job: Job) {
   }
 
   if (bestanden.length === 0) throw new Error('Niets geüpload; alle clips waren te groot of mislukten.');
+  return bestanden;
+}
+
+/**
+ * Render van een b-roll-editplan: meerdere losse bronbestanden uit de eigen
+ * opslag, muziek als hoofdband, hook- en tekstoverlays in de huisstijl.
+ */
+async function verwerkBroll(job: Job, plan: import('../src/lib/broll/plan').BrollPlan) {
+  const supabase = db();
+  const { maakBrollMontage } = await import('../src/lib/broll/render');
+
+  // De campagne via het ankerbestand; alle b-roll-bronnen van die campagne.
+  const { data: anker } = await supabase
+    .from('videos')
+    .select('campaign_id')
+    .eq('id', job.video_id)
+    .single();
+  const { data: bronVideos } = await supabase
+    .from('videos')
+    .select('id, source_url')
+    .eq('campaign_id', anker?.campaign_id as string)
+    .eq('soort', 'broll');
+  const bronnen = new Map<string, string>(
+    (bronVideos ?? [])
+      .filter((v) => typeof v.source_url === 'string' && (v.source_url as string).startsWith('storage:'))
+      .map((v) => [v.id as string, v.source_url as string]),
+  );
+
+  const { data: campagne } = await supabase
+    .from('campaigns')
+    .select('huisstijl')
+    .eq('id', anker?.campaign_id as string)
+    .single();
+  const huisstijl = (campagne?.huisstijl as { accent?: string; font?: string } | null) ?? null;
+
+  const teDoen =
+    job.clip_index !== null
+      ? [{ clip: plan.clips[job.clip_index - 1], nummer: job.clip_index }].filter((x) => x.clip)
+      : plan.clips.map((clip, i) => ({ clip, nummer: i + 1 }));
+  if (teDoen.length === 0) throw new Error('Geen clips in het b-roll-plan.');
+
+  const werkmap = await mkdtemp(join(tmpdir(), 'clipper-broll-render-'));
+  const bestanden: { naam: string; pad: string; bytes: number }[] = [];
+  let gedaan = 0;
+  await supabase.from('render_jobs').update({ totaal: teDoen.length, gedaan: 0 }).eq('id', job.id);
+
+  for (const { clip, nummer } of teDoen) {
+    console.log(`  b-roll clip ${nummer}: ${clip.titel_intern}`);
+    await supabase
+      .from('render_jobs')
+      .update({ voortgang: `b-roll clip ${nummer}: ${clip.titel_intern.slice(0, 60)}`, hartslag: new Date().toISOString() })
+      .eq('id', job.id);
+
+    const naam = `${String(nummer).padStart(2, '0')}-${veilig(clip.titel_intern)}.mp4`;
+    const lokaal = join(werkmap, naam);
+    await maakBrollMontage({
+      clip,
+      bronnen,
+      werkmap,
+      outputPad: lokaal,
+      huisstijl,
+      log: (m) => console.log(`     ${m}`),
+    });
+
+    const { size } = await stat(lokaal);
+    if (size > MAX_BYTES) {
+      console.log(`     overgeslagen: ${Math.round(size / 1e6)}MB is te groot`);
+      continue;
+    }
+    const pad = `${job.video_id}/${job.id}/${naam}`;
+    const { error: uploadFout } = await supabase.storage
+      .from(BUCKET)
+      .upload(pad, await readFile(lokaal), { contentType: 'video/mp4', upsert: true });
+    if (uploadFout) {
+      console.log(`     upload mislukt, clip overgeslagen: ${uploadFout.message}`);
+      continue;
+    }
+    bestanden.push({ naam, pad, bytes: size });
+    gedaan += 1;
+    await supabase
+      .from('render_jobs')
+      .update({ gedaan, bestanden, hartslag: new Date().toISOString() })
+      .eq('id', job.id);
+    console.log(`     geüpload (${Math.round(size / 1e6)}MB)`);
+  }
+
+  if (bestanden.length === 0) throw new Error('Geen b-roll-clips gerenderd.');
   return bestanden;
 }
 

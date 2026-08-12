@@ -465,3 +465,18 @@ alter table campaigns add column if not exists kanaal_check_gestart_at timestamp
 -- vanaf de eerste keer, niet iets waar je een maand geduld mee hoeft te
 -- hebben — elke run tussentijds verspilt credits aan exact dezelfde fout.
 alter table tracked_accounts add column if not exists opeenvolgende_fouten int not null default 0;
+
+-- ============================================================ uitbreiding v1.8
+-- B-roll-campagnes: een Drive-map losse shots in plaats van één lange
+-- bronvideo. Elk shot wordt een eigen videos-rij (soort 'broll') met de
+-- mechanische analyse (scènes, beweging) plus het kijk-oordeel (beschrijving,
+-- categorie, sfeer, kleuren, tags) waarop de editplanner combineert wat
+-- visueel bij elkaar past. De stijlgids is het onderzoek naar wat er in dit
+-- genre werkt; hij wordt één keer gebouwd en hergebruikt per campagne.
+alter table videos add column if not exists soort text not null default 'gesprek';
+alter table videos add column if not exists broll_analyse jsonb;
+alter table campaigns add column if not exists bron_drive_url text;
+alter table campaigns add column if not exists broll_stijlgids jsonb;
+alter table ai_jobs drop constraint if exists ai_jobs_soort_check;
+alter table ai_jobs add constraint ai_jobs_soort_check
+  check (soort in ('clip_plan', 'scripts', 'concepten', 'broll_ingest', 'broll_plan'));

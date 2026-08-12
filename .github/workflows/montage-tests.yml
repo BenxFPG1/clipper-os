@@ -25,6 +25,8 @@ on:
       - 'scripts/test-scriptpoort.ts'
       - 'scripts/test-verhaaldokterpoort.ts'
       - 'scripts/test-scriptcontrole.ts'
+      - 'scripts/test-broll.ts'
+      - 'src/lib/broll/**'
       - 'scripts/eval-montage.ts'
       - '.github/workflows/montage-tests.yml'
   pull_request:
@@ -50,6 +52,8 @@ jobs:
         run: npm run test:verhaaldokter
       - name: Regels van de scriptcontrole
         run: npm run test:scriptcontrole
+      - name: Regels van de b-roll-keten
+        run: npm run test:broll
 
   keuring:
     runs-on: ubuntu-latest

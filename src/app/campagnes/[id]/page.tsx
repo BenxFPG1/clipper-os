@@ -7,6 +7,7 @@ import { NewBriefForm } from '@/app/opdrachten/new-brief-form';
 import { NameEditor } from './name-editor';
 import { BatchKnoppen } from './batch-knoppen';
 import { KanaalForm } from './kanaal-form';
+import { BrollForm } from './broll-form';
 import { ArchiveerCampagne } from './archiveer-knop';
 
 export const dynamic = 'force-dynamic';
@@ -36,7 +37,7 @@ export default async function CampagnePage({ params }: { params: { id: string } 
   const [videosRes, briefsRes] = await Promise.all([
     supabase
       .from('videos')
-      .select('id, title, duration_seconds, created_at, archived_at, character_map, clip_plans(id)')
+      .select('id, title, duration_seconds, created_at, archived_at, character_map, soort, clip_plans(id)')
       .eq('campaign_id', params.id)
       .order('created_at', { ascending: false }),
     supabase
@@ -47,6 +48,7 @@ export default async function CampagnePage({ params }: { params: { id: string } 
   ]);
 
   const videos = (videosRes.data ?? []).filter((v) => !v.archived_at);
+  const brollShots = videos.filter((v) => (v as { soort?: string }).soort === 'broll').length;
   const briefs = briefsRes.data ?? [];
 
   // Oudere campagnes hebben regels in nét andere vormen (string i.p.v. lijst);
@@ -83,6 +85,11 @@ export default async function CampagnePage({ params }: { params: { id: string } 
           <h2 className="text-lg font-medium">Bronvideo&apos;s ({videos.length})</h2>
           <span className="text-xs text-neutral-500">automatisch ophalen → plan → project downloaden</span>
         </div>
+        <BrollForm
+          campaignId={campagne.id}
+          driveUrl={(campagne.bron_drive_url as string | null) ?? null}
+          aantalShots={brollShots}
+        />
         <KanaalForm
           campaignId={campagne.id}
           kanalen={[
