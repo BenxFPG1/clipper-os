@@ -1,3 +1,4 @@
+import { rm } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { z } from 'zod';
 import { structuredCall } from '../claude';
@@ -5,6 +6,7 @@ import { db } from '../supabase';
 import { resolveBinary } from '../ingest/binaries';
 import { ytdlpAuthArgs } from '../ingest/youtube';
 import { fetchYoutubeCaptions } from '../ingest/youtube';
+import { pakFrames } from '../roughcut/frames';
 import { EFFECTEN } from '../vault/effecten';
 import { EDITCRAFT } from '../vault/editcraft';
 import { ONDERZOEK } from '../vault/onderzoek';
@@ -34,6 +36,10 @@ const ZOEKTERMEN = [
   'speed ramp tutorial premiere',
   'editing rhythm pacing music video tutorial',
   'sound design transitions video editing',
+  'short form video editing tips tiktok reels',
+  'text animation kinetic typography tutorial',
+  'zoom punch in transition tutorial capcut premiere',
+  'color grading tutorial short form video',
 ];
 
 /** Tutorials per run; elk kost een captions-download en promptruimte. */
@@ -199,6 +205,109 @@ ${lesstof.join('\n\n')}`,
     kandidaten: resultaat.kandidaat_effecten.length,
     samenvatting: resultaat.samenvatting,
   };
+}
+
+const visueelSchema = z.object({
+  effecten_gezien: z
+    .array(
+      z.object({
+        naam: z.string().max(50),
+        wat: z.string().describe('Wat er precies gebeurt in beeld, in eigen woorden — geen jargon zonder uitleg.'),
+        herkend_als_slug: z
+          .string()
+          .nullable()
+          .describe('De bestaande effect-slug uit onze vault als dit al een bekend effect is, anders null.'),
+        inzetregel: z.string().describe('Wanneer dit werkt en wanneer niet, concreet toegepast op onze clips.'),
+        ffmpeg_recept: z
+          .string()
+          .nullable()
+          .describe('Alleen invullen als herkend_als_slug null is: hoe dit in ffmpeg-termen zou werken.'),
+      }),
+    )
+    .max(4),
+  niets_noemenswaardigs: z.boolean().describe('True als deze clip geen effect toont dat onze regels niet al dekken.'),
+});
+
+const VISUEEL_SYSTEM = `Je bent de editleraar, maar nu kijk je in plaats van dat je leest. Je krijgt frames van een clip die opvallend goed presteerde (een uitschieter t.o.v. het account), en je jaagt specifisch op TOFFE EFFECTEN — overgangen, zoom- of snelheidsingrepen, tekstanimatie, split-screen, timing-trucs — niet op algemeen vakmanschap (hook, ritme, kadrering horen bij de andere leraar-pas).
+
+Regels:
+1. Kijk eerst naar de frames vóór je oordeelt. Beschrijf wat je werkelijk ziet gebeuren tussen de frames, niet wat een edit "vaak doet".
+2. Vergelijk met onze effectenvault (SFX_SLUGS en BEELD_EFFECT_SLUGS). Herken je het effect, verwijs dan naar de slug en scherp de inzetregel aan — verzin geen nieuwe naam voor iets dat we al hebben.
+3. Zie je iets dat niet in onze vault staat, geef het dan een korte eigen naam en een zo concreet mogelijk ffmpeg-recept.
+4. Een enkel frame-verschil is geen effect. Alleen dingen die een kijker echt zou opmerken en die wij morgen bewust zouden kunnen inzetten tellen.
+5. Niets gezien dat het noemen waard is? Zeg dat gewoon — leeg is een geldige uitkomst.`;
+
+/**
+ * Kijkt naar de sterkste scout-vondsten en jaagt specifisch op effecten in
+ * plaats van algemeen vakmanschap (dat doet bekijkTopVondsten al). Zelfde
+ * frame-aanpak als kijken.ts, maar los gehouden: andere vraag, ander filter
+ * op scout_finds.decoded (effecten_gezien i.p.v. visueel) zodat beide passen
+ * onafhankelijk over dezelfde vondst kunnen lopen.
+ */
+export async function runEditleraarVisueel(aantal = 4): Promise<{ effecten: number; bekeken: number; fouten: string[] }> {
+  const supabase = db();
+
+  const { data } = await supabase
+    .from('scout_finds')
+    .select('id, post_url, handle, platform, outlier_score, decoded')
+    .not('post_url', 'is', null)
+    .order('outlier_score', { ascending: false, nullsFirst: false })
+    .limit(30);
+
+  const teDoen = (data ?? [])
+    .filter((f) => !(f.decoded as { effecten_gezien?: unknown } | null)?.effecten_gezien)
+    .slice(0, aantal);
+
+  let effectenTotaal = 0;
+  let bekeken = 0;
+  const fouten: string[] = [];
+
+  for (const find of teDoen) {
+    let map: string | null = null;
+    try {
+      const frames = await pakFrames(find.post_url as string, { maxFrames: 10 });
+      map = frames.map;
+      if (frames.frames.length === 0) throw new Error('geen frames');
+
+      const oordeel = await structuredCall({
+        system: `${VISUEEL_SYSTEM}\n\n${EFFECTEN}`,
+        user: `Clip van @${find.handle} op ${find.platform}${
+          find.outlier_score ? ` (${find.outlier_score}x de mediaan van dat account)` : ''
+        }. Duur: ${frames.duur ? `${Math.round(frames.duur)} seconden` : 'onbekend'}.`,
+        schema: visueelSchema,
+        toolName: 'lever_effectanalyse',
+        toolDescription: 'Lever de gevonden effecten in deze clip.',
+        maxTokens: 6000,
+        effort: 'high',
+        operation: 'editleraar_visueel',
+        beeldPaden: frames.frames.map((f) => f.pad),
+      });
+      bekeken++;
+
+      for (const eff of oordeel.effecten_gezien) {
+        await supabase.from('vault_kennis').insert({
+          categorie: 'editcraft',
+          titel: eff.herkend_als_slug ? `Effect gezien: ${eff.herkend_als_slug}` : `kandidaat-effect: ${eff.naam}`,
+          inhoud: eff.herkend_als_slug
+            ? `${eff.wat}\n\nInzetregel: ${eff.inzetregel}`
+            : `${eff.wat}\n\nInzetregel: ${eff.inzetregel}\n\nffmpeg-recept: ${eff.ffmpeg_recept ?? '—'}\n\n(Nog niet in de renderer — pas inzetten nadat het effect echt gebouwd en getest is.)`,
+          bron: `Visueel gezien bij @${find.handle}: ${find.post_url}`,
+        });
+        effectenTotaal++;
+      }
+
+      await supabase
+        .from('scout_finds')
+        .update({ decoded: { ...(find.decoded as object | null), effecten_gezien: true } })
+        .eq('id', find.id as string);
+    } catch (e) {
+      fouten.push(`@${find.handle}: ${(e as Error).message.slice(0, 100)}`);
+    } finally {
+      if (map) await rm(map, { recursive: true, force: true });
+    }
+  }
+
+  return { effecten: effectenTotaal, bekeken, fouten };
 }
 
 function runYtdlp(args: string[]): Promise<string> {

@@ -97,6 +97,13 @@ async function main() {
       console.log(`${stamp} editleraar: ${r.regels} les(sen), ${r.kandidaten} kandidaat-effect(en) — ${r.samenvatting.slice(0, 160)}`);
       break;
     }
+    case 'editleraar_visueel': {
+      const { runEditleraarVisueel } = await import('../src/lib/agents/editleraar');
+      const r = await metRetry(() => runEditleraarVisueel());
+      console.log(`${stamp} editleraar_visueel: ${r.bekeken} clip(s) bekeken, ${r.effecten} effect(en) vastgelegd`);
+      for (const f of r.fouten.slice(0, 3)) console.log(`  fout: ${f}`);
+      break;
+    }
     case 'kanaal': {
       const { haalNieuweBronvideos } = await import('../src/lib/ingest/kanaal');
       const r = await metRetry(() => haalNieuweBronvideos());
@@ -106,7 +113,7 @@ async function main() {
       break;
     }
     default:
-      console.error('Gebruik: npx tsx scripts/job.ts <tracking|scout|retro|kanaal|kennis|cliparmy|kijken|editleraar>');
+      console.error('Gebruik: npx tsx scripts/job.ts <tracking|scout|retro|kanaal|kennis|cliparmy|kijken|editleraar|editleraar_visueel>');
       process.exit(1);
   }
 }

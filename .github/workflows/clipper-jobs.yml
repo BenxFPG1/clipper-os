@@ -14,14 +14,17 @@ on:
     - cron: '0 9 * * 1'          # kennis: maandag ~11:00 NL
     - cron: '20 * * * *'         # cliparmy: elk uur nieuwe campagnes ophalen
     - cron: '0 10 * * 2'         # kijken: dinsdag, topvondsten visueel analyseren
+    - cron: '0 9 * * 2'          # editleraar: dinsdag, leren van edit-tutorials
     - cron: '0 9 * * 4'          # editleraar: donderdag, leren van edit-tutorials
+    - cron: '0 9 * * 6'          # editleraar: zaterdag, leren van edit-tutorials
+    - cron: '30 10 * * 0'        # editleraar_visueel: zondag, toffe effecten spotten in topvondsten
   workflow_dispatch:
     inputs:
       job:
         description: 'Welke taak'
         required: true
         type: choice
-        options: [tracking, scout, retro, kennis, kanaal, cliparmy, kijken, editleraar, diag]
+        options: [tracking, scout, retro, kennis, kanaal, cliparmy, kijken, editleraar, editleraar_visueel, diag]
 
 concurrency:
   group: clipper-jobs
@@ -49,8 +52,10 @@ jobs:
             echo "job=cliparmy" >> "$GITHUB_OUTPUT"
           elif [ "${{ github.event.schedule }}" = "0 10 * * 2" ]; then
             echo "job=kijken" >> "$GITHUB_OUTPUT"
-          elif [ "${{ github.event.schedule }}" = "0 9 * * 4" ]; then
+          elif [ "${{ github.event.schedule }}" = "0 9 * * 2" ] || [ "${{ github.event.schedule }}" = "0 9 * * 4" ] || [ "${{ github.event.schedule }}" = "0 9 * * 6" ]; then
             echo "job=editleraar" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event.schedule }}" = "30 10 * * 0" ]; then
+            echo "job=editleraar_visueel" >> "$GITHUB_OUTPUT"
           else
             echo "job=tracking" >> "$GITHUB_OUTPUT"
           fi
