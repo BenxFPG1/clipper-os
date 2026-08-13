@@ -1,3 +1,1 @@
-{
-  "$comment": "Geen crons hier: de achtergrondtaken draaien via GitHub Actions (.github/workflows/clipper-jobs.yml). Vercel host alleen de UI."
-}
+{}
