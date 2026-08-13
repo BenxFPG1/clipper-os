@@ -86,7 +86,15 @@ export async function runTracking(): Promise<TrackingResult> {
   return result;
 }
 
-/** Kostenbewaking uit sectie 9: alert zodra de providerkosten deze maand het plafond raken. */
+/**
+ * Kostenbewaking uit sectie 9: alert zodra de providerkosten deze maand het
+ * plafond raken. `claude-code` telt bewust niet mee: dat is een
+ * schaduwberekening van wat een call zou hebben gekost via losse
+ * API-credits, geen echte rekening — met CLAUDE_BACKEND=claude-code loopt
+ * alles via het vaste abonnement. Meetellen gaf hier een vals alarm (>€80
+ * "kosten" terwijl er in werkelijkheid voor een paar euro aan
+ * ScrapeCreators/Groq/Apify was verbruikt).
+ */
 async function checkMonthlyCost(): Promise<string | null> {
   const monthStart = new Date();
   monthStart.setUTCDate(1);
@@ -94,13 +102,15 @@ async function checkMonthlyCost(): Promise<string | null> {
 
   const { data, error } = await db()
     .from('provider_usage')
-    .select('cost_eur')
+    .select('provider, cost_eur')
     .gte('created_at', monthStart.toISOString());
   if (error) return null;
 
-  const total = (data ?? []).reduce((sum, row) => sum + Number(row.cost_eur ?? 0), 0);
+  const total = (data ?? [])
+    .filter((row) => row.provider !== 'claude-code')
+    .reduce((sum, row) => sum + Number(row.cost_eur ?? 0), 0);
   if (total <= COST_ALERT_EUR) return null;
-  return `Providerkosten deze maand: €${total.toFixed(2)} (plafond €${COST_ALERT_EUR}).`;
+  return `Echte providerkosten deze maand (excl. Claude-abonnement): €${total.toFixed(2)} (plafond €${COST_ALERT_EUR}).`;
 }
 
 function sleep(ms: number): Promise<void> {
