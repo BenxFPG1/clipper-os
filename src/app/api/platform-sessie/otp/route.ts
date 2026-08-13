@@ -117,10 +117,17 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Antwoord zonder tokens; probeer een nieuwe code.' }, { status: 502 });
     }
 
-    // De bestaande campagne-query aanhouden en alleen de sessie vervangen.
+    // De bestaande campagne-query aanhouden en alleen de sessie vervangen —
+    // behalve als die query op één campagne-ID is vastgezet (id=in.(...)).
+    // Dat gebeurt als de allereerste cURL per ongeluk vanaf een
+    // campagnedetail-pagina gekopieerd is in plaats van het overzicht; zo'n
+    // query vindt dan voor altijd hooguit die ene (allang geïmporteerde)
+    // campagne en nooit iets nieuws. In dat geval terugvallen op de brede
+    // lijst-query in plaats van de kapotte query eindeloos te herhalen.
     const oud = sessie?.verzoek as { url?: string; headers?: Record<string, string> } | null;
+    const oudeUrlVastOpEenId = oud?.url ? /[?&]id=in\.\(/.test(oud.url) : false;
     const verzoek = {
-      url: oud?.url ?? `${basis.project}/rest/v1/v_my_campaigns?select=*`,
+      url: !oudeUrlVastOpEenId && oud?.url ? oud.url : `${basis.project}/rest/v1/v_my_campaigns?select=*`,
       method: 'GET',
       headers: {
         ...(oud?.headers ?? {}),
