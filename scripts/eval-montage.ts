@@ -3,6 +3,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { db } from '../src/lib/supabase';
+import { r2Download } from '../src/lib/r2';
 import { keurMontage, type Keuringsrapport } from '../src/lib/roughcut/keuring';
 import { bronWoordenUitCache } from '../src/lib/roughcut/woorden';
 import { pythonMetOpenCV } from '../src/lib/python';
@@ -82,7 +83,7 @@ async function main() {
         console.log('   geen gerenderde clip gevonden; overgeslagen');
         continue;
       }
-      const dl = await supabase.storage.from('montages').download(bestand.pad);
+      const dl = await r2Download(bestand.pad);
       if (!dl.data) {
         console.log('   download mislukt; overgeslagen');
         continue;

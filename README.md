@@ -194,6 +194,23 @@ Bewust **ruw**: de tool doet het mechanische werk — de juiste fragmenten in de
 
 Werkt op je Mac (yt-dlp en ffmpeg), niet op Vercel.
 
+## Opslag: Cloudflare R2, niet Supabase Storage
+
+Gerenderde clips, muziekbedden en de woordelijke-transcriptiecache staan in **Cloudflare R2**, niet in Supabase Storage. Reden: Supabase Storage geeft op het gratis plan maar 1GB — bij een tool die voortdurend video rendert loopt dat binnen een paar weken vol (en zonder dat iemand het merkt, tot de Supabase-quota-restrictie toeslaat). R2 geeft 10GB gratis én geen kosten voor dataverkeer.
+
+`src/lib/r2.ts` is de enige plek die de S3-SDK aanroept; de rest van de code (`render-worker.ts`, `muziek.ts`, `roughcut/woorden.ts`, `broll/ingest.ts`, de `/api/renders`-route) gebruikt `r2Upload`/`r2Download`/`r2SignedUrl` alsof het nog steeds Supabase Storage was.
+
+Env-vars (lokaal in `.env`, in de cloud als GitHub-secrets én Vercel-env-vars — alle drie moeten kloppen):
+
+```
+R2_ACCOUNT_ID=...
+R2_ACCESS_KEY_ID=...
+R2_SECRET_ACCESS_KEY=...
+R2_BUCKET=clipper-os-montages
+```
+
+Aanmaken: Cloudflare-account (gratis) → R2 Object Storage → bucket aanmaken → Manage API Tokens → token met "Object Read & Write", gescoped tot die bucket.
+
 ## Kosten en doorlooptijd
 
 Gemeten op een echte aflevering van 39 minuten (440 transcriptsegmenten):

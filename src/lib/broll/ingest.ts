@@ -4,6 +4,7 @@ import { mkdtemp, readFile, readdir, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { extname, join } from 'node:path';
 import { db } from '../supabase';
+import { r2Download, r2Upload } from '../r2';
 import { analyseerBroll } from './analyse';
 import { bekijkBroll, type KijkOordeel } from './kijk';
 
@@ -20,7 +21,6 @@ import { bekijkBroll, type KijkOordeel } from './kijk';
  * op alles wat er al is (campagnekoppeling, archiveren, render_jobs).
  */
 
-const BUCKET = 'montages';
 const VIDEO_EXTENSIES = new Set(['.mp4', '.mov', '.m4v', '.webm', '.mkv', '.avi']);
 /** Groter dan dit uploaden we niet; één b-roll-shot hoort geen gigabyte te zijn. */
 const MAX_BESTAND_BYTES = 400 * 1024 * 1024;
@@ -100,12 +100,8 @@ export async function haalBrollUitDrive(campaignId: string, driveUrl: string): P
 
         const analyse = { ...analyses.get(pad)!, kijk: kijk[i] ?? undefined };
 
-        // Bucket-les van eerder: alleen video/mp4 wordt geaccepteerd, dus dat
-        // contentType gebruiken we ongeacht de echte container.
         const opslagPad = `broll/${campaignId}/${naam.replace(/[^\w.\- ]+/g, '_')}`;
-        const { error: uploadFout } = await supabase.storage
-          .from(BUCKET)
-          .upload(opslagPad, await readFile(pad), { contentType: 'video/mp4', upsert: true });
+        const { error: uploadFout } = await r2Upload(opslagPad, await readFile(pad), 'video/mp4');
         if (uploadFout) throw new Error(`upload: ${uploadFout.message}`);
 
         const { data: rij, error: insertFout } = await supabase
@@ -180,8 +176,7 @@ function run(cmd: string, args: string[], timeoutMs: number): Promise<string> {
 
 /** Haalt een b-roll-bestand uit de opslag naar een lokaal pad (voor renderen). */
 export async function downloadBroll(opslagPad: string, naarPad: string): Promise<void> {
-  const supabase = db();
-  const { data, error } = await supabase.storage.from(BUCKET).download(opslagPad.replace(/^storage:/, ''));
+  const { data, error } = await r2Download(opslagPad.replace(/^storage:/, ''));
   if (error || !data) throw new Error(`download ${opslagPad}: ${error?.message ?? 'leeg'}`);
   const { writeFile } = await import('node:fs/promises');
   await writeFile(naarPad, Buffer.from(await data.arrayBuffer()));

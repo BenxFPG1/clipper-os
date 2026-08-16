@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { db } from '../supabase';
+import { r2Download, r2Upload } from '../r2';
 import { resolveBinary } from '../ingest/binaries';
 import { woordenVanFragment, type Woord } from './uitlijnen';
 
@@ -27,8 +27,6 @@ import { woordenVanFragment, type Woord } from './uitlijnen';
  * opslag gecachet; elke render daarna leest hem in een seconde terug.
  */
 
-const BUCKET = 'montages';
-
 export type BronWoord = Woord;
 
 /**
@@ -39,7 +37,7 @@ export async function bronWoordenUitCache(
   videoId: string,
   model = process.env.WHISPER_BRON_MODEL ?? 'small',
 ): Promise<BronWoord[] | null> {
-  const dl = await db().storage.from(BUCKET).download(`woorden/${videoId}-${model}.json`);
+  const dl = await r2Download(`woorden/${videoId}-${model}.json`);
   if (!dl.data) return null;
   try {
     const woorden = JSON.parse(await dl.data.text()) as BronWoord[];
@@ -61,10 +59,9 @@ export async function haalBronWoorden(
   // eenmalig per video en gecachet, dus het duurdere model kost per saldo
   // vrijwel niets.
   const model = opties.model ?? process.env.WHISPER_BRON_MODEL ?? 'small';
-  const supabase = db();
   const cachePad = `woorden/${videoId}-${model}.json`;
 
-  const bestaand = await supabase.storage.from(BUCKET).download(cachePad);
+  const bestaand = await r2Download(cachePad);
   if (bestaand.data) {
     try {
       const woorden = JSON.parse(await bestaand.data.text()) as BronWoord[];
@@ -96,18 +93,9 @@ export async function haalBronWoorden(
     const woorden = await woordenVanFragment(wav, model);
     if (woorden.length < 50) return null;
 
-    // De bucket is voor montages bedoeld en staat uitsluitend video/mp4 toe;
-    // JSON, tekst en zelfs audio worden geweigerd. De inhoud ís gewoon JSON,
-    // alleen het etiket zegt video. Niet fraai, wel beter dan een
-    // schemawijziging voor één cachebestand — en het uploadresultaat wordt
-    // gecheckt, want een stille misser betekent elke render opnieuw tien
-    // minuten transcriberen.
-    const upload = await supabase.storage
-      .from(BUCKET)
-      .upload(cachePad, Buffer.from(JSON.stringify(woorden)), {
-        contentType: 'video/mp4',
-        upsert: true,
-      });
+    // Het uploadresultaat wordt gecheckt: een stille misser betekent dat elke
+    // volgende render opnieuw tien minuten transcribeert.
+    const upload = await r2Upload(cachePad, Buffer.from(JSON.stringify(woorden)), 'application/json');
     if (upload.error) {
       log(`LET OP: transcriptiecache niet opgeslagen (${upload.error.message}); volgende render transcribeert opnieuw`);
     } else {

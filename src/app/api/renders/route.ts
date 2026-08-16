@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { optionalEnv } from '@/lib/env';
 import { db } from '@/lib/supabase';
+import { r2SignedUrl } from '@/lib/r2';
 
-const BUCKET = 'montages';
 /** Downloadlinks blijven een uur geldig; lang genoeg om te downloaden, kort genoeg om niet te lekken. */
 const LINK_GELDIG_SECONDEN = 3600;
 
@@ -27,8 +27,8 @@ export async function GET(req: NextRequest) {
 
       const downloads = await Promise.all(
         bestanden.map(async (b) => {
-          const { data: link } = await supabase.storage.from(BUCKET).createSignedUrl(b.pad, LINK_GELDIG_SECONDEN);
-          return { naam: b.naam, bytes: b.bytes, url: link?.signedUrl ?? null };
+          const url = await r2SignedUrl(b.pad, LINK_GELDIG_SECONDEN);
+          return { naam: b.naam, bytes: b.bytes, url };
         }),
       );
       return { ...job, downloads };

@@ -2,9 +2,8 @@ import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { db } from './supabase';
+import { r2Download, r2Upload } from './r2';
 
-const BUCKET = 'montages';
 const MAP = 'muziekbedden';
 
 /**
@@ -62,8 +61,7 @@ export async function zorgVoorMuziekbed(
   // Al eerder gegenereerd voor een andere clip of een eerdere render? Dan
   // hergebruiken we dat bestand in plaats van opnieuw te betalen.
   const opslagPad = `${MAP}/${sleutel}.mp3`;
-  const supabase = db();
-  const bestaand = await supabase.storage.from(BUCKET).download(opslagPad);
+  const bestaand = await r2Download(opslagPad);
   if (bestaand.data) {
     await mkdir(opties.werkmap, { recursive: true });
     await writeFile(doel, Buffer.from(await bestaand.data.arrayBuffer()));
@@ -79,10 +77,7 @@ export async function zorgVoorMuziekbed(
 
     await mkdir(opties.werkmap, { recursive: true });
     await writeFile(doel, bytes);
-    await supabase.storage.from(BUCKET).upload(opslagPad, bytes, {
-      contentType: 'audio/mpeg',
-      upsert: true,
-    });
+    await r2Upload(opslagPad, bytes, 'audio/mpeg');
     opties.log?.(`muziekbed gegenereerd (${sfeer}, ${provider})`);
     return doel;
   } catch (e) {

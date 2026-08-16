@@ -35,9 +35,9 @@ import { keurMontage } from '../src/lib/roughcut/keuring';
 import { resolveBinary } from '../src/lib/ingest/binaries';
 import { pythonMetOpenCV } from '../src/lib/python';
 import { pakFrames } from '../src/lib/roughcut/frames';
+import { r2Upload } from '../src/lib/r2';
 
-const BUCKET = 'montages';
-/** Ruim onder de 50MB-limiet van de gratis opslag; grotere clips slaan we over. */
+/** Een clip die hier nog overheen gaat is vrijwel zeker een render die is misgegaan. */
 const MAX_BYTES = 50 * 1024 * 1024;
 
 /**
@@ -1063,9 +1063,7 @@ async function verwerk(job: Job) {
     }
 
     const pad = `${job.video_id}/${job.id}/${naam}`;
-    const { error: uploadError } = await supabase.storage
-      .from(BUCKET)
-      .upload(pad, await readFile(lokaal), { contentType: 'video/mp4', upsert: true });
+    const { error: uploadError } = await r2Upload(pad, await readFile(lokaal), 'video/mp4');
     if (uploadError) {
       // Eén mislukte upload mag niet de hele montage weggooien: de andere
       // clips zijn al gerenderd en bruikbaar.
@@ -1167,9 +1165,7 @@ async function verwerkBroll(job: Job, plan: import('../src/lib/broll/plan').Brol
       continue;
     }
     const pad = `${job.video_id}/${job.id}/${naam}`;
-    const { error: uploadFout } = await supabase.storage
-      .from(BUCKET)
-      .upload(pad, await readFile(lokaal), { contentType: 'video/mp4', upsert: true });
+    const { error: uploadFout } = await r2Upload(pad, await readFile(lokaal), 'video/mp4');
     if (uploadFout) {
       console.log(`     upload mislukt, clip overgeslagen: ${uploadFout.message}`);
       continue;
