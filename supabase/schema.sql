@@ -11,6 +11,11 @@ create table if not exists campaigns (
   cpm_eur numeric not null default 0.5,
   budget_eur numeric,
   status text not null default 'active' check (status in ('active', 'paused', 'ended')),
+  -- ClipArmy's eigen campagne-ID (public_campaigns.id): voorkomt dat dezelfde
+  -- live campagne twee keer geïmporteerd wordt onder een andere naam. Naam-
+  -- fuzzy-matching alleen bleek onvoldoende (zie de "Supergaande"-dubbele-
+  -- import van 16 augustus): een stabiele ID is de enige echte garantie.
+  cliparmy_campagne_id text unique,
   created_at timestamptz not null default now()
 );
 

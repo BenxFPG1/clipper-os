@@ -154,20 +154,33 @@ export async function haalClipArmyCampagnes(): Promise<{
     return { nieuw: [], bekeken: 0, fout: await noteer('Antwoord bevatte geen herkenbare campagnes.') };
   }
 
-  // Welke campagnes kennen we al? Vergelijken op naam is genoeg en voorkomt
-  // dubbele imports als het antwoord anders opgebouwd wordt.
-  const { data: bestaand } = await supabase.from('campaigns').select('name');
-  const bekend = new Set((bestaand ?? []).map((c) => normaliseer(c.name as string)));
+  // Welke campagnes kennen we al? Primair op ClipArmy's eigen campagne-ID
+  // (stabiel, komt uit public_campaigns.id) — vergelijken op naam alleen bleek
+  // onvoldoende: dezelfde live campagne kwam een keer onder een andere naam
+  // binnen (te weinig velden in een eerdere, kapotte query) en werd dan als
+  // "nieuw" gezien. Naam-matching blijft erbij als vangnet voor campagnes die
+  // ooit handmatig of via de bookmarklet zijn geïmporteerd, zonder ClipArmy-ID.
+  const { data: bestaand } = await supabase.from('campaigns').select('name, cliparmy_campagne_id');
+  const bekendeIds = new Set(
+    (bestaand ?? []).map((c) => c.cliparmy_campagne_id as string | null).filter((v): v is string => Boolean(v)),
+  );
+  const bekendeNamen = new Set((bestaand ?? []).map((c) => normaliseer(c.name as string)));
 
   const nieuw: { naam: string; id: string }[] = [];
   for (const blok of blokken) {
-    const naam = normaliseer(blok.slice(0, 80));
-    if (!naam || blok.length < 120) continue;
-    if ([...bekend].some((b) => b.includes(naam.slice(0, 20)) || naam.includes(b.slice(0, 20)))) continue;
+    if (blok.clipArmyId && bekendeIds.has(blok.clipArmyId)) continue;
 
-    const r = await importeerCampagneTekst(blok);
+    const naam = normaliseer(blok.tekst.slice(0, 80));
+    if (!naam || blok.tekst.length < 120) continue;
+    if ([...bekendeNamen].some((b) => b.includes(naam.slice(0, 20)) || naam.includes(b.slice(0, 20)))) continue;
+
+    const r = await importeerCampagneTekst(blok.tekst);
+    if (blok.clipArmyId) {
+      await supabase.from('campaigns').update({ cliparmy_campagne_id: blok.clipArmyId }).eq('id', r.campaign.id);
+      bekendeIds.add(blok.clipArmyId);
+    }
     nieuw.push({ naam: r.campaign.name as string, id: r.campaign.id as string });
-    bekend.add(normaliseer(r.campaign.name as string));
+    bekendeNamen.add(normaliseer(r.campaign.name as string));
   }
 
   await supabase
@@ -221,12 +234,17 @@ function maakVerzoekVanCookie(cookie: string | null): Verzoek | null {
   };
 }
 
+/** Eén te importeren campagne: de tekst voor de import-agent, plus (indien bekend) ClipArmy's eigen ID voor dedup. */
+type CampagneBlok = { tekst: string; clipArmyId: string | null };
+
 /**
  * Een API-antwoord is een lijst objecten: elke campagne wordt één tekstblok dat
  * de import-agent net zo leest als een geplakte briefing. We geven de veldnamen
- * mee, want die dragen betekenis ("deadline", "cpm", "platform").
+ * mee, want die dragen betekenis ("deadline", "cpm", "platform"). Het eigen
+ * "id"-veld van de rij gaat niet mee de tekst in (geen bruikbare briefing-
+ * inhoud) maar wordt apart bewaard voor dedup op een stabiele identifier.
  */
-function blokkenUitJson(ruw: string): string[] {
+function blokkenUitJson(ruw: string): CampagneBlok[] {
   let data: unknown;
   try {
     data = JSON.parse(ruw);
@@ -245,20 +263,22 @@ function blokkenUitJson(ruw: string): string[] {
   return rijen
     .filter((r): r is Record<string, unknown> => Boolean(r) && typeof r === 'object')
     .slice(0, 25)
-    .map((rij) =>
-      Object.entries(rij)
+    .map((rij) => ({
+      tekst: Object.entries(rij)
         .filter(([, v]) => v !== null && v !== '' && typeof v !== 'object')
         .map(([k, v]) => `${k}: ${v}`)
         .join('\n')
         .slice(0, 4000),
-    );
+      clipArmyId: typeof rij.id === 'string' ? rij.id : null,
+    }));
 }
 
 /**
  * Knipt de paginatekst in losse campagnes. De pagina is één lange tekst, dus
- * we splitsen op de bedragen/CPM-aanduidingen die elke campagne heeft.
+ * we splitsen op de bedragen/CPM-aanduidingen die elke campagne heeft. Geen
+ * betrouwbaar ID uit HTML te halen — dedup valt hier terug op naam-matching.
  */
-function blokkenUitHtml(html: string): string[] {
+function blokkenUitHtml(html: string): CampagneBlok[] {
   const tekst = html
     .replace(/<script[\s\S]*?<\/script>/gi, ' ')
     .replace(/<style[\s\S]*?<\/style>/gi, ' ')
@@ -280,7 +300,7 @@ function blokkenUitHtml(html: string): string[] {
     }
   }
   if (huidig.length > 200) blokken.push(huidig.slice(0, 4000));
-  return blokken.slice(0, 10);
+  return blokken.slice(0, 10).map((tekst) => ({ tekst, clipArmyId: null }));
 }
 
 /** Zet de fout bij de sessie zodat je in het dashboard ziet wat er misging. */
