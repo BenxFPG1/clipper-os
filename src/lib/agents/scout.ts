@@ -4,7 +4,7 @@ import { AGENT_EFFORT, CLAUDE_LICHT_MODEL } from '../env';
 import { db, logProviderUsage } from '../supabase';
 import { Theme, buildClassifyPrompt, loadThemes, loadVault, renderVaultForPrompt } from '../vault';
 import { median } from '../tracking/performance';
-import { AccountPost, Platform, getMetricsProvider } from '../tracking/provider';
+import { AccountPost, MetricsProvider, Platform, getFallbackProvider, getMetricsProvider } from '../tracking/provider';
 import { searchYoutubeShorts } from '../tracking/youtube-discovery';
 
 /** Hoe ver een post boven de mediaan van zijn eigen account moet zitten. */
@@ -143,15 +143,35 @@ export async function runScoutAgent(options?: { limitPerAccount?: number }): Pro
   const outliers: Outlier[] = [];
   const fouten: { bron: string; error: string }[] = [];
 
+  // Valt de betaalde provider om (geen credits, rate limit, storing), dan is
+  // gratis via yt-dlp alsnog beter dan een lege run. Dekt in de praktijk
+  // alleen TikTok-accounts volgen (de enige call die de gratis provider ook
+  // echt ondersteunt); voor zoeken/trending op TikTok en alles op Reels
+  // bestaat geen gratis route, dus daar gooit de fallback zijn eigen
+  // duidelijke fout en komt de oorspronkelijke fout gewoon terecht in `fouten`.
+  const fallbackProvider = getFallbackProvider(provider);
+  async function metFallback<T>(
+    fn: (p: MetricsProvider) => Promise<T>,
+  ): Promise<{ data: T; provider: MetricsProvider }> {
+    try {
+      return { data: await fn(provider), provider };
+    } catch (e) {
+      if (!fallbackProvider) throw e;
+      try {
+        return { data: await fn(fallbackProvider), provider: fallbackProvider };
+      } catch {
+        throw e; // de oorspronkelijke fout (bv. "credits op") is informatiever dan "kan niet gratis"
+      }
+    }
+  }
+
   // Deel 1 — accounts die we volgen.
   for (const account of accounts) {
     try {
-      const posts = await provider.fetchAccountPosts(
-        account.handle,
-        account.platform as Platform,
-        options?.limitPerAccount ?? 30,
+      const { data: posts, provider: gebruikt } = await metFallback((p) =>
+        p.fetchAccountPosts(account.handle, account.platform as Platform, options?.limitPerAccount ?? 30),
       );
-      await logProviderUsage(provider.name, 'fetch_account_posts', 1, provider.costPerCallEur);
+      await logProviderUsage(gebruikt.name, 'fetch_account_posts', 1, gebruikt.costPerCallEur);
 
       // Een geslaagde fetch bewijst dat het account leeft, ongeacht of hij
       // deze keer de mediaan-drempel haalt — dat telt niet als "fout" en mag
@@ -223,12 +243,13 @@ export async function runScoutAgent(options?: { limitPerAccount?: number }): Pro
   for (const q of queries) {
     try {
       const platform = q.platform as Platform;
-      const posts =
-        platform === 'shorts'
-          ? await searchYoutubeShorts(q.query, 12)
-          : await provider.searchPosts(q.query, platform, 50);
-      if (platform !== 'shorts') {
-        await logProviderUsage(provider.name, 'search_posts', 1, provider.costPerCallEur);
+      let posts: AccountPost[];
+      if (platform === 'shorts') {
+        posts = await searchYoutubeShorts(q.query, 12);
+      } else {
+        const { data, provider: gebruikt } = await metFallback((p) => p.searchPosts(q.query, platform, 50));
+        posts = data;
+        await logProviderUsage(gebruikt.name, 'search_posts', 1, gebruikt.costPerCallEur);
       }
 
       // Binnen een zoekset is views-per-dag de eerlijke maat: een post van
@@ -262,9 +283,9 @@ export async function runScoutAgent(options?: { limitPerAccount?: number }): Pro
       // regio te filteren, dus ze leveren veel content die niets met ons
       // materiaal te maken heeft. De themazoekopdrachten met Nederlandse
       // termen zijn de relevante bron; dit is aanvulling.
-      const posts = await provider.fetchTrending(platform, 40);
+      const { data: posts, provider: gebruikt } = await metFallback((p) => p.fetchTrending(platform, 40));
       if (platform !== 'shorts') {
-        await logProviderUsage(provider.name, 'fetch_trending', 1, provider.costPerCallEur);
+        await logProviderUsage(gebruikt.name, 'fetch_trending', 1, gebruikt.costPerCallEur);
       }
 
       const hits = pakUitschieters(posts, 10);
@@ -293,12 +314,13 @@ export async function runScoutAgent(options?: { limitPerAccount?: number }): Pro
     for (const zoekterm of thema.zoektermen) {
       for (const platform of PLATFORMS) {
         try {
-          const posts =
-            platform === 'shorts'
-              ? await searchYoutubeShorts(zoekterm, 15)
-              : await provider.searchPosts(zoekterm, platform, 20);
-          if (platform !== 'shorts') {
-            await logProviderUsage(provider.name, 'search_posts', 1, provider.costPerCallEur);
+          let posts: AccountPost[];
+          if (platform === 'shorts') {
+            posts = await searchYoutubeShorts(zoekterm, 15);
+          } else {
+            const { data, provider: gebruikt } = await metFallback((p) => p.searchPosts(zoekterm, platform, 20));
+            posts = data;
+            await logProviderUsage(gebruikt.name, 'search_posts', 1, gebruikt.costPerCallEur);
           }
 
           for (const hit of pakUitschieters(posts)) {

@@ -14,9 +14,7 @@ on:
     - cron: '0 9 * * 1'          # kennis: maandag ~11:00 NL
     - cron: '20 * * * *'         # cliparmy: elk uur nieuwe campagnes ophalen
     - cron: '0 10 * * 2,4,6'     # kijken: di/do/za, topvondsten visueel analyseren
-    - cron: '0 9 * * 2'          # editleraar: dinsdag, leren van edit-tutorials
-    - cron: '0 9 * * 4'          # editleraar: donderdag, leren van edit-tutorials
-    - cron: '0 9 * * 6'          # editleraar: zaterdag, leren van edit-tutorials
+    - cron: '0 9 * * *'          # editleraar: dagelijks, leren van edit-tutorials
     - cron: '30 10 * * 0'        # editleraar_visueel: zondag, toffe effecten spotten in topvondsten
     - cron: '0 6,15 * * *'       # trends: 2x per dag, net na elke scout-run (~7:30/16:30 NL) — rankings+rapport+diff
   workflow_dispatch:
@@ -53,7 +51,7 @@ jobs:
             echo "job=cliparmy" >> "$GITHUB_OUTPUT"
           elif [ "${{ github.event.schedule }}" = "0 10 * * 2,4,6" ]; then
             echo "job=kijken" >> "$GITHUB_OUTPUT"
-          elif [ "${{ github.event.schedule }}" = "0 9 * * 2" ] || [ "${{ github.event.schedule }}" = "0 9 * * 4" ] || [ "${{ github.event.schedule }}" = "0 9 * * 6" ]; then
+          elif [ "${{ github.event.schedule }}" = "0 9 * * *" ]; then
             echo "job=editleraar" >> "$GITHUB_OUTPUT"
           elif [ "${{ github.event.schedule }}" = "30 10 * * 0" ]; then
             echo "job=editleraar_visueel" >> "$GITHUB_OUTPUT"
