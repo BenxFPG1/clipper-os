@@ -152,9 +152,31 @@ class ScrapeCreatorsProvider implements MetricsProvider {
   }
 
   async searchPosts(query: string, platform: Platform, limit = 30): Promise<AccountPost[]> {
-    const endpoint: Record<Platform, string> = {
+    // Reels heeft geen vrije-tekst-zoekopdracht: het endpoint doorzoekt
+    // hashtags, geen zinnen. Een meerwoordige zoekterm ("nederlandse comedy
+    // clips") gaf hier altijd een 400 (missing_parameter) — niet alleen door
+    // de verkeerde parameternaam (moet "hashtag" zijn, niet "query"), maar
+    // ook inhoudelijk: dit is de dichtstbijzijnde vertaling van een zoekterm
+    // naar een geldige hashtag, geen garantie dat die hashtag ook populair is.
+    if (platform === 'reels') {
+      const hashtag = query
+        .normalize('NFD')
+        .replace(/[̀-ͯ]/g, '')
+        .replace(/[^a-zA-Z0-9]/g, '')
+        .toLowerCase();
+      const url = new URL('https://api.scrapecreators.com/v1/instagram/search/hashtag');
+      url.searchParams.set('hashtag', hashtag);
+      url.searchParams.set('media_type', 'reels');
+
+      const res = await fetchMetTimeout(url, { headers: { 'x-api-key': requireEnv('SCRAPECREATORS_API_KEY') } });
+      if (!res.ok) throw new Error(`ScrapeCreators ${res.status}: ${await res.text()}`);
+
+      const json = (await res.json()) as Record<string, unknown>;
+      return normalizePosts(json, platform, '');
+    }
+
+    const endpoint: Record<'tiktok' | 'shorts', string> = {
       tiktok: 'https://api.scrapecreators.com/v1/tiktok/search/keyword',
-      reels: 'https://api.scrapecreators.com/v1/instagram/search/hashtag',
       shorts: 'https://api.scrapecreators.com/v1/youtube/search',
     };
 

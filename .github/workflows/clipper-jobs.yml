@@ -82,6 +82,18 @@ jobs:
           yt-dlp --version
           ffmpeg -version | head -1
 
+      # Zonder dit lost yt-dlp YouTube's n-challenge niet op: downloads en
+      # ondertitels falen dan stil (geen harde fout, gewoon geen bestanden).
+      # Precies wat editleraar elke geplande run trof — "geen tutorials met
+      # bruikbare ondertiteling gevonden" was in werkelijkheid deze
+      # ontbrekende stap, niet een probleem met de zoek- of leeslogica.
+      - name: Installeer deno (challenge-solver voor yt-dlp)
+        if: ${{ steps.kies.outputs.job != 'cliparmy' }}
+        run: |
+          curl -fsSL --retry 3 https://github.com/denoland/deno/releases/latest/download/deno-x86_64-unknown-linux-gnu.zip -o /tmp/deno.zip
+          sudo unzip -oq /tmp/deno.zip -d /usr/local/bin
+          deno --version | head -1
+
       - name: Dependencies
         run: npm ci
 
