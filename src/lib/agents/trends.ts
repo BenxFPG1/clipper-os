@@ -10,8 +10,9 @@ import { loadVault, renderVaultForPrompt } from '../vault';
  *
  * De scout decodeert losse vondsten, maar niemand keek ooit over het geheel
  * heen: honderdvijftig gedecodeerde posts bleven honderdvijftig losse rijen.
- * Deze agent doet wat een menselijke strateeg wekelijks zou doen — alles van
- * de afgelopen periode naast elkaar leggen en de patronen benoemen:
+ * Deze agent doet dagelijks wat een menselijke strateeg hooguit wekelijks zou
+ * doen — alles van de afgelopen periode naast elkaar leggen en de patronen
+ * benoemen:
  *
  * 1. Mechanisch (geen model, geen mening): hook- en structuur-rankings over
  *    alle gedecodeerde vondsten, per thema en platform, met views-per-dag als
