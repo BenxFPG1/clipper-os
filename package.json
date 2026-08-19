@@ -20,7 +20,8 @@
     "test:scriptpoort": "tsx scripts/test-scriptpoort.ts",
     "test:verhaaldokter": "tsx scripts/test-verhaaldokterpoort.ts",
     "test:scriptcontrole": "tsx scripts/test-scriptcontrole.ts",
-    "test:broll": "tsx scripts/test-broll.ts"
+    "test:broll": "tsx scripts/test-broll.ts",
+    "test:trends": "tsx scripts/test-trends.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.115.0",

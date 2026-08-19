@@ -485,3 +485,24 @@ alter table campaigns add column if not exists broll_stijlgids jsonb;
 alter table ai_jobs drop constraint if exists ai_jobs_soort_check;
 alter table ai_jobs add constraint ai_jobs_soort_check
   check (soort in ('clip_plan', 'scripts', 'concepten', 'broll_ingest', 'broll_plan'));
+
+-- ============================================================ uitbreiding v1.9
+-- Trendrapporten: de geaggregeerde "wat werkt er nu"-laag bovenop scout_finds.
+-- De scout verzamelt en decodeert losse vondsten, maar niemand keek ooit over
+-- het geheel heen: 150 gedecodeerde posts bleven 150 losse rijen. De
+-- trends-agent telt ze mechanisch bij elkaar (hook- en structuur-rankings,
+-- gewogen op views-per-dag, per thema en platform) en schrijft er wekelijks
+-- een leesbaar rapport over, mét wat er veranderde t.o.v. het vorige rapport.
+-- De rankings zijn data (jsonb) zodat de planner ze letterlijk mee kan krijgen.
+alter table agent_runs drop constraint if exists agent_runs_agent_check;
+alter table agent_runs add constraint agent_runs_agent_check
+  check (agent in ('retro', 'scout', 'eval', 'kennis', 'trends'));
+
+create table if not exists trend_rapporten (
+  id uuid primary key default gen_random_uuid(),
+  periode_dagen int not null,
+  rankings jsonb not null,
+  rapport text not null,
+  veranderingen text,
+  created_at timestamptz not null default now()
+);

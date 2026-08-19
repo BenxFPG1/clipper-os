@@ -104,6 +104,15 @@ async function main() {
       for (const f of r.fouten.slice(0, 3)) console.log(`  fout: ${f}`);
       break;
     }
+    case 'trends': {
+      const { runTrendsAgent } = await import('../src/lib/agents/trends');
+      const r = await metRetry(() => runTrendsAgent());
+      console.log(
+        `${stamp} trends: ${r.vondsten} vondsten → ${r.hooks} hook- en ${r.structuren} structuurpatronen, ${r.lessen} les(sen), ${r.zoektermen} nieuwe zoekterm(en)`,
+      );
+      console.log(`  ${r.rapport.slice(0, 300).replace(/\n+/g, ' ')}`);
+      break;
+    }
     case 'kanaal': {
       const { haalNieuweBronvideos } = await import('../src/lib/ingest/kanaal');
       const r = await metRetry(() => haalNieuweBronvideos());
@@ -113,7 +122,7 @@ async function main() {
       break;
     }
     default:
-      console.error('Gebruik: npx tsx scripts/job.ts <tracking|scout|retro|kanaal|kennis|cliparmy|kijken|editleraar|editleraar_visueel>');
+      console.error('Gebruik: npx tsx scripts/job.ts <tracking|scout|retro|kanaal|kennis|cliparmy|kijken|editleraar|editleraar_visueel|trends>');
       process.exit(1);
   }
 }

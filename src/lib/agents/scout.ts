@@ -325,6 +325,42 @@ export async function runScoutAgent(options?: { limitPerAccount?: number }): Pro
   outliers.sort((a, b) => b.outlier_score - a.outlier_score);
   const teDecoderen = dedupeByUrl(outliers).slice(0, 35);
 
+  // Achterstallige decodering. De belofte hieronder ("decoderen we een
+  // volgende run alsnog") bestond lang alleen als comment: vondsten waarvan de
+  // Claude-call ooit faalde bleven voor altijd ongedecodeerd liggen, en alles
+  // wat op decoded bouwt (retro, trends, kijken) zag ze nooit. Daarom hier
+  // echt: een handvol oude ongedecodeerde vondsten meenemen in dezelfde batch.
+  try {
+    const alInBatch = new Set(teDecoderen.map((o) => o.post_url));
+    const { data: achterstallig } = await supabase
+      .from('scout_finds')
+      .select('tracked_account_id, handle, platform, post_url, posted_at, views, likes, comments, outlier_score, views_per_dag, gevonden_via, theme, caption')
+      .is('decoded', null)
+      .order('created_at', { ascending: false })
+      .limit(15);
+    for (const rij of achterstallig ?? []) {
+      if (alInBatch.has(rij.post_url as string)) continue;
+      teDecoderen.push({
+        post_url: rij.post_url as string,
+        posted_at: rij.posted_at as string | null,
+        views: rij.views as number | null,
+        likes: rij.likes as number | null,
+        comments: rij.comments as number | null,
+        caption: rij.caption as string | null,
+        handle: rij.handle as string,
+        raw: null,
+        platform: rij.platform as Platform,
+        theme: rij.theme as string | null,
+        outlier_score: (rij.outlier_score as number | null) ?? 0,
+        views_per_dag: rij.views_per_dag as number | null,
+        gevonden_via: (rij.gevonden_via as string | null) ?? 'achterstallig',
+        accountId: rij.tracked_account_id as string | null,
+      });
+    }
+  } catch {
+    // Backlog is een extraatje; de verse vondsten gaan altijd voor.
+  }
+
   // Decoderen is een verrijking, geen voorwaarde: als de Claude-call faalt
   // (bijvoorbeeld op credits), bewaren we de vondsten alsnog en decoderen we
   // een volgende run. Research-data mag niet verdwijnen omdat het LLM hapert.
