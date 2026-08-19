@@ -10,9 +10,13 @@ import { loadVault, renderVaultForPrompt } from '../vault';
  *
  * De scout decodeert losse vondsten, maar niemand keek ooit over het geheel
  * heen: honderdvijftig gedecodeerde posts bleven honderdvijftig losse rijen.
- * Deze agent doet dagelijks wat een menselijke strateeg hooguit wekelijks zou
- * doen — alles van de afgelopen periode naast elkaar leggen en de patronen
- * benoemen:
+ * Deze agent doet twee keer per dag — telkens net na een scout-run, zodra er
+ * echt verse gedecodeerde vondsten zijn — wat een menselijke strateeg hooguit
+ * wekelijks zou doen: alles van de afgelopen periode naast elkaar leggen en
+ * de patronen benoemen. Vaker draaien dan de scout nieuwe data aanlevert zou
+ * dezelfde run tegen dezelfde data herhalen; dat scheelt niets in kosten (een
+ * run kost ~€0,45 schaduwprijs, verwaarloosbaar naast een plan-call) maar
+ * levert ook niets op.
  *
  * 1. Mechanisch (geen model, geen mening): hook- en structuur-rankings over
  *    alle gedecodeerde vondsten, per thema en platform, met views-per-dag als

@@ -18,7 +18,7 @@ on:
     - cron: '0 9 * * 4'          # editleraar: donderdag, leren van edit-tutorials
     - cron: '0 9 * * 6'          # editleraar: zaterdag, leren van edit-tutorials
     - cron: '30 10 * * 0'        # editleraar_visueel: zondag, toffe effecten spotten in topvondsten
-    - cron: '0 8 * * *'          # trends: dagelijks (~10:00 NL), rankings + rapport + diff over alle vondsten
+    - cron: '0 6,15 * * *'       # trends: 2x per dag, net na elke scout-run (~7:30/16:30 NL) — rankings+rapport+diff
   workflow_dispatch:
     inputs:
       job:
@@ -57,7 +57,7 @@ jobs:
             echo "job=editleraar" >> "$GITHUB_OUTPUT"
           elif [ "${{ github.event.schedule }}" = "30 10 * * 0" ]; then
             echo "job=editleraar_visueel" >> "$GITHUB_OUTPUT"
-          elif [ "${{ github.event.schedule }}" = "0 8 * * *" ]; then
+          elif [ "${{ github.event.schedule }}" = "0 6,15 * * *" ]; then
             echo "job=trends" >> "$GITHUB_OUTPUT"
           else
             echo "job=tracking" >> "$GITHUB_OUTPUT"
