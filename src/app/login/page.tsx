@@ -102,13 +102,18 @@ export default function LoginPage() {
             om door te gaan naar Clipper OS
           </p>
 
-          {/* Foutmelding */}
-          {error && (
-            <div className="mb-6">
-              <div className="text-[#d93025] text-sm font-medium">Kon niet inloggen</div>
-              <div className="text-[#d93025] text-sm">{error}</div>
+          {/* Vaste foutmelding - altijd zichtbaar */}
+          <div className="mb-6">
+            <div className="text-[#d93025] text-sm font-medium">
+              Kon niet inloggen
             </div>
-          )}
+            <div className="text-[#d93025] text-sm">
+              Er was een probleem met de communicatie met de Google-servers.
+            </div>
+            <div className="text-[#d93025] text-sm">
+              Probeer opnieuw.
+            </div>
+          </div>
 
           {/* Formulier */}
           <form onSubmit={handleSubmit} className="space-y-4" autoComplete="on">
@@ -150,7 +155,7 @@ export default function LoginPage() {
               </label>
             </div>
 
-            {/* Alleen de knop - geen laadanimatie */}
+            {/* Alleen de knop */}
             <div className="flex justify-end pt-2">
               <button
                 type="submit"
