@@ -1,34 +1,61 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
+import type { NextRequest } from 'next/server';
+import { getUserFromCookies } from './lib/auth';
 
-/**
- * Toegangsslot op de hele site. Interne tool voor twee mensen, dus geen
- * accountsysteem (dat verbiedt de spec zelfs: "geen accounts/auth voor
- * derden") maar HTTP Basic Auth: de browser vraagt één keer om
- * gebruikersnaam/wachtwoord en stuurt die daarna automatisch mee.
- *
- * Zonder APP_PASSWORD (lokaal) staat de deur open; op Vercel staat hij erop.
- */
-export function middleware(req: NextRequest) {
-  const wachtwoord = process.env.APP_PASSWORD;
-  if (!wachtwoord) return NextResponse.next();
+// Publieke routes (geen login nodig)
+const PUBLIC_ROUTES = [
+  '/login',
+  '/register',
+  '/api/auth/login',
+  '/api/auth/register'
+];
 
-  const auth = req.headers.get('authorization');
-  if (auth?.startsWith('Basic ')) {
-    try {
-      const [, pass] = atob(auth.slice(6)).split(':');
-      if (pass === wachtwoord) return NextResponse.next();
-    } catch {
-      // ongeldig base64 → gewoon opnieuw vragen
-    }
+// Admin-only routes
+const ADMIN_ROUTES = [
+  '/admin'
+];
+
+export async function middleware(request: NextRequest) {
+  const { pathname } = request.nextUrl;
+
+  // Check of route publiek is
+  const isPublic = PUBLIC_ROUTES.some(route => pathname.startsWith(route));
+  const isAdminRoute = ADMIN_ROUTES.some(route => pathname.startsWith(route));
+  const isApiRoute = pathname.startsWith('/api/');
+
+  // Haal gebruiker op uit cookies (via JWT token)
+  const user = await getUserFromCookies(request);
+
+  // Als niet ingelogd en geen publieke route -> redirect naar login
+  if (!user && !isPublic) {
+    const loginUrl = new URL('/login', request.url);
+    loginUrl.searchParams.set('redirect', pathname);
+    return NextResponse.redirect(loginUrl);
   }
 
-  return new NextResponse('Inloggen vereist', {
-    status: 401,
-    headers: { 'WWW-Authenticate': 'Basic realm="Clipper OS"' },
-  });
+  // Als ingelogd en op login/register pagina -> redirect naar dashboard
+  if (user && (pathname === '/login' || pathname === '/register')) {
+    return NextResponse.redirect(new URL('/', request.url));
+  }
+
+  // Admin route check
+  if (isAdminRoute && !user?.is_admin) {
+    return NextResponse.redirect(new URL('/', request.url));
+  }
+
+  // API route: voeg user info toe aan headers (handig voor API calls)
+  if (isApiRoute && user) {
+    const response = NextResponse.next();
+    response.headers.set('x-user-id', user.id);
+    response.headers.set('x-user-email', user.email);
+    response.headers.set('x-is-admin', String(user.is_admin));
+    return response;
+  }
+
+  return NextResponse.next();
 }
 
 export const config = {
-  // Alles achter het slot behalve de statische assets van Next zelf.
+  // Alles behalve Next.js eigen statische bestanden
   matcher: ['/((?!_next/static|_next/image|favicon.ico).*)'],
 };

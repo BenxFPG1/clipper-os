@@ -506,3 +506,28 @@ create table if not exists trend_rapporten (
   veranderingen text,
   created_at timestamptz not null default now()
 );
+
+
+-- ============================================================ gebruikerssysteem (v2.0)
+-- Eenvoudig gebruikerssysteem met wachtwoorden in platte tekst (voor interne tool)
+
+create table if not exists users (
+  id uuid primary key default gen_random_uuid(),
+  email text unique not null,
+  name text,
+  password text not null,  -- Platte tekst, zodat admin het kan terugzien
+  is_admin boolean not null default false,
+  created_at timestamptz not null default now(),
+  last_login_at timestamptz
+);
+
+-- Audit-log voor wachtwoord opvragingen door admin
+create table if not exists password_access_log (
+  id uuid primary key default gen_random_uuid(),
+  admin_user_id uuid references users(id) on delete cascade,
+  target_user_id uuid references users(id) on delete cascade,
+  ip_address text,
+  user_agent text,
+  accessed_at timestamptz not null default now()
+);
+create index if not exists password_access_log_admin_idx on password_access_log (admin_user_id, accessed_at desc);
