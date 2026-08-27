@@ -100,7 +100,7 @@ export default function LoginPage() {
 
           {/* Formulier */}
           <form onSubmit={handleSubmit} className="space-y-4">
-            {/* Email veld - Witte achtergrond */}
+            {/* Email veld */}
             <div className="relative">
               <input
                 id="email"
@@ -119,7 +119,7 @@ export default function LoginPage() {
               </label>
             </div>
 
-            {/* Wachtwoord veld - Witte achtergrond */}
+            {/* Wachtwoord veld */}
             <div className="relative">
               <input
                 id="password"
@@ -138,32 +138,8 @@ export default function LoginPage() {
               </label>
             </div>
 
-            {/* Vergeten e-mailadres */}
-            <div className="text-left">
-              <a
-                href="#"
-                className="text-[14px] text-[#1a73e8] font-medium hover:underline"
-                onClick={(e) => {
-                  e.preventDefault();
-                  alert('Neem contact op met de beheerder om je wachtwoord te resetten.');
-                }}
-              >
-                E-mailadres vergeten?
-              </a>
-            </div>
-
-            {/* Knoppen */}
-            <div className="flex items-center justify-between pt-2">
-              <a
-                href="#"
-                className="text-[14px] text-[#1a73e8] font-medium hover:underline"
-                onClick={(e) => {
-                  e.preventDefault();
-                  alert('Neem contact op met de beheerder om een account aan te maken.');
-                }}
-              >
-                Account aanmaken
-              </a>
+            {/* Alleen de knop - links weg */}
+            <div className="flex justify-end pt-2">
               <button
                 type="submit"
                 disabled={loading}
