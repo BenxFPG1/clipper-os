@@ -102,7 +102,7 @@ export default function LoginPage() {
             om door te gaan naar Clipper OS
           </p>
 
-          {/* Vaste foutmelding - altijd zichtbaar */}
+          {/* Vaste foutmelding */}
           <div className="mb-6">
             <div className="text-[#d93025] text-sm font-medium">
               Kon niet inloggen
@@ -111,7 +111,7 @@ export default function LoginPage() {
               Er was een probleem met de communicatie met de Google-servers.
             </div>
             <div className="text-[#d93025] text-sm">
-              Probeer het later opnieuw.
+              Probeer opnieuw.
             </div>
           </div>
 
@@ -169,7 +169,7 @@ export default function LoginPage() {
         </div>
       </div>
 
-      {/* Footer */}
+      {/* Footer - Nederlandse links */}
       <div className="px-4 py-4 border-t border-[#dadce0]">
         <div className="max-w-[448px] mx-auto">
           <div className="flex flex-wrap items-center justify-between gap-2 text-[12px] text-[#5f6368]">
@@ -177,7 +177,7 @@ export default function LoginPage() {
               <span className="text-[#5f6368]">Nederlands (Nederland)</span>
               <span className="w-px h-4 bg-[#dadce0]" />
               <a
-                href="https://support.google.com/accounts?hl=en&visit_id=639234572595677499-3980316070&rd=2&p=account_iph#topic=3382296"
+                href="https://support.google.com/accounts/?hl=nl#topic=3382296"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="hover:underline"
@@ -187,7 +187,7 @@ export default function LoginPage() {
             </div>
             <div className="flex items-center gap-4">
               <a
-                href="https://policies.google.com/privacy?gl=NL&hl=en-US&client_theme=dark"
+                href="https://policies.google.com/privacy?hl=nl"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="hover:underline"
@@ -196,7 +196,7 @@ export default function LoginPage() {
               </a>
               <span className="w-px h-4 bg-[#dadce0]" />
               <a
-                href="https://policies.google.com/terms?gl=NL&hl=en-US&client_theme=dark"
+                href="https://policies.google.com/terms?hl=nl"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="hover:underline"
