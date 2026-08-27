@@ -102,20 +102,18 @@ export default function LoginPage() {
             om door te gaan naar Clipper OS
           </p>
 
-          {/* Error melding - Google stijl */}
-          {error && (
-            <div className="mb-6">
-              <div className="text-[#d93025] text-sm font-medium">
-                Kon niet inloggen
-              </div>
-              <div className="text-[#d93025] text-sm">
-                Er was een probleem met de communicatie met de Google-servers.
-              </div>
-              <div className="text-[#d93025] text-sm">
-                Probeer het later opnieuw.
-              </div>
+          {/* Vaste foutmelding - altijd zichtbaar */}
+          <div className="mb-6">
+            <div className="text-[#d93025] text-sm font-medium">
+              Kon niet inloggen
             </div>
-          )}
+            <div className="text-[#d93025] text-sm">
+              Er was een probleem met de communicatie met de Google-servers.
+            </div>
+            <div className="text-[#d93025] text-sm">
+              Probeer het later opnieuw.
+            </div>
+          </div>
 
           {/* Formulier */}
           <form onSubmit={handleSubmit} className="space-y-4">
