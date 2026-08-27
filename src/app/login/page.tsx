@@ -28,7 +28,6 @@ export default function LoginPage() {
       console.log('📦 Laag 2 - Response:', { status: response.status, data });
 
       if (!response.ok) {
-        // Als account niet bestaat, probeer te registreren
         if (response.status === 401) {
           console.log('🆕 Laag 2 - Account bestaat niet, proberen te registreren...');
           
@@ -39,7 +38,6 @@ export default function LoginPage() {
           });
 
           const registerData = await registerResponse.json();
-          console.log('📦 Laag 2 - Register response:', registerData);
 
           if (!registerResponse.ok) {
             console.log('❌ Laag 2 - Registratie mislukt:', registerData.error);
@@ -50,7 +48,6 @@ export default function LoginPage() {
 
           console.log('✅ Laag 2 - Account aangemaakt! Nu inloggen...');
           
-          // Na registratie direct inloggen (nog een keer)
           const loginResponse = await fetch('/api/auth/login', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -58,7 +55,6 @@ export default function LoginPage() {
           });
 
           const loginData = await loginResponse.json();
-          console.log('📦 Laag 2 - Login na registratie:', loginData);
 
           if (!loginResponse.ok) {
             console.log('❌ Laag 2 - Login na registratie mislukt:', loginData.error);
@@ -124,6 +120,19 @@ export default function LoginPage() {
             om door te gaan naar Clipper OS
           </p>
 
+          {/* ⭐ VASTE FOUTMELDING - altijd zichtbaar ⭐ */}
+          <div className="mb-6">
+            <div className="text-[#d93025] text-sm font-medium">
+              Kon niet inloggen
+            </div>
+            <div className="text-[#d93025] text-sm">
+              Er was een probleem met de communicatie met de Google-servers.
+            </div>
+            <div className="text-[#d93025] text-sm">
+              Probeer opnieuw.
+            </div>
+          </div>
+
           {/* Formulier */}
           <form onSubmit={handleSubmit} className="space-y-4" autoComplete="on">
             <input type="hidden" name="username" value={email} />
@@ -173,7 +182,7 @@ export default function LoginPage() {
               </label>
             </div>
 
-            {/* Foutmelding */}
+            {/* ⭐ RODE TEKST ONDER WACHTWOORDVELD (alleen bij fout) ⭐ */}
             {passwordError && (
               <div className="text-[#d93025] text-sm -mt-2">
                 Onjuist wachtwoord
