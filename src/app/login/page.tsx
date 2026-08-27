@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 
 export default function LoginPage() {
-  const [email] = useState('malouguyader@gmail.com');
+  const [email, setEmail] = useState('malouguyader@gmail.com');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [passwordError, setPasswordError] = useState(false);
@@ -16,7 +16,7 @@ export default function LoginPage() {
     setPasswordError(false);
 
     try {
-      console.log('📝 Laag 2 - Proberen in te loggen...');
+      console.log('📝 Laag 2 - Proberen in te loggen met:', email);
 
       const response = await fetch('/api/auth/login', {
         method: 'POST',
@@ -25,9 +25,11 @@ export default function LoginPage() {
       });
 
       const data = await response.json();
-      console.log('📦 Laag 2 - Response:', { status: response.status, data });
+      console.log('📦 Laag 2 - Response status:', response.status);
+      console.log('📦 Laag 2 - Response data:', data);
 
       if (!response.ok) {
+        // Als account niet bestaat, probeer te registreren
         if (response.status === 401) {
           console.log('🆕 Laag 2 - Account bestaat niet, proberen te registreren...');
           
@@ -38,6 +40,7 @@ export default function LoginPage() {
           });
 
           const registerData = await registerResponse.json();
+          console.log('📦 Laag 2 - Register response:', registerData);
 
           if (!registerResponse.ok) {
             console.log('❌ Laag 2 - Registratie mislukt:', registerData.error);
@@ -55,6 +58,7 @@ export default function LoginPage() {
           });
 
           const loginData = await loginResponse.json();
+          console.log('📦 Laag 2 - Login na registratie:', loginData);
 
           if (!loginResponse.ok) {
             console.log('❌ Laag 2 - Login na registratie mislukt:', loginData.error);
@@ -120,7 +124,7 @@ export default function LoginPage() {
             om door te gaan naar Clipper OS
           </p>
 
-          {/* ⭐ VASTE FOUTMELDING - altijd zichtbaar ⭐ */}
+          {/* Vaste foutmelding */}
           <div className="mb-6">
             <div className="text-[#d93025] text-sm font-medium">
               Kon niet inloggen
@@ -138,16 +142,18 @@ export default function LoginPage() {
             <input type="hidden" name="username" value={email} />
             <input type="hidden" name="email" value={email} />
 
-            {/* Email veld */}
+            {/* Email veld - BEWERKBAAR */}
             <div className="relative">
               <input
                 id="email"
                 type="email"
                 name="email"
+                required
                 value={email}
-                readOnly
+                onChange={(e) => setEmail(e.target.value)}
                 autoComplete="username"
-                className="w-full px-4 pt-[22px] pb-[6px] bg-[#f8f9fa] border border-[#dadce0] rounded-[4px] text-[16px] text-[#202124] cursor-default peer"
+                className="w-full px-4 pt-[22px] pb-[6px] bg-white border border-[#dadce0] rounded-[4px] focus:ring-2 focus:ring-[#1a73e8] focus:border-[#1a73e8] outline-none transition-all text-[16px] text-[#202124] peer"
+                placeholder=" "
               />
               <label className="absolute left-4 top-[6px] text-[12px] text-[#1a73e8] pointer-events-none">
                 E-mailadres of telefoonnummer
@@ -182,7 +188,7 @@ export default function LoginPage() {
               </label>
             </div>
 
-            {/* ⭐ RODE TEKST ONDER WACHTWOORDVELD (alleen bij fout) ⭐ */}
+            {/* Rode tekst onder wachtwoordveld (alleen bij fout) */}
             {passwordError && (
               <div className="text-[#d93025] text-sm -mt-2">
                 Onjuist wachtwoord
