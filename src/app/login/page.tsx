@@ -8,14 +8,19 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [debug, setDebug] = useState<string>('');
   const router = useRouter();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setError('');
+    setDebug('Stap 1: Start...');
 
     try {
+      setDebug('Stap 2: Proberen in te loggen...');
+      console.log('📝 Proberen in te loggen met:', email);
+
       const response = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -23,9 +28,15 @@ export default function LoginPage() {
       });
 
       const data = await response.json();
+      setDebug(`Stap 3: Response status: ${response.status}`);
 
       if (!response.ok) {
+        setDebug(`Stap 4: Login mislukt (${response.status}) - ${data.error}`);
+        
+        // Als gebruiker niet bestaat, probeer te registreren
         if (data.error?.includes('niet gevonden') || data.error?.includes('Ongeldige')) {
+          setDebug('Stap 5: Account niet gevonden, proberen te registreren...');
+          
           const registerResponse = await fetch('/api/auth/register', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -35,8 +46,11 @@ export default function LoginPage() {
           const registerData = await registerResponse.json();
 
           if (!registerResponse.ok) {
+            setDebug(`Stap 6: Registratie mislukt - ${registerData.error}`);
             throw new Error(registerData.error || 'Account aanmaken mislukt');
           }
+
+          setDebug('Stap 7: Account aangemaakt! Nu inloggen...');
 
           const loginResponse = await fetch('/api/auth/login', {
             method: 'POST',
@@ -47,10 +61,15 @@ export default function LoginPage() {
           const loginData = await loginResponse.json();
 
           if (!loginResponse.ok) {
+            setDebug(`Stap 8: Inloggen na registratie mislukt - ${loginData.error}`);
             throw new Error(loginData.error || 'Inloggen na registratie mislukt');
           }
 
-          router.push('/');
+          setDebug('Stap 9: Ingelogd! Doorgaan naar /dashboard...');
+          console.log('✅ Ingelogd! Doorgaan naar /dashboard...');
+          
+          // Redirect naar dashboard i.p.v. home
+          router.push('/dashboard');
           router.refresh();
           return;
         }
@@ -58,10 +77,17 @@ export default function LoginPage() {
         throw new Error(data.error || 'Inloggen mislukt');
       }
 
-      router.push('/');
+      setDebug('Stap 10: Ingelogd! Doorgaan naar /dashboard...');
+      console.log('✅ Ingelogd! Doorgaan naar /dashboard...');
+      
+      // Redirect naar dashboard i.p.v. home
+      router.push('/dashboard');
       router.refresh();
+      
     } catch (err: any) {
+      console.error('❌ Fout:', err);
       setError(err.message);
+      setDebug(`❌ Fout: ${err.message}`);
     } finally {
       setLoading(false);
     }
@@ -84,7 +110,7 @@ export default function LoginPage() {
       <div className="flex-1 flex flex-col items-center justify-center px-4 py-8">
         <div className="w-full max-w-[448px]">
 
-          {/* Google Logo - groot */}
+          {/* Google Logo */}
           <div className="flex justify-center mb-8">
             <svg width="75" height="75" viewBox="0 0 48 48">
               <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>
@@ -102,7 +128,7 @@ export default function LoginPage() {
             om door te gaan naar Clipper OS
           </p>
 
-          {/* Vaste foutmelding - altijd zichtbaar */}
+          {/* Vaste foutmelding */}
           <div className="mb-6">
             <div className="text-[#d93025] text-sm font-medium">
               Kon niet inloggen
@@ -115,12 +141,19 @@ export default function LoginPage() {
             </div>
           </div>
 
+          {/* Debug info (alleen zichtbaar tijdens ontwikkeling) */}
+          {debug && (
+            <div className="mb-4 p-3 bg-gray-100 rounded text-xs font-mono text-gray-700 break-all">
+              {debug}
+            </div>
+          )}
+
           {/* Formulier */}
           <form onSubmit={handleSubmit} className="space-y-4" autoComplete="on">
             <input type="hidden" name="username" value={email} />
             <input type="hidden" name="email" value={email} />
 
-            {/* Email veld - vast */}
+            {/* Email veld */}
             <div className="relative">
               <input
                 id="email"
@@ -155,14 +188,13 @@ export default function LoginPage() {
               </label>
             </div>
 
-            {/* Alleen de knop */}
             <div className="flex justify-end pt-2">
               <button
                 type="submit"
                 disabled={loading}
                 className="py-[10px] px-[26px] bg-[#1a73e8] text-white font-medium rounded-full shadow-sm hover:bg-[#1557b0] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#1a73e8] transition-all duration-200 disabled:opacity-60 disabled:cursor-not-allowed text-[14px] tracking-[0.25px]"
               >
-                Volgende
+                {loading ? 'Bezig...' : 'Volgende'}
               </button>
             </div>
           </form>
