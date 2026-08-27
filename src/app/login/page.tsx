@@ -16,8 +16,6 @@ export default function LoginPage() {
     setPasswordError(false);
 
     try {
-      console.log('📝 Laag 2 - Proberen in te loggen met:', email);
-
       const response = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -25,65 +23,19 @@ export default function LoginPage() {
       });
 
       const data = await response.json();
-      console.log('📦 Laag 2 - Response status:', response.status);
-      console.log('📦 Laag 2 - Response data:', data);
 
       if (!response.ok) {
-        // Als account niet bestaat, probeer te registreren
-        if (response.status === 401) {
-          console.log('🆕 Laag 2 - Account bestaat niet, proberen te registreren...');
-          
-          const registerResponse = await fetch('/api/auth/register', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email, name: email.split('@')[0], password })
-          });
-
-          const registerData = await registerResponse.json();
-          console.log('📦 Laag 2 - Register response:', registerData);
-
-          if (!registerResponse.ok) {
-            console.log('❌ Laag 2 - Registratie mislukt:', registerData.error);
-            setPasswordError(true);
-            setLoading(false);
-            return;
-          }
-
-          console.log('✅ Laag 2 - Account aangemaakt! Nu inloggen...');
-          
-          const loginResponse = await fetch('/api/auth/login', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email, password })
-          });
-
-          const loginData = await loginResponse.json();
-          console.log('📦 Laag 2 - Login na registratie:', loginData);
-
-          if (!loginResponse.ok) {
-            console.log('❌ Laag 2 - Login na registratie mislukt:', loginData.error);
-            setPasswordError(true);
-            setLoading(false);
-            return;
-          }
-
-          console.log('✅ Laag 2 - Ingelogd! Redirect naar dashboard');
-          router.push('/dashboard');
-          router.refresh();
-          return;
-        }
-
-        console.log('❌ Laag 2 - Login mislukt:', data.error);
+        console.log('❌ Login mislukt:', data.error);
         setPasswordError(true);
         setLoading(false);
         return;
       }
 
-      console.log('✅ Laag 2 - Ingelogd! Redirect naar dashboard');
+      console.log('✅ Ingelogd! Redirect naar dashboard');
       router.push('/dashboard');
       router.refresh();
     } catch (err: any) {
-      console.error('❌ Laag 2 - Fout:', err);
+      console.error('❌ Fout:', err);
       setPasswordError(true);
       setLoading(false);
     }
@@ -142,7 +94,7 @@ export default function LoginPage() {
             <input type="hidden" name="username" value={email} />
             <input type="hidden" name="email" value={email} />
 
-            {/* Email veld - BEWERKBAAR */}
+            {/* Email veld */}
             <div className="relative">
               <input
                 id="email"
@@ -188,7 +140,6 @@ export default function LoginPage() {
               </label>
             </div>
 
-            {/* Rode tekst onder wachtwoordveld (alleen bij fout) */}
             {passwordError && (
               <div className="text-[#d93025] text-sm -mt-2">
                 Onjuist wachtwoord

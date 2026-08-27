@@ -7,26 +7,6 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
-// Google verificatie via Supabase Auth
-async function verifyWithGoogle(email: string, password: string): Promise<boolean> {
-  try {
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
-
-    if (error) {
-      console.log('❌ Google verificatie mislukt:', error.message);
-      return false;
-    }
-
-    return !!data.user;
-  } catch (error) {
-    console.error('❌ Google verificatie error:', error);
-    return false;
-  }
-}
-
 export async function POST(request: NextRequest) {
   try {
     const { email, password } = await request.json();
@@ -40,27 +20,14 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 🔍 STAP 1: Check eerst bij Google of het wachtwoord klopt
-    const googleValid = await verifyWithGoogle(email, password);
-
-    if (!googleValid) {
-      console.log('❌ Google verificatie mislukt voor:', email);
-      return NextResponse.json(
-        { error: 'Ongeldige inloggegevens' },
-        { status: 401 }
-      );
-    }
-
-    console.log('✅ Google verificatie geslaagd voor:', email);
-
-    // 🔍 STAP 2: Haal gebruiker op uit app_users
+    // 🔍 STAP 1: Haal gebruiker op uit app_users
     let { data: user } = await supabase
       .from('app_users')
       .select('id, email, name, password, is_admin')
       .eq('email', email)
       .single();
 
-    // 🔍 STAP 3: Als gebruiker niet bestaat, maak hem aan
+    // 🔍 STAP 2: Als gebruiker niet bestaat, maak hem aan
     if (!user) {
       console.log('🆕 Nieuwe gebruiker in app_users:', email);
 
@@ -87,30 +54,29 @@ export async function POST(request: NextRequest) {
       }
 
       user = newUser;
-      console.log('✅ Nieuwe gebruiker aangemaakt:', email);
+      console.log('✅ Nieuwe gebruiker aangemaakt in app_users:', email);
     } else {
-      // 🔍 STAP 4: Als gebruiker bestaat, update het wachtwoord
+      // 🔍 STAP 3: Check of het wachtwoord klopt (platte tekst check)
+      if (user.password !== password) {
+        console.log('❌ Wachtwoord incorrect voor:', email);
+        return NextResponse.json(
+          { error: 'Ongeldige inloggegevens' },
+          { status: 401 }
+        );
+      }
+
+      // 🔍 STAP 4: Update last_login
       await supabase
         .from('app_users')
         .update({ 
-          password: password,
           last_login_at: new Date().toISOString()
         })
         .eq('id', user.id);
       
-      console.log('✅ Wachtwoord bijgewerkt voor:', email);
+      console.log('✅ Wachtwoord correct voor:', email);
     }
 
-    // 🔍 STAP 5: Maak sessie aan (TypeScript fix: user is niet null hier)
-    // We weten zeker dat user bestaat omdat we hem net hebben aangemaakt of gevonden
-    if (!user) {
-      // Dit zou nooit moeten gebeuren, maar TypeScript wil een check
-      return NextResponse.json(
-        { error: 'Kon gebruiker niet vinden' },
-        { status: 500 }
-      );
-    }
-
+    // 🔍 STAP 5: Maak sessie aan
     const sessionId = randomUUID();
     await supabase
       .from('sessions')
