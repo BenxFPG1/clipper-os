@@ -9,7 +9,7 @@ import { usePathname } from 'next/navigation';
  * structuur aan wie nog voor de deur staat (en levert links op die toch
  * allemaal terugsturen naar het inlogscherm).
  */
-const VERBORGEN_OP = ['/toegang', '/login', '/register', '/auth'];
+const VERBORGEN_OP = ['/toegang', '/login', '/register', '/auth', '/privacy', '/voorwaarden'];
 
 const NAV = [
   { href: '/', label: 'Dashboard' },

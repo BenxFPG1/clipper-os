@@ -72,6 +72,16 @@ export default function ToegangPage() {
         </button>
 
         {fout && <p className="text-center text-sm text-red-600">{fout}</p>}
+
+        <p className="text-center text-xs text-gray-400">
+          <a href="/privacy" className="underline hover:text-gray-600">
+            Privacybeleid
+          </a>
+          <span className="mx-2">·</span>
+          <a href="/voorwaarden" className="underline hover:text-gray-600">
+            Gebruiksvoorwaarden
+          </a>
+        </p>
       </div>
     </div>
   );

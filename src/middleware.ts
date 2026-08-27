@@ -15,8 +15,15 @@ import { googleGebruiker } from './lib/google-poort';
  * elkaar.
  */
 
-/** Alleen dit is bereikbaar zónder Google-sessie. */
-const POORT_ROUTES = ['/toegang', '/auth/callback'];
+/**
+ * Alleen dit is bereikbaar zónder Google-sessie.
+ *
+ * /privacy en /voorwaarden staan er bewust bij: Google eist dat een
+ * OAuth-app een bereikbaar privacybeleid en gebruiksvoorwaarden heeft
+ * voordat hij gepubliceerd mag worden. Achter de poort zijn ze voor Google
+ * onzichtbaar en blijft de app in testmodus hangen.
+ */
+const POORT_ROUTES = ['/toegang', '/auth/callback', '/privacy', '/voorwaarden'];
 
 /** Bereikbaar zodra je door de Google-poort bent, maar nog niet ingelogd op je account. */
 const NA_POORT_ROUTES = ['/login', '/register', '/api/auth/login', '/api/auth/register'];
