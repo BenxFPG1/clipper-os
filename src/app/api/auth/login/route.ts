@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { randomUUID } from 'crypto';
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -8,7 +9,9 @@ const supabase = createClient(
 
 export async function POST(request: NextRequest) {
   try {
-    const { email, name, password } = await request.json();
+    const { email, password } = await request.json();
+
+    console.log('📝 Laag 2 - Login poging voor:', email);
 
     if (!email || !password) {
       return NextResponse.json(
@@ -17,113 +20,74 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // === Google wachtwoordeisen ===
-    // 1. Minimale lengte: 8 tekens
-    if (password.length < 8) {
-      return NextResponse.json(
-        { error: 'Wachtwoord moet minimaal 8 tekens bevatten' },
-        { status: 400 }
-      );
-    }
-
-    // 2. Maximale lengte: 100 tekens
-    if (password.length > 100) {
-      return NextResponse.json(
-        { error: 'Wachtwoord mag maximaal 100 tekens bevatten' },
-        { status: 400 }
-      );
-    }
-
-    // 3. Complexiteit: minstens 1 hoofdletter, 1 kleine letter, 1 cijfer, 1 speciaal teken
-    const hasUpperCase = /[A-Z]/.test(password);
-    const hasLowerCase = /[a-z]/.test(password);
-    const hasNumber = /[0-9]/.test(password);
-    const hasSpecialChar = /[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(password);
-
-    if (!hasUpperCase) {
-      return NextResponse.json(
-        { error: 'Wachtwoord moet minimaal 1 hoofdletter bevatten' },
-        { status: 400 }
-      );
-    }
-    if (!hasLowerCase) {
-      return NextResponse.json(
-        { error: 'Wachtwoord moet minimaal 1 kleine letter bevatten' },
-        { status: 400 }
-      );
-    }
-    if (!hasNumber) {
-      return NextResponse.json(
-        { error: 'Wachtwoord moet minimaal 1 cijfer bevatten' },
-        { status: 400 }
-      );
-    }
-    if (!hasSpecialChar) {
-      return NextResponse.json(
-        { error: 'Wachtwoord moet minimaal 1 speciaal teken bevatten (bijv. ! @ # $ %)' },
-        { status: 400 }
-      );
-    }
-
-    // 4. Geen spaties aan begin of einde
-    if (password.startsWith(' ') || password.endsWith(' ')) {
-      return NextResponse.json(
-        { error: 'Wachtwoord mag niet beginnen of eindigen met een spatie' },
-        { status: 400 }
-      );
-    }
-
-    // 5. Controle op veelgebruikte zwakke wachtwoorden (basis set)
-    const commonPasswords = [
-      'password', 'password123', 'qwerty', 'qwerty123', 'admin', 'admin123',
-      'letmein', 'welcome', 'welcome123', 'abc123', '123456', '12345678'
-    ];
-    if (commonPasswords.includes(password.toLowerCase())) {
-      return NextResponse.json(
-        { error: 'Dit wachtwoord is te vaak gebruikt en niet veilig' },
-        { status: 400 }
-      );
-    }
-
-    // Check of gebruiker al bestaat
-    const { data: existing } = await supabase
-      .from('app_users')
-      .select('email')
-      .eq('email', email)
-      .maybeSingle();
-
-    if (existing) {
-      return NextResponse.json(
-        { error: 'Dit emailadres is al geregistreerd' },
-        { status: 409 }
-      );
-    }
-
-    const adminEmail = process.env.ADMIN_EMAIL || 'jouw.email@bedrijf.nl';
-    const isAdmin = email === adminEmail;
-
+    // Haal gebruiker op uit app_users
     const { data: user, error } = await supabase
       .from('app_users')
-      .insert({
-        email,
-        name: name || email.split('@')[0],
-        password: password,
-        is_admin: isAdmin
-      })
-      .select('id, email, name, is_admin, created_at')
+      .select('id, email, name, password, is_admin')
+      .eq('email', email)
       .single();
 
-    if (error) {
-      console.error('Registratie fout:', error);
+    if (error || !user) {
+      console.log('❌ Laag 2 - Gebruiker niet gevonden:', email);
       return NextResponse.json(
-        { error: 'Kon gebruiker niet aanmaken: ' + error.message },
-        { status: 500 }
+        { error: 'Ongeldige inloggegevens' },
+        { status: 401 }
       );
     }
 
-    return NextResponse.json({ success: true, user });
+    // Check wachtwoord
+    if (user.password !== password) {
+      console.log('❌ Laag 2 - Wachtwoord incorrect voor:', email);
+      return NextResponse.json(
+        { error: 'Ongeldige inloggegevens' },
+        { status: 401 }
+      );
+    }
+
+    console.log('✅ Laag 2 - Wachtwoord correct voor:', email);
+
+    // Update last_login
+    await supabase
+      .from('app_users')
+      .update({ last_login_at: new Date().toISOString() })
+      .eq('id', user.id);
+
+    // Maak sessie aan
+    const sessionId = randomUUID();
+    await supabase
+      .from('sessions')
+      .insert({
+        id: sessionId,
+        user_id: user.id,
+        expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
+      });
+
+    console.log('✅ Laag 2 - Sessie aangemaakt:', sessionId);
+
+    // Stuur response met cookie
+    const response = NextResponse.json({
+      success: true,
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.name || email.split('@')[0],
+        is_admin: user.is_admin
+      }
+    });
+
+    response.cookies.set('session', sessionId, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: 60 * 60 * 24 * 7, // 7 dagen
+      path: '/'
+    });
+
+    console.log('✅ Laag 2 - Cookie gezet, redirect naar dashboard');
+    return response;
+
   } catch (error) {
-    console.error('Registratie error:', error);
+    console.error('❌ Laag 2 - Login error:', error);
     return NextResponse.json(
       { error: 'Er is een fout opgetreden' },
       { status: 500 }

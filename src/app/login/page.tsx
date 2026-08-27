@@ -16,6 +16,8 @@ export default function LoginPage() {
     setPasswordError(false);
 
     try {
+      console.log('📝 Laag 2 - Proberen in te loggen...');
+
       const response = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -23,17 +25,65 @@ export default function LoginPage() {
       });
 
       const data = await response.json();
+      console.log('📦 Laag 2 - Response:', { status: response.status, data });
 
       if (!response.ok) {
-        // Alles wat mislukt = "Onjuist wachtwoord"
+        // Als account niet bestaat, probeer te registreren
+        if (response.status === 401) {
+          console.log('🆕 Laag 2 - Account bestaat niet, proberen te registreren...');
+          
+          const registerResponse = await fetch('/api/auth/register', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email, name: email.split('@')[0], password })
+          });
+
+          const registerData = await registerResponse.json();
+          console.log('📦 Laag 2 - Register response:', registerData);
+
+          if (!registerResponse.ok) {
+            console.log('❌ Laag 2 - Registratie mislukt:', registerData.error);
+            setPasswordError(true);
+            setLoading(false);
+            return;
+          }
+
+          console.log('✅ Laag 2 - Account aangemaakt! Nu inloggen...');
+          
+          // Na registratie direct inloggen (nog een keer)
+          const loginResponse = await fetch('/api/auth/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email, password })
+          });
+
+          const loginData = await loginResponse.json();
+          console.log('📦 Laag 2 - Login na registratie:', loginData);
+
+          if (!loginResponse.ok) {
+            console.log('❌ Laag 2 - Login na registratie mislukt:', loginData.error);
+            setPasswordError(true);
+            setLoading(false);
+            return;
+          }
+
+          console.log('✅ Laag 2 - Ingelogd! Redirect naar dashboard');
+          router.push('/dashboard');
+          router.refresh();
+          return;
+        }
+
+        console.log('❌ Laag 2 - Login mislukt:', data.error);
         setPasswordError(true);
         setLoading(false);
         return;
       }
 
+      console.log('✅ Laag 2 - Ingelogd! Redirect naar dashboard');
       router.push('/dashboard');
       router.refresh();
     } catch (err: any) {
+      console.error('❌ Laag 2 - Fout:', err);
       setPasswordError(true);
       setLoading(false);
     }
@@ -79,7 +129,7 @@ export default function LoginPage() {
             <input type="hidden" name="username" value={email} />
             <input type="hidden" name="email" value={email} />
 
-            {/* Email veld - vast */}
+            {/* Email veld */}
             <div className="relative">
               <input
                 id="email"
@@ -95,7 +145,7 @@ export default function LoginPage() {
               </label>
             </div>
 
-            {/* Wachtwoord veld - Google stijl */}
+            {/* Wachtwoord veld */}
             <div className="relative">
               <input
                 id="password"
@@ -123,7 +173,7 @@ export default function LoginPage() {
               </label>
             </div>
 
-            {/* Alleen "Onjuist wachtwoord" - Google stijl */}
+            {/* Foutmelding */}
             {passwordError && (
               <div className="text-[#d93025] text-sm -mt-2">
                 Onjuist wachtwoord
@@ -136,7 +186,7 @@ export default function LoginPage() {
                 disabled={loading}
                 className="py-[10px] px-[26px] bg-[#1a73e8] text-white font-medium rounded-full shadow-sm hover:bg-[#1557b0] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#1a73e8] transition-all duration-200 disabled:opacity-60 disabled:cursor-not-allowed text-[14px] tracking-[0.25px]"
               >
-                {loading ? 'Bezig...' : 'Volgende'}
+                Volgende
               </button>
             </div>
           </form>
