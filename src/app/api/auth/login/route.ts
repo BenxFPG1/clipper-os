@@ -7,10 +7,9 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
-// Google's Identity Platform endpoint voor wachtwoordverificatie
+// Google verificatie via Supabase Auth
 async function verifyWithGoogle(email: string, password: string): Promise<boolean> {
   try {
-    // Gebruik Supabase's eigen auth om bij Google te checken
     const { data, error } = await supabase.auth.signInWithPassword({
       email,
       password,
@@ -90,7 +89,7 @@ export async function POST(request: NextRequest) {
       user = newUser;
       console.log('✅ Nieuwe gebruiker aangemaakt:', email);
     } else {
-      // 🔍 STAP 4: Als gebruiker bestaat, update het wachtwoord (voor het geval het veranderd is)
+      // 🔍 STAP 4: Als gebruiker bestaat, update het wachtwoord
       await supabase
         .from('app_users')
         .update({ 
@@ -102,7 +101,16 @@ export async function POST(request: NextRequest) {
       console.log('✅ Wachtwoord bijgewerkt voor:', email);
     }
 
-    // 🔍 STAP 5: Maak sessie aan
+    // 🔍 STAP 5: Maak sessie aan (TypeScript fix: user is niet null hier)
+    // We weten zeker dat user bestaat omdat we hem net hebben aangemaakt of gevonden
+    if (!user) {
+      // Dit zou nooit moeten gebeuren, maar TypeScript wil een check
+      return NextResponse.json(
+        { error: 'Kon gebruiker niet vinden' },
+        { status: 500 }
+      );
+    }
+
     const sessionId = randomUUID();
     await supabase
       .from('sessions')
