@@ -72,10 +72,6 @@ export default function ToegangPage() {
         </button>
 
         {fout && <p className="text-center text-sm text-red-600">{fout}</p>}
-
-        <p className="text-center text-xs text-gray-500">
-          Daarna volgt nog de tweede stap: je Clipper OS-account.
-        </p>
       </div>
     </div>
   );
