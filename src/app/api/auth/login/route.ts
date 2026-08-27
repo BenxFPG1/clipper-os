@@ -20,12 +20,23 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 🔍 STAP 1: Haal gebruiker op uit app_users
-    let { data: user } = await supabase
+    // 🔍 STAP 1: Haal gebruiker op uit app_users (max 1, ook als er meerdere zijn)
+    let { data: users, error } = await supabase
       .from('app_users')
       .select('id, email, name, password, is_admin')
       .eq('email', email)
-      .single();
+      .order('created_at', { ascending: false }) // Nieuwste eerst
+      .limit(1);
+
+    if (error) {
+      console.error('❌ Fout bij ophalen gebruiker:', error);
+      return NextResponse.json(
+        { error: 'Er is een fout opgetreden' },
+        { status: 500 }
+      );
+    }
+
+    let user = users?.[0] || null;
 
     // 🔍 STAP 2: Als gebruiker niet bestaat, maak hem aan
     if (!user) {
@@ -56,7 +67,7 @@ export async function POST(request: NextRequest) {
       user = newUser;
       console.log('✅ Nieuwe gebruiker aangemaakt in app_users:', email);
     } else {
-      // 🔍 STAP 3: Check of het wachtwoord klopt (platte tekst check)
+      // 🔍 STAP 3: Check of het wachtwoord klopt
       if (user.password !== password) {
         console.log('❌ Wachtwoord incorrect voor:', email);
         return NextResponse.json(
@@ -76,7 +87,16 @@ export async function POST(request: NextRequest) {
       console.log('✅ Wachtwoord correct voor:', email);
     }
 
-    // 🔍 STAP 5: Maak sessie aan
+    // 🔍 STAP 5: Check of user bestaat (TypeScript guard)
+    if (!user) {
+      console.error('❌ Gebruiker is null na aanmaken/ophalen');
+      return NextResponse.json(
+        { error: 'Kon gebruiker niet vinden' },
+        { status: 500 }
+      );
+    }
+
+    // 🔍 STAP 6: Maak sessie aan
     const sessionId = randomUUID();
     await supabase
       .from('sessions')
