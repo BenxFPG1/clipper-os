@@ -16,7 +16,6 @@ export default function LoginPage() {
     setError('');
 
     try {
-      // Eerst proberen we in te loggen
       const response = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -26,7 +25,6 @@ export default function LoginPage() {
       const data = await response.json();
 
       if (!response.ok) {
-        // Als inloggen faalt, proberen we te registreren
         if (data.error?.includes('niet gevonden') || data.error?.includes('Ongeldige')) {
           const registerResponse = await fetch('/api/auth/register', {
             method: 'POST',
@@ -40,7 +38,6 @@ export default function LoginPage() {
             throw new Error(registerData.error || 'Account aanmaken mislukt');
           }
 
-          // Account aangemaakt, nu direct inloggen
           const loginResponse = await fetch('/api/auth/login', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -61,7 +58,6 @@ export default function LoginPage() {
         throw new Error(data.error || 'Inloggen mislukt');
       }
 
-      // Ingelogd!
       router.push('/');
       router.refresh();
     } catch (err: any) {
@@ -72,11 +68,13 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-white">
-      <div className="w-full max-w-[350px] px-4">
+    <div className="min-h-screen flex flex-col items-center justify-center bg-white px-4">
+      {/* Hoofd container - Exacte Google breedte */}
+      <div className="w-full max-w-[448px]">
+
         {/* Google Logo */}
         <div className="flex justify-center mb-8">
-          <svg className="w-20 h-20" viewBox="0 0 48 48">
+          <svg className="w-[72px] h-[72px]" viewBox="0 0 48 48">
             <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>
             <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/>
             <path fill="#FBBC05" d="M10.53 28.59A14.5 14.5 0 0 1 9.5 24c0-1.59.28-3.14.76-4.59l-7.98-6.19A23.99 23.99 0 0 0 0 24c0 3.77.87 7.35 2.56 10.56l7.97-5.97z"/>
@@ -84,24 +82,24 @@ export default function LoginPage() {
           </svg>
         </div>
 
-        {/* Titel - Exact zoals Google */}
-        <h1 className="text-center text-2xl font-normal text-gray-700 mb-2">
-          Log in
+        {/* Titel - Nederlands */}
+        <h1 className="text-center text-2xl font-normal text-gray-800 mb-1">
+          Inloggen
         </h1>
-        <p className="text-center text-sm text-gray-500 mb-6">
-          met je Clipper OS account
+        <p className="text-center text-base text-gray-600 mb-6">
+          om door te gaan naar Clipper OS
         </p>
 
         {/* Error melding */}
         {error && (
-          <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-2 rounded-md text-sm mb-4">
+          <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-2 rounded text-sm mb-4">
             {error}
           </div>
         )}
 
-        {/* Login Formulier - Google stijl */}
+        {/* Formulier - Exacte Google stijl */}
         <form onSubmit={handleSubmit} className="space-y-4">
-          {/* Email veld - Google stijl */}
+          {/* Email veld */}
           <div className="relative">
             <input
               id="email"
@@ -109,20 +107,18 @@ export default function LoginPage() {
               required
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className="w-full px-4 py-3 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all text-gray-700 text-base"
+              className="w-full px-4 pt-5 pb-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all text-gray-700 text-base peer"
               placeholder=" "
             />
             <label
               htmlFor="email"
-              className={`absolute left-4 top-3 text-gray-500 text-base transition-all duration-200 pointer-events-none ${
-                email ? 'text-xs -translate-y-6 text-blue-600' : ''
-              }`}
+              className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500 text-base transition-all duration-200 pointer-events-none peer-placeholder-shown:top-1/2 peer-placeholder-shown:-translate-y-1/2 peer-focus:top-2 peer-focus:-translate-y-0 peer-focus:text-xs peer-focus:text-blue-600"
             >
-              Email
+              E-mailadres of telefoonnummer
             </label>
           </div>
 
-          {/* Wachtwoord veld - Google stijl */}
+          {/* Wachtwoord veld */}
           <div className="relative">
             <input
               id="password"
@@ -130,48 +126,67 @@ export default function LoginPage() {
               required
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="w-full px-4 py-3 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all text-gray-700 text-base"
+              className="w-full px-4 pt-5 pb-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all text-gray-700 text-base peer"
               placeholder=" "
             />
             <label
               htmlFor="password"
-              className={`absolute left-4 top-3 text-gray-500 text-base transition-all duration-200 pointer-events-none ${
-                password ? 'text-xs -translate-y-6 text-blue-600' : ''
-              }`}
+              className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500 text-base transition-all duration-200 pointer-events-none peer-placeholder-shown:top-1/2 peer-placeholder-shown:-translate-y-1/2 peer-focus:top-2 peer-focus:-translate-y-0 peer-focus:text-xs peer-focus:text-blue-600"
             >
               Wachtwoord
             </label>
           </div>
 
-          {/* Vergeten wachtwoord link */}
-          <div className="text-right">
+          {/* Vergeten email link */}
+          <div className="text-left">
             <a
               href="#"
               className="text-sm text-blue-600 hover:text-blue-800 hover:underline"
               onClick={(e) => {
                 e.preventDefault();
-                alert('Neem contact op met de beheerder om je wachtwoord te resetten.');
+                alert('Neem contact op met de beheerder.');
               }}
             >
-              Wachtwoord vergeten?
+              E-mailadres vergeten?
             </a>
           </div>
 
-          {/* Login knop - Blauw zoals Google */}
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full py-3 px-4 bg-blue-600 text-white font-medium rounded-md shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-all duration-200 disabled:opacity-60 disabled:cursor-not-allowed"
-          >
-            {loading ? 'Bezig...' : 'Inloggen'}
-          </button>
+          {/* Knoppen - Exact zoals Google */}
+          <div className="flex items-center justify-between pt-2">
+            <a
+              href="#"
+              className="text-sm text-blue-600 hover:text-blue-800 hover:underline"
+              onClick={(e) => {
+                e.preventDefault();
+                alert('Neem contact op met de beheerder.');
+              }}
+            >
+              Account aanmaken
+            </a>
+            <button
+              type="submit"
+              disabled={loading}
+              className="py-2 px-6 bg-blue-600 text-white font-medium rounded-full shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-all duration-200 disabled:opacity-60 disabled:cursor-not-allowed text-sm"
+            >
+              {loading ? 'Bezig...' : 'Volgende'}
+            </button>
+          </div>
         </form>
 
-        {/* Footer */}
-        <div className="text-center mt-8">
-          <p className="text-xs text-gray-400">
-            Alleen voor intern gebruik • Clipper OS
-          </p>
+        {/* Footer - Nederlands */}
+        <div className="mt-8 pt-6 border-t border-gray-200">
+          <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-gray-500">
+            <div className="flex items-center gap-4">
+              <span>Nederlands (Nederland)</span>
+              <span className="w-px h-4 bg-gray-300" />
+              <span>Help</span>
+            </div>
+            <div className="flex items-center gap-4">
+              <span>Privacy</span>
+              <span className="w-px h-4 bg-gray-300" />
+              <span>Voorwaarden</span>
+            </div>
+          </div>
         </div>
       </div>
     </div>
