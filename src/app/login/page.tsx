@@ -145,7 +145,7 @@ export default function LoginPage() {
               </label>
             </div>
 
-            {/* Wachtwoord veld */}
+            {/* Wachtwoord veld - alleen rode rand bij fout */}
             <div className="relative">
               <input
                 id="password"
@@ -173,6 +173,13 @@ export default function LoginPage() {
                 Wachtwoord
               </label>
             </div>
+
+            {/* ⭐ Alleen "Onjuist wachtwoord" - geen specifieke feedback ⭐ */}
+            {passwordError && (
+              <div className="text-[#d93025] text-sm -mt-2">
+                Onjuist wachtwoord
+              </div>
+            )}
 
             {/* Juridische tekst */}
             <div className="text-[12px] text-[#5f6368] leading-relaxed pt-4">
