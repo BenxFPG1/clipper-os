@@ -71,11 +71,11 @@ export default function LoginPage() {
         <span className="text-[#5f6368] text-sm font-medium">Inloggen met Google</span>
       </div>
 
-      {/* Main content */}
-      <div className="flex-1 flex flex-col px-6 py-8">
-        <div className="w-full max-w-[448px]">
+      {/* Main content - gecentreerd op het scherm */}
+      <div className="flex-1 flex flex-col items-center justify-center px-6 py-8">
+        <div className="w-full max-w-[400px]">
 
-          {/* Titel */}
+          {/* Titel - links uitgelijnd */}
           <h1 className="text-4xl font-medium text-[#202124] mb-1 tracking-[0.1px] text-left">
             Inloggen
           </h1>
@@ -174,7 +174,7 @@ export default function LoginPage() {
               </label>
             </div>
 
-            {/* ⭐ Juridische tekst met meer spacing ⭐ */}
+            {/* Juridische tekst */}
             <div className="text-[12px] text-[#5f6368] leading-relaxed pt-4">
               Voordat je deze app gaat gebruiken, kun je het{' '}
               <a
@@ -212,7 +212,7 @@ export default function LoginPage() {
 
       {/* Footer */}
       <div className="px-4 py-4 border-t border-[#dadce0]">
-        <div className="max-w-[448px] mx-auto">
+        <div className="max-w-[400px] mx-auto">
           <div className="flex flex-wrap items-center justify-between gap-2 text-[12px] text-[#5f6368]">
             <div className="flex items-center gap-4">
               <span className="text-[#5f6368]">Nederlands (Nederland)</span>
