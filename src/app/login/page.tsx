@@ -58,12 +58,20 @@ export default function LoginPage() {
       <div className="flex-1 flex flex-col px-6 py-8">
         <div className="w-full max-w-[448px]">
 
-          {/* ⭐ Titel - LINKS uitgelijnd ⭐ */}
-          <h1 className="text-2xl font-medium text-[#202124] mb-1 tracking-[0.1px] text-left">
+          {/* ⭐ Titel - groter en links uitgelijnd ⭐ */}
+          <h1 className="text-4xl font-medium text-[#202124] mb-1 tracking-[0.1px] text-left">
             Inloggen
           </h1>
           <p className="text-base font-normal text-[#5f6368] mb-6 text-left">
-            om door te gaan naar Clipper OS
+            Doorgaan naar{' '}
+            <a
+              href="https://clipper.nestorscreate.nl"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-[#1a73e8] hover:underline"
+            >
+              clipper.nestorscreate.nl
+            </a>
           </p>
 
           {/* Vaste foutmelding */}
@@ -135,6 +143,29 @@ export default function LoginPage() {
                 Onjuist wachtwoord
               </div>
             )}
+
+            {/* ⭐ Juridische tekst onder wachtwoordveld ⭐ */}
+            <div className="text-[12px] text-[#5f6368] leading-relaxed -mt-2">
+              Voordat je deze app gaat gebruiken, kun je het{' '}
+              <a
+                href="https://clipper.nestorscreate.nl/privacy"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[#1a73e8] hover:underline"
+              >
+                Privacybeleid
+              </a>
+              {' en de '}
+              <a
+                href="https://clipper.nestorscreate.nl/voorwaarden"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[#1a73e8] hover:underline"
+              >
+                Servicevoorwaarden
+              </a>
+              {' van clipper.nestorscreate.nl doorlezen.'}
+            </div>
 
             <div className="flex justify-end pt-2">
               <button
