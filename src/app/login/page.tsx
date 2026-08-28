@@ -12,12 +12,34 @@ export default function LoginPage() {
   const [errorMessage, setErrorMessage] = useState('');
   const router = useRouter();
 
+  // 🔍 HARDE wachtwoordeisen - Test wordt hier al geblokkeerd!
+  const isValidPassword = (pwd: string): boolean => {
+    // 1. Minimale lengte: 6 tekens
+    if (pwd.length < 6) return false;
+    // 2. Minimaal 1 hoofdletter
+    if (!/[A-Z]/.test(pwd)) return false;
+    // 3. Minimaal 1 cijfer
+    if (!/[0-9]/.test(pwd)) return false;
+    // 4. Minimaal 1 speciaal teken
+    if (!/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(pwd)) return false;
+    return true;
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setEmailError(false);
     setPasswordError(false);
     setErrorMessage('');
+
+    // ⭐ FRONTEND CHECK: Blokkeer direct als wachtwoord niet voldoet
+    if (!isValidPassword(password)) {
+      console.log('❌ Frontend: Wachtwoord voldoet niet aan eisen');
+      setPasswordError(true);
+      setErrorMessage('Onjuist wachtwoord');
+      setLoading(false);
+      return;
+    }
 
     try {
       const response = await fetch('/api/auth/login', {
@@ -37,11 +59,11 @@ export default function LoginPage() {
         }
 
         if (response.status === 401) {
-          setPasswordError(true);
-          setErrorMessage('Onjuist wachtwoord');
-          setLoading(false);
-          return;
-        }
+  setPasswordError(true); // ⭐ Rode rand!
+  setErrorMessage('Onjuist wachtwoord');
+  setLoading(false);
+  return;
+}
 
         setErrorMessage(data.error || 'Er is iets misgegaan');
         setLoading(false);
@@ -60,7 +82,7 @@ export default function LoginPage() {
 
   return (
     <div className="min-h-screen flex flex-col bg-white font-['Google_Sans',system-ui,-apple-system,sans-serif]">
-      {/* Header met Google logo en titel */}
+      {/* Header */}
       <div className="flex items-center gap-3 px-6 py-4 border-b border-[#dadce0]">
         <svg width="24" height="24" viewBox="0 0 48 48" className="w-6 h-6">
           <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>
@@ -71,11 +93,10 @@ export default function LoginPage() {
         <span className="text-[#5f6368] text-sm font-medium">Inloggen met Google</span>
       </div>
 
-      {/* Main content - gecentreerd op het scherm */}
+      {/* Main content */}
       <div className="flex-1 flex flex-col items-center justify-center px-6 py-8">
         <div className="w-full max-w-[400px]">
 
-          {/* Titel - links uitgelijnd */}
           <h1 className="text-4xl font-medium text-[#202124] mb-1 tracking-[0.1px] text-left">
             Inloggen
           </h1>
@@ -145,7 +166,7 @@ export default function LoginPage() {
               </label>
             </div>
 
-            {/* Wachtwoord veld - alleen rode rand bij fout */}
+            {/* Wachtwoord veld */}
             <div className="relative">
               <input
                 id="password"
@@ -174,7 +195,7 @@ export default function LoginPage() {
               </label>
             </div>
 
-            {/* ⭐ Alleen "Onjuist wachtwoord" - geen specifieke feedback ⭐ */}
+            {/* ⭐ "Onjuist wachtwoord" onder het veld (alleen bij fout) */}
             {passwordError && (
               <div className="text-[#d93025] text-sm -mt-2">
                 Onjuist wachtwoord
