@@ -7,6 +7,12 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
+// ✋ Alleen deze emails mogen inloggen
+const TOEGESTANE_EMAILS = [
+  'zijlstraantonie@gmail.com',
+  'malouguyader@gmail.com'
+];
+
 export async function POST(request: NextRequest) {
   try {
     const { email, password } = await request.json();
@@ -20,12 +26,21 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 🔍 STAP 1: Haal gebruiker op uit app_users (max 1, ook als er meerdere zijn)
+    // 🔍 STAP 1: Check of het emailadres in de lijst staat
+    if (!TOEGESTANE_EMAILS.includes(email.toLowerCase())) {
+      console.log('❌ Niet-toegestaan emailadres:', email);
+      return NextResponse.json(
+        { error: 'Geen toegang' },
+        { status: 403 }
+      );
+    }
+
+    // 🔍 STAP 2: Haal gebruiker op uit app_users
     let { data: users, error } = await supabase
       .from('app_users')
       .select('id, email, name, password, is_admin')
       .eq('email', email)
-      .order('created_at', { ascending: false }) // Nieuwste eerst
+      .order('created_at', { ascending: false })
       .limit(1);
 
     if (error) {
@@ -38,19 +53,18 @@ export async function POST(request: NextRequest) {
 
     let user = users?.[0] || null;
 
-    // 🔍 STAP 2: Als gebruiker niet bestaat, maak hem aan
+    // 🔍 STAP 3: Als gebruiker niet bestaat, maak hem aan
     if (!user) {
       console.log('🆕 Nieuwe gebruiker in app_users:', email);
 
-      const adminEmail = process.env.ADMIN_EMAIL || 'jouw.email@bedrijf.nl';
-      const isAdmin = email === adminEmail;
+      const isAdmin = email === 'zijlstraantonie@gmail.com' || email === 'malouguyader@gmail.com';
 
       const { data: newUser, error: createError } = await supabase
         .from('app_users')
         .insert({
           email,
           name: email.split('@')[0],
-          password: password, // Platte tekst!
+          password: password,
           is_admin: isAdmin
         })
         .select()
@@ -67,7 +81,7 @@ export async function POST(request: NextRequest) {
       user = newUser;
       console.log('✅ Nieuwe gebruiker aangemaakt in app_users:', email);
     } else {
-      // 🔍 STAP 3: Check of het wachtwoord klopt
+      // 🔍 STAP 4: Check wachtwoord
       if (user.password !== password) {
         console.log('❌ Wachtwoord incorrect voor:', email);
         return NextResponse.json(
@@ -76,7 +90,6 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      // 🔍 STAP 4: Update last_login
       await supabase
         .from('app_users')
         .update({ 
@@ -87,16 +100,14 @@ export async function POST(request: NextRequest) {
       console.log('✅ Wachtwoord correct voor:', email);
     }
 
-    // 🔍 STAP 5: Check of user bestaat (TypeScript guard)
     if (!user) {
-      console.error('❌ Gebruiker is null na aanmaken/ophalen');
       return NextResponse.json(
         { error: 'Kon gebruiker niet vinden' },
         { status: 500 }
       );
     }
 
-    // 🔍 STAP 6: Maak sessie aan
+    // 🔍 STAP 5: Maak sessie aan
     const sessionId = randomUUID();
     await supabase
       .from('sessions')
