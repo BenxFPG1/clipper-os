@@ -1,7 +1,18 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { createBrowserClient } from '@supabase/ssr';
+
+/**
+ * De callback stuurt bij een afwijzing ?fout=... mee. Zonder vertaling zou de
+ * gebruiker terugkomen op een schijnbaar normale inlogpagina zonder te weten
+ * waarom hij niet binnenkwam.
+ */
+const FOUTTEKST: Record<string, string> = {
+  'geen-toegang': 'Dit Google-account heeft geen toegang tot Clipper OS. Log in met een account dat toegang heeft.',
+  'inloggen-mislukt': 'Inloggen bij Google is niet gelukt. Probeer het opnieuw.',
+  'geen-code': 'De inlogpoging werd onderbroken. Probeer het opnieuw.',
+};
 
 /**
  * Laag 1 van twee: de Google-poort.
@@ -12,6 +23,15 @@ import { createBrowserClient } from '@supabase/ssr';
 export default function ToegangPage() {
   const [bezig, setBezig] = useState(false);
   const [fout, setFout] = useState('');
+
+  // Foutcode uit de callback oppikken en meteen uit de URL halen, zodat een
+  // ververste pagina niet blijft klagen over een poging van vijf minuten terug.
+  useEffect(() => {
+    const code = new URLSearchParams(window.location.search).get('fout');
+    if (!code) return;
+    setFout(FOUTTEKST[code] ?? 'Inloggen is niet gelukt. Probeer het opnieuw.');
+    window.history.replaceState({}, '', window.location.pathname);
+  }, []);
 
   async function metGoogle() {
     setBezig(true);
@@ -28,6 +48,11 @@ export default function ToegangPage() {
         // Na Google komt de callback, en die stuurt door naar /login — het
         // tweede slot. De volgorde staat hier vast, niet in de URL.
         redirectTo: `${window.location.origin}/auth/callback`,
+        // Zonder dit hergebruikt Google stilzwijgend het account waarmee je
+        // daar al ingelogd bent. Word je met dat account geweigerd, dan kom je
+        // in een lus: elke klik keurt hetzelfde account opnieuw goed, je wordt
+        // opnieuw geweigerd, en je kunt nooit een ander account kiezen.
+        queryParams: { prompt: 'select_account' },
       },
     });
 
@@ -71,7 +96,14 @@ export default function ToegangPage() {
           {bezig ? 'Bezig…' : 'Inloggen met Google'}
         </button>
 
-        {fout && <p className="text-center text-sm text-red-600">{fout}</p>}
+        {fout && (
+          <div
+            role="alert"
+            className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"
+          >
+            {fout}
+          </div>
+        )}
 
         <p className="text-center text-xs text-gray-400">
           <a href="/privacy" className="underline hover:text-gray-600">
