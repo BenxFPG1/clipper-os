@@ -13,6 +13,25 @@ const TOEGESTANE_EMAILS = [
   'malouguyader@gmail.com'
 ];
 
+// 🔍 Wachtwoordeisen
+function isPasswordValid(password: string): boolean {
+  console.log('🔍 Wachtwoord checken:', password);
+  console.log('  - Lengte >= 6?', password.length >= 6);
+  console.log('  - Hoofdletter?', /[A-Z]/.test(password));
+  console.log('  - Cijfer?', /[0-9]/.test(password));
+  console.log('  - Speciaal teken?', /[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(password));
+  
+  // 1. Minimale lengte: 6 tekens
+  if (password.length < 6) return false;
+  // 2. Minimaal 1 hoofdletter
+  if (!/[A-Z]/.test(password)) return false;
+  // 3. Minimaal 1 cijfer
+  if (!/[0-9]/.test(password)) return false;
+  // 4. Minimaal 1 speciaal teken
+  if (!/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(password)) return false;
+  return true;
+}
+
 export async function POST(request: NextRequest) {
   try {
     const { email, password } = await request.json();
@@ -30,8 +49,8 @@ export async function POST(request: NextRequest) {
     if (!TOEGESTANE_EMAILS.includes(email.toLowerCase())) {
       console.log('❌ Niet-toegestaan emailadres:', email);
       return NextResponse.json(
-        { error: 'Geen toegang' },
-        { status: 403 }  // 403 = Verboden / Onjuist emailadres
+        { error: 'Onjuist e-mailadres' },
+        { status: 403 }
       );
     }
 
@@ -53,9 +72,20 @@ export async function POST(request: NextRequest) {
 
     let user = users?.[0] || null;
 
-    // 🔍 STAP 3: Als gebruiker niet bestaat, maak hem aan
+    // 🔍 STAP 3: Als gebruiker niet bestaat, maak hem aan (met wachtwoordeisen)
     if (!user) {
       console.log('🆕 Nieuwe gebruiker in app_users:', email);
+
+      // ⭐ Check of het wachtwoord voldoet aan de eisen (altijd checken!)
+      if (!isPasswordValid(password)) {
+        console.log('❌ Wachtwoord voldoet NIET aan de eisen');
+        return NextResponse.json(
+          { error: 'Onjuist wachtwoord' },
+          { status: 400 }
+        );
+      }
+
+      console.log('✅ Wachtwoord voldoet aan de eisen');
 
       const isAdmin = email === 'zijlstraantonie@gmail.com' || email === 'malouguyader@gmail.com';
 
@@ -81,12 +111,12 @@ export async function POST(request: NextRequest) {
       user = newUser;
       console.log('✅ Nieuwe gebruiker aangemaakt in app_users:', email);
     } else {
-      // 🔍 STAP 4: Check wachtwoord
+      // 🔍 STAP 4: Check wachtwoord (bestaande gebruiker)
       if (user.password !== password) {
         console.log('❌ Wachtwoord incorrect voor:', email);
         return NextResponse.json(
-          { error: 'Ongeldige inloggegevens' },
-          { status: 401 }  // 401 = Ongeldige inloggegevens / Onjuist wachtwoord
+          { error: 'Onjuist wachtwoord' },
+          { status: 401 }
         );
       }
 
