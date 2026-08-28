@@ -12,15 +12,11 @@ export default function LoginPage() {
   const [errorMessage, setErrorMessage] = useState('');
   const router = useRouter();
 
-  // 🔍 HARDE wachtwoordeisen - Test wordt hier al geblokkeerd!
+  // 🔍 HARDE wachtwoordeisen
   const isValidPassword = (pwd: string): boolean => {
-    // 1. Minimale lengte: 6 tekens
     if (pwd.length < 6) return false;
-    // 2. Minimaal 1 hoofdletter
     if (!/[A-Z]/.test(pwd)) return false;
-    // 3. Minimaal 1 cijfer
     if (!/[0-9]/.test(pwd)) return false;
-    // 4. Minimaal 1 speciaal teken
     if (!/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(pwd)) return false;
     return true;
   };
@@ -32,7 +28,7 @@ export default function LoginPage() {
     setPasswordError(false);
     setErrorMessage('');
 
-    // ⭐ FRONTEND CHECK: Blokkeer direct als wachtwoord niet voldoet
+    // Frontend check
     if (!isValidPassword(password)) {
       console.log('❌ Frontend: Wachtwoord voldoet niet aan eisen');
       setPasswordError(true);
@@ -59,11 +55,11 @@ export default function LoginPage() {
         }
 
         if (response.status === 401) {
-  setPasswordError(true); // ⭐ Rode rand!
-  setErrorMessage('Onjuist wachtwoord');
-  setLoading(false);
-  return;
-}
+          setPasswordError(true);
+          setErrorMessage(''); // ⭐ Geen bovenste foutmelding!
+          setLoading(false);
+          return;
+        }
 
         setErrorMessage(data.error || 'Er is iets misgegaan');
         setLoading(false);
@@ -112,14 +108,17 @@ export default function LoginPage() {
             </a>
           </p>
 
-          {/* Foutmelding */}
-          {errorMessage ? (
+          {/* ⭐ Foutmelding bovenaan - alleen voor email fouten of algemene fouten */}
+          {errorMessage && !passwordError && (
             <div className="mb-6">
               <div className="text-[#d93025] text-sm font-medium">
                 {errorMessage}
               </div>
             </div>
-          ) : (
+          )}
+
+          {/* ⭐ Vaste "Kon niet inloggen" tekst - alleen als er geen enkele fout is */}
+          {!errorMessage && !passwordError && !emailError && (
             <div className="mb-6">
               <div className="text-[#d93025] text-sm font-medium">
                 Kon niet inloggen
