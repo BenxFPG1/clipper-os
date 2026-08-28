@@ -29,7 +29,6 @@ export default function LoginPage() {
       const data = await response.json();
 
       if (!response.ok) {
-        // ❌ Check of het een email-fout is (403 = Geen toegang)
         if (response.status === 403) {
           setEmailError(true);
           setErrorMessage('Onjuist e-mailadres');
@@ -37,7 +36,6 @@ export default function LoginPage() {
           return;
         }
 
-        // ❌ Check of het een wachtwoord-fout is (401 = Ongeldige inloggegevens)
         if (response.status === 401) {
           setPasswordError(true);
           setErrorMessage('Onjuist wachtwoord');
@@ -45,7 +43,6 @@ export default function LoginPage() {
           return;
         }
 
-        // ❌ Andere fouten
         setErrorMessage(data.error || 'Er is iets misgegaan');
         setLoading(false);
         return;
@@ -94,16 +91,14 @@ export default function LoginPage() {
             </a>
           </p>
 
-          {/* ⭐ Foutmelding - toon OF de vaste tekst, OF de specifieke error ⭐ */}
+          {/* Foutmelding */}
           {errorMessage ? (
-            // Specifieke foutmelding (Onjuist e-mailadres / Onjuist wachtwoord)
             <div className="mb-6">
               <div className="text-[#d93025] text-sm font-medium">
                 {errorMessage}
               </div>
             </div>
           ) : (
-            // Vaste foutmelding (altijd zichtbaar, tenzij er een specifieke error is)
             <div className="mb-6">
               <div className="text-[#d93025] text-sm font-medium">
                 Kon niet inloggen
@@ -179,8 +174,8 @@ export default function LoginPage() {
               </label>
             </div>
 
-            {/* Juridische tekst */}
-            <div className="text-[12px] text-[#5f6368] leading-relaxed -mt-2">
+            {/* ⭐ Juridische tekst met meer spacing ⭐ */}
+            <div className="text-[12px] text-[#5f6368] leading-relaxed pt-4">
               Voordat je deze app gaat gebruiken, kun je het{' '}
               <a
                 href="https://clipper.nestorscreate.nl/privacy"
