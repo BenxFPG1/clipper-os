@@ -31,7 +31,7 @@ export async function POST(request: NextRequest) {
       console.log('❌ Niet-toegestaan emailadres:', email);
       return NextResponse.json(
         { error: 'Geen toegang' },
-        { status: 403 }
+        { status: 403 }  // 403 = Verboden / Onjuist emailadres
       );
     }
 
@@ -86,7 +86,7 @@ export async function POST(request: NextRequest) {
         console.log('❌ Wachtwoord incorrect voor:', email);
         return NextResponse.json(
           { error: 'Ongeldige inloggegevens' },
-          { status: 401 }
+          { status: 401 }  // 401 = Ongeldige inloggegevens / Onjuist wachtwoord
         );
       }
 

