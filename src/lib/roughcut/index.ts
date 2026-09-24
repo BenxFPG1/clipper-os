@@ -264,7 +264,18 @@ export async function maakRuweMontage(opties: {
     const spoorYRel = shot.spoorY?.map((punt) => ({ t: punt.t - shot.start, x: punt.x }));
     // Een graphic (titel, grafiek, schermopname) wordt niet op een gezicht
     // gekadreerd maar passend gemaakt, anders snijd je de titel af.
-    const shotKader: Kader = kader === 'vullend' && shot.beeldtype === 'graphic' ? 'blur' : kader;
+    // Het beeldtype van de kadercontrole wint per shot van de clipkeuze, in
+    // beide richtingen: een graphic in een 'vullend'-clip krijgt blur (anders
+    // vallen titels weg), en een sprekend hoofd in een 'blur'-clip krijgt
+    // 'vullend' (anders staat de spreker als postzegel tussen twee wazige
+    // balken — gezien op de waterstofclip, waar de edit-agent voor de hele
+    // clip blur koos vanwege twee graphic-shots).
+    const shotKader: Kader =
+      shot.beeldtype === 'graphic' && (kader === 'vullend' || kader === 'staand')
+        ? 'blur'
+        : shot.beeldtype === 'persoon' && kader === 'blur'
+          ? 'vullend'
+          : kader;
     const keten = kaderKeten(shotKader, {
       focusX: focusNaarX(shot.focus, focusInPaneel),
       focusExpr: spoorInPaneel ? (spoorExpressie(spoorInPaneel) ?? undefined) : undefined,
