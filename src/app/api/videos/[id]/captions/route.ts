@@ -29,7 +29,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
 
   const { data: planRij } = await supabase
     .from('clip_plans')
-    .select('plan')
+    .select('plan, montageplan')
     .eq('video_id', params.id)
     .order('created_at', { ascending: false })
     .limit(1)
@@ -42,7 +42,12 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   const clip = clips[clipNummer - 1];
   if (!clip) return NextResponse.json({ error: `Clip ${clipNummer} bestaat niet` }, { status: 404 });
 
-  const srt = bouwSrt(clip.shots, transcript);
+  // Is de clip al gerenderd, dan bestaat er een SRT uit dezelfde woordtijden
+  // als de ingebrande ondertitels — die wint van de grove transcriptblokken,
+  // want zo staat de download gelijk aan wat er in de mp4 te zien is.
+  const montageplan = (planRij?.montageplan ?? null) as { clips?: Record<string, { srt?: string }> } | null;
+  const gerenderdeSrt = montageplan?.clips?.[String(clipNummer)]?.srt;
+  const srt = gerenderdeSrt && gerenderdeSrt.trim().length > 0 ? gerenderdeSrt : bouwSrt(clip.shots, transcript);
   const naam = `${String(clipNummer).padStart(2, '0')}-${clip.titel_intern
     .normalize('NFD')
     .replace(/[̀-ͯ]/g, '')

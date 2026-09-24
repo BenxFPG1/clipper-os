@@ -22,13 +22,31 @@ export async function GET(req: NextRequest) {
 
   const jobs = await Promise.all(
     (data ?? []).map(async (job) => {
-      const bestanden = (job.bestanden ?? []) as { naam: string; pad: string; bytes: number }[];
+      // De worker hangt sinds de keuringsstatus en de hookvarianten extra
+      // velden aan elk bestand; die gaan één-op-één door naar het paneel.
+      const bestanden = (job.bestanden ?? []) as {
+        naam: string;
+        pad: string;
+        bytes: number;
+        hook_variant?: number;
+        hook_tekst?: string;
+        keuring?: { status?: string; goed?: boolean | null; regels?: { goed: boolean | null; naam: string; detail: string }[] };
+      }[];
       if (job.status !== 'klaar' || bestanden.length === 0) return { ...job, downloads: [] };
 
       const downloads = await Promise.all(
         bestanden.map(async (b) => {
           const url = await r2SignedUrl(b.pad, LINK_GELDIG_SECONDEN);
-          return { naam: b.naam, bytes: b.bytes, url };
+          const regels = b.keuring?.regels ?? [];
+          return {
+            naam: b.naam,
+            bytes: b.bytes,
+            url,
+            hook_variant: b.hook_variant ?? null,
+            hook_tekst: b.hook_tekst ?? null,
+            keuring_status: b.keuring?.status ?? (b.keuring ? (b.keuring.goed === false ? 'review_nodig' : 'goed') : null),
+            keuring_fouten: regels.filter((r) => r.goed === false).map((r) => `${r.naam}: ${r.detail}`),
+          };
         }),
       );
       return { ...job, downloads };
@@ -48,15 +66,27 @@ export async function POST(req: NextRequest) {
 
   const supabase = db();
 
-  // Niet dubbel in de wachtrij zetten; dat kost onnodig rekentijd.
-  const { data: bestaand } = await supabase
+  // Niet dubbel in de wachtrij zetten; dat kost onnodig rekentijd. Wel per
+  // clip: clip 3 aanvragen terwijl clip 1 rendert is geen dubbele. En met
+  // limit(1) in plaats van maybeSingle(), want die laatste gaf bij twee
+  // lopende jobs een fout terug en liet de dubbele juist wél door.
+  const clipIndex = body.clip_index ?? null;
+  let dedupe = supabase
     .from('render_jobs')
     .select('id, status')
     .eq('video_id', body.video_id)
-    .in('status', ['wachtend', 'bezig'])
-    .maybeSingle();
+    .in('status', ['wachtend', 'bezig']);
+  dedupe = clipIndex === null ? dedupe.is('clip_index', null) : dedupe.eq('clip_index', clipIndex);
+  const { data: bestaandeJobs } = await dedupe.limit(1);
+  const bestaand = bestaandeJobs?.[0];
   if (bestaand) {
-    return NextResponse.json({ job: bestaand, melding: 'Er staat al een montage klaar of in de maak.' });
+    return NextResponse.json({
+      job: bestaand,
+      melding:
+        clipIndex === null
+          ? 'Er staat al een montage van alle clips klaar of in de maak.'
+          : `Er staat al een montage van clip ${clipIndex} klaar of in de maak.`,
+    });
   }
 
   const { data, error } = await supabase

@@ -1,8 +1,23 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { roepApiAan } from '@/app/api-aanroep';
 
-type Download = { naam: string; bytes: number; url: string | null };
+type Download = {
+  naam: string;
+  bytes: number;
+  url: string | null;
+  hook_variant?: number | null;
+  hook_tekst?: string | null;
+  keuring_status?: 'goed' | 'review_nodig' | 'niet_getoetst' | null;
+  keuring_fouten?: string[];
+};
+
+const KEURING_TEKST: Record<NonNullable<Download['keuring_status']>, { label: string; klasse: string }> = {
+  goed: { label: 'keuring goed', klasse: 'bg-emerald-900/60 text-emerald-200' },
+  review_nodig: { label: 'review nodig', klasse: 'bg-amber-900/60 text-amber-200' },
+  niet_getoetst: { label: 'niet getoetst', klasse: 'bg-neutral-800 text-neutral-400' },
+};
 type Job = {
   id: string;
   status: 'wachtend' | 'bezig' | 'klaar' | 'mislukt';
@@ -33,8 +48,10 @@ export function RenderPanel({ videoId, aantalClips }: { videoId: string; aantalC
   const [clip, setClip] = useState<string>('alle');
 
   async function laad() {
-    const res = await fetch(`/api/renders?video_id=${videoId}`);
-    if (res.ok) setJobs((await res.json()).jobs ?? []);
+    const { ok, json, fout } = await roepApiAan<{ jobs?: Job[] }>(`/api/renders?video_id=${videoId}`);
+    if (ok) setJobs(json.jobs ?? []);
+    // Een verlopen sessie gaf anders alleen een stille, lege lijst.
+    else if (fout) setMelding(fout);
   }
 
   useEffect(() => {
@@ -48,15 +65,13 @@ export function RenderPanel({ videoId, aantalClips }: { videoId: string; aantalC
   async function vraagAan() {
     setBusy(true);
     setMelding(null);
-    const res = await fetch('/api/renders', {
+    const { ok, json, fout } = await roepApiAan<{ melding?: string; direct_gestart?: boolean }>('/api/renders', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ video_id: videoId, clip_index: clip === 'alle' ? null : Number(clip) }),
+      body: { video_id: videoId, clip_index: clip === 'alle' ? null : Number(clip) },
     });
-    const json = await res.json();
     setBusy(false);
-    if (!res.ok) {
-      setMelding(json.error ?? 'Aanvragen mislukt');
+    if (!ok) {
+      setMelding(fout ?? 'Aanvragen mislukt');
       return;
     }
     setMelding(
@@ -157,6 +172,26 @@ export function RenderPanel({ videoId, aantalClips }: { videoId: string; aantalC
                         <span className="text-xs text-neutral-500">{d.naam}</span>
                       )}
                       <span className="ml-2 text-xs text-neutral-600">{Math.round(d.bytes / 1e6)} MB</span>
+                      {d.hook_variant && (
+                        <span className="ml-2 text-xs text-neutral-500" title={d.hook_tekst ?? undefined}>
+                          hookvariant {d.hook_variant}
+                        </span>
+                      )}
+                      {d.keuring_status && (
+                        <span
+                          className={`ml-2 rounded px-1.5 py-0.5 text-[11px] ${KEURING_TEKST[d.keuring_status].klasse}`}
+                          title={d.keuring_fouten?.length ? d.keuring_fouten.join('\n') : undefined}
+                        >
+                          {KEURING_TEKST[d.keuring_status].label}
+                        </span>
+                      )}
+                      {d.keuring_status === 'review_nodig' && d.keuring_fouten && d.keuring_fouten.length > 0 && (
+                        <ul className="ml-4 mt-0.5 list-disc text-[11px] text-amber-300/80">
+                          {d.keuring_fouten.map((f) => (
+                            <li key={f}>{f}</li>
+                          ))}
+                        </ul>
+                      )}
                     </li>
                   ))}
                 </ul>

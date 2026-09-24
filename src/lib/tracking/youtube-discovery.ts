@@ -77,7 +77,11 @@ async function flatListing(url: string, limit: number): Promise<AccountPost[]> {
       likes: numberOf(entry.like_count),
       comments: numberOf(entry.comment_count),
       caption: (entry.title as string | undefined) ?? null,
-      handle: (entry.channel as string | undefined) ?? (entry.uploader as string | undefined) ?? null,
+      // Het @-handle (uploader_id) of het kanaal-id, niet de weergavenaam:
+      // "ESPN NL" is geen adres dat yt-dlp kan volgen, "@espnnl" wel. De
+      // weergavenaam-varianten vulden de volglijst met dubbele, onmeetbare
+      // accounts.
+      handle: youtubeHandle(entry),
       raw: { id, duration, channel: entry.channel },
     });
   }
@@ -86,4 +90,18 @@ async function flatListing(url: string, limit: number): Promise<AccountPost[]> {
 
 function numberOf(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+/** @handle (zonder @) > kanaal-id (UC…) > weergavenaam, in die volgorde van bruikbaarheid. */
+export function youtubeHandle(entry: Record<string, unknown>): string | null {
+  const uploaderId = entry.uploader_id;
+  if (typeof uploaderId === 'string' && uploaderId.startsWith('@')) return uploaderId.slice(1);
+  const uploaderUrl = entry.uploader_url ?? entry.channel_url;
+  if (typeof uploaderUrl === 'string') {
+    const m = uploaderUrl.match(/youtube\.com\/@([^/?#]+)/);
+    if (m) return m[1];
+  }
+  const channelId = entry.channel_id;
+  if (typeof channelId === 'string' && /^UC[\w-]{20,}$/.test(channelId)) return channelId;
+  return (entry.channel as string | undefined) ?? (entry.uploader as string | undefined) ?? null;
 }

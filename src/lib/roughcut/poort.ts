@@ -1,5 +1,12 @@
 import type { Shot } from './index';
 import type { BronWoord } from './woorden';
+import { instelling } from './instellingen';
+
+/**
+ * Langer dan dit is een cold open geen tease meer maar een duplicaat. Zelfde
+ * grens als de worker hanteert bij het markeren.
+ */
+export const TEASE_MAX_DUUR = 4.5;
 
 /**
  * De poort: het laatste wat er met de segmenten gebeurt vóór het renderen.
@@ -26,7 +33,8 @@ import type { BronWoord } from './woorden';
  *  1b. Rond elke knip staat ademruimte, begrensd door de werkelijke stilte tot
  *     het buurwoord — een knip pal op de woordgrens klinkt afgebeten.
  *  2. Geen twee segmenten delen bronmateriaal, want dan hoort de kijker
- *     dezelfde woorden twee keer.
+ *     dezelfde woorden twee keer. Eén uitzondering: een kórte cold open
+ *     (`tease`) mag de payoff bewust vooruit laten horen.
  *  3. Segmenten zijn niet omgekeerd of te kort om te bestaan.
  *
  * Elke ingreep wordt gerapporteerd. Grijpt de poort ergens in, dan is dat per
@@ -35,7 +43,7 @@ import type { BronWoord } from './woorden';
 
 export type PoortIngreep = {
   volgorde: number;
-  regel: 'halfFragment' | 'woordgrens' | 'overlap' | 'ongeldig';
+  regel: 'halfFragment' | 'woordgrens' | 'overlap' | 'ongeldig' | 'tease';
   wat: string;
 };
 
@@ -144,8 +152,8 @@ export function poort(
   // buiten, maar nooit verder dan de helft van de werkelijke stilte tot het
   // buurwoord: zo komt er nooit een stukje van een ander woord mee.
   if (bronWoorden && bronWoorden.length > 0) {
-    const ADEM_VOOR = 0.12;
-    const ADEM_NA = 0.2;
+    const ADEM_VOOR = instelling('POORT_ADEM_VOOR');
+    const ADEM_NA = instelling('POORT_ADEM_NA');
     for (const seg of uit) {
       const vorig = [...bronWoorden].reverse().find((w) => w.e <= seg.start + 0.02);
       const gatVoor = vorig ? Math.max(0, seg.start - vorig.e) : 1;
@@ -186,6 +194,26 @@ export function poort(
       const overlap = Math.min(a.end, b.end) - Math.max(a.start, b.start);
       if (overlap <= 0.15) continue;
 
+      // Uitzondering: de tease. Een korte cold open die de payoff bewust
+      // vooruit laat horen deelt per definitie bronmateriaal met die payoff —
+      // dat is geen fout maar het ontwerp. Zonder deze uitzondering viel de
+      // tease hier áltijd: inkorten kon niet (zelfde beginpunt als de payoff)
+      // en de tweede tak eiste dat hij vóór het payoff-anker eindigde. Dus
+      // verviel hij stilletjes, of — zonder woordankers — verloor de payoff
+      // zijn eerste zin. De worker markeert alleen een kórte, volledige zin
+      // als tease (hoogstens een paar seconden); langer dan dat is een
+      // duplicaat en gaat gewoon door de regels hieronder.
+      const teaseA = a.tease === true && a.end - a.start <= TEASE_MAX_DUUR;
+      const teaseB = b.tease === true && b.end - b.start <= TEASE_MAX_DUUR;
+      if (teaseA || teaseB) {
+        ingrepen.push({
+          volgorde: teaseA ? a.volgorde : b.volgorde,
+          regel: 'tease',
+          wat: `deelt ${overlap.toFixed(1)}s met shot ${teaseA ? b.volgorde : a.volgorde} als bewuste cold open; blijft staan`,
+        });
+        continue;
+      }
+
       const magInkorten =
         a.start < b.start &&
         b.start - a.start >= 0.8 &&
@@ -221,8 +249,9 @@ export function poort(
   // Regel 3: geldige lengte. Een segment dat door de regels hierboven te kort
   // werd, hoort er niet te zijn — dat is beter dan een flits van een halve
   // lettergreep.
+  const minSegment = instelling('POORT_MIN_SEGMENT');
   const geldig = uit.filter((seg) => {
-    if (seg.end - seg.start >= 0.6) return true;
+    if (seg.end - seg.start >= minSegment) return true;
     ingrepen.push({
       volgorde: seg.volgorde,
       regel: 'ongeldig',

@@ -2,6 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
+import { roepApiAan } from '@/app/api-aanroep';
 
 /**
  * Archiveren/terugzetten. Niets wordt verwijderd: de video verhuist naar het
@@ -22,15 +23,13 @@ export function ArchiveButton({
 
   async function toggle() {
     setBusy(true);
-    const res = await fetch(`/api/videos/${videoId}`, {
+    const { ok, fout } = await roepApiAan(`/api/videos/${videoId}`, {
       method: 'PATCH',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ gearchiveerd: !gearchiveerd }),
+      body: { gearchiveerd: !gearchiveerd },
     });
     setBusy(false);
-    if (!res.ok) {
-      const json = await res.json().catch(() => ({}));
-      alert(json.error ?? 'Archiveren mislukt');
+    if (!ok) {
+      alert(fout ?? 'Archiveren mislukt');
       return;
     }
     if (!gearchiveerd && naArchiveren) router.push(naArchiveren);

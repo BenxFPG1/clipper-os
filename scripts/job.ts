@@ -23,7 +23,7 @@ async function metRetry<T>(fn: () => Promise<T>, pogingen = 4): Promise<T> {
       return await fn();
     } catch (e) {
       const bericht = e instanceof Error ? e.message : String(e);
-      const tijdelijk = /issued at future|PGRST303|fetch failed|ECONNRESET|ETIMEDOUT/i.test(
+      const tijdelijk = /issued at future|PGRST303|fetch failed|ECONNRESET|ETIMEDOUT|AbortError|TimeoutError|aborted/i.test(
         bericht + JSON.stringify(e),
       );
       if (!tijdelijk || i >= pogingen - 1) throw e;
@@ -54,8 +54,16 @@ async function main() {
       const { runScoutAgent } = await import('../src/lib/agents/scout');
       const r = await metRetry(() => runScoutAgent());
       console.log(
-        `${stamp} scout: ${r.accountsBekeken} accounts, ${r.zoektermen} zoektermen, ${r.outliers} uitschieters, ${r.kandidaten} nieuwe kandidaat-regels (run ${r.agentRunId})`,
+        `${stamp} scout${r.status === 'partial' ? ' (PARTIAL)' : ''}: ${r.accountsBekeken} accounts, ${r.zoektermen} zoektermen, ${r.outliers} uitschieters, ${r.gedecodeerd} gedecodeerd, ${r.kandidaten} nieuwe kandidaat-regels, ${r.nieuweAccounts} nieuwe accounts` +
+          (r.fouten.length ? `, ${r.fouten.length} fout(en)` : '') +
+          ` (run ${r.agentRunId})`,
       );
+      if (r.reelsGeblokkeerd) console.log(`  reels overgeslagen: ${r.reelsGeblokkeerd.slice(0, 120)}`);
+      // De fouten die de inhoud raken altijd tonen; providerfouten per bron
+      // alleen de eerste paar.
+      const kern = r.fouten.filter((f) => /^(decodering|themaclassificatie|opslaan:)/.test(f.bron));
+      for (const f of kern) console.log(`  FOUT ${f.bron}: ${f.error.slice(0, 200)}`);
+      for (const f of r.fouten.filter((f) => !kern.includes(f)).slice(0, 5)) console.log(`  fout ${f.bron}: ${f.error.slice(0, 120)}`);
       break;
     }
     case 'retro': {
@@ -87,14 +95,25 @@ async function main() {
     case 'kennis': {
       const { runKennisAgent } = await import('../src/lib/agents/kennis');
       const r = await metRetry(() => runKennisAgent());
-      console.log(`${stamp} kennis: ${r.voorstellen.length} aanvulling(en) — ${r.samenvatting.slice(0, 160)}`);
+      console.log(`${stamp} kennis: ${r.bewaard}/${r.voorstellen.length} aanvulling(en) bewaard — ${r.samenvatting.slice(0, 160)}`);
       for (const v of r.voorstellen) console.log(`  + [${v.categorie}] ${v.titel}`);
+      for (const a of r.afgevallen) console.log(`  - afgevallen: ${a}`);
       break;
     }
     case 'editleraar': {
       const { runEditleraar } = await import('../src/lib/agents/editleraar');
       const r = await metRetry(() => runEditleraar());
-      console.log(`${stamp} editleraar: ${r.regels} les(sen), ${r.kandidaten} kandidaat-effect(en) — ${r.samenvatting.slice(0, 160)}`);
+      if (r.overgeslagen) console.log(`${stamp} editleraar: niets geleerd — ${r.overgeslagen.slice(0, 200)}`);
+      else console.log(`${stamp} editleraar: ${r.regels} les(sen), ${r.kandidaten} kandidaat-effect(en) — ${r.samenvatting.slice(0, 160)}`);
+      break;
+    }
+    case 'consolideer': {
+      const { consolideerKennis } = await import('../src/lib/vault/kennis');
+      const r = await metRetry(() => consolideerKennis());
+      const delen = Object.entries(r.perCategorie).map(([c, s]) => `${c} ${s.voor}→${s.na} (${s.samengevoegd} samengevoegd)`);
+      console.log(`${stamp} consolideer: ${delen.join(', ')}`);
+      const { db } = await import('../src/lib/supabase');
+      await db().from('agent_runs').insert({ agent: 'consolideer', status: 'auto', decided_by: 'auto', input_summary: r.perCategorie, proposal: r });
       break;
     }
     case 'editleraar_visueel': {
@@ -107,6 +126,10 @@ async function main() {
     case 'trends': {
       const { runTrendsAgent } = await import('../src/lib/agents/trends');
       const r = await metRetry(() => runTrendsAgent());
+      if (r.overgeslagen) {
+        console.log(`${stamp} trends: overgeslagen — ${r.overgeslagen}`);
+        break;
+      }
       console.log(
         `${stamp} trends: ${r.vondsten} vondsten → ${r.hooks} hook- en ${r.structuren} structuurpatronen, ${r.lessen} les(sen), ${r.zoektermen} nieuwe zoekterm(en)`,
       );
@@ -122,7 +145,7 @@ async function main() {
       break;
     }
     default:
-      console.error('Gebruik: npx tsx scripts/job.ts <tracking|scout|retro|kanaal|kennis|cliparmy|kijken|editleraar|editleraar_visueel|trends>');
+      console.error('Gebruik: npx tsx scripts/job.ts <tracking|scout|retro|kanaal|kennis|cliparmy|kijken|editleraar|editleraar_visueel|trends|consolideer>');
       process.exit(1);
   }
 }

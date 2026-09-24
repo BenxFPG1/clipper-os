@@ -3,6 +3,9 @@ import { requireEnv } from './env';
 
 let cached: SupabaseClient | null = null;
 
+/** Ruim genoeg voor een grote upsert, krap genoeg om een hangende verbinding te breken. */
+const SUPABASE_TIMEOUT_MS = Number(process.env.SUPABASE_TIMEOUT_MS ?? '90000');
+
 /**
  * Service-role client. Alleen server-side gebruiken: Clipper OS is een interne
  * tool zonder auth, dus er is geen browser-client met anon key.
@@ -15,7 +18,13 @@ export function db(): SupabaseClient {
         // Next.js cachet fetch in route handlers standaard. Zonder no-store krijg
         // je daar het antwoord van de vorige identieke query terug — een lege
         // lijst blijft dan leeg, ook nadat er rijen bij zijn gekomen.
-        fetch: (input, init) => fetch(input, { ...init, cache: 'no-store' }),
+        //
+        // En een harde time-out: supabase-js wacht standaard eindeloos. Een
+        // scout-run bleef zo 36 minuten hangen op één open verbinding (0 CPU),
+        // zonder foutmelding. Na deze grens klapt de call met een AbortError,
+        // die de retry-laag in scripts/job.ts als tijdelijk herkent.
+        fetch: (input, init) =>
+          fetch(input, { ...init, cache: 'no-store', signal: init?.signal ?? AbortSignal.timeout(SUPABASE_TIMEOUT_MS) }),
       },
     });
   }

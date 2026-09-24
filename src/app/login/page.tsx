@@ -12,15 +12,6 @@ export default function LoginPage() {
   const [errorMessage, setErrorMessage] = useState('');
   const router = useRouter();
 
-  // 🔍 HARDE wachtwoordeisen
-  const isValidPassword = (pwd: string): boolean => {
-    if (pwd.length < 6) return false;
-    if (!/[A-Z]/.test(pwd)) return false;
-    if (!/[0-9]/.test(pwd)) return false;
-    if (!/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(pwd)) return false;
-    return true;
-  };
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
@@ -28,14 +19,9 @@ export default function LoginPage() {
     setPasswordError(false);
     setErrorMessage('');
 
-    // Frontend check
-    if (!isValidPassword(password)) {
-      console.log('❌ Frontend: Wachtwoord voldoet niet aan eisen');
-      setPasswordError(true);
-      setErrorMessage('Onjuist wachtwoord');
-      setLoading(false);
-      return;
-    }
+    // Geen wachtwoordeisen bij het inloggen zelf: die gelden bij het
+    // aanmaken van een account (de server checkt ze daar). Een bestaand
+    // account met een eenvoudiger wachtwoord kon hier anders nooit meer in.
 
     try {
       const response = await fetch('/api/auth/login', {

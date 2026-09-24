@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/supabase';
+import { bookmarkletSleutelKlopt } from '@/app/api/bookmarklet-sleutel';
 
 const CORS = {
   'Access-Control-Allow-Origin': 'https://cliparmy.nl',
@@ -24,8 +25,7 @@ export function OPTIONS() {
  * blijven. Je trekt het in door op ClipArmy uit te loggen.
  */
 export async function POST(req: NextRequest) {
-  const sleutel = req.headers.get('x-clipper-sleutel');
-  if (!process.env.APP_PASSWORD || sleutel !== process.env.APP_PASSWORD) {
+  if (!bookmarkletSleutelKlopt(req.headers.get('x-clipper-sleutel'))) {
     return NextResponse.json({ error: 'Ongeldige sleutel' }, { status: 401, headers: CORS });
   }
 

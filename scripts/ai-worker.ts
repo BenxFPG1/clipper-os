@@ -5,6 +5,9 @@ import { runScriptwriterForBrief } from '../src/lib/scriptwriter';
 import { bedenkConcepten } from '../src/lib/concepten';
 import { haalBrollUitDrive } from '../src/lib/broll/ingest';
 import { genereerBrollPlan } from '../src/lib/broll/plan';
+import { fetchYoutubeCaptions } from '../src/lib/ingest/youtube';
+import { transcribeYoutube } from '../src/lib/ingest/whisper';
+import { transcriptDuration } from '../src/lib/ingest/transcript';
 
 /**
  * Voert wachtende denkopdrachten uit met de abonnements-token. De live site kan
@@ -117,6 +120,8 @@ async function main() {
       } else if (job.soort === 'broll_plan') {
         const r = await genereerBrollPlan(job.doel_id);
         resultaat = { clips: r.plan.clips.length };
+      } else if (job.soort === 'video_transcript') {
+        resultaat = await maakVideoMetTranscript(job.doel_id, job.parameters as VideoTranscriptParams);
       } else {
         throw new Error(`Onbekende soort: ${job.soort}`);
       }
@@ -163,6 +168,75 @@ async function main() {
   for (let i = 0; i < jobs.length && !limietGeraakt; i += GELIJKTIJDIG) {
     await Promise.all(jobs.slice(i, i + GELIJKTIJDIG).map(verwerk));
   }
+}
+
+type VideoTranscriptParams = { source_url?: string; title?: string | null; force_transcribe?: boolean };
+
+/**
+ * Handmatig toegevoegde video (via de site) waarvoor de site zelf geen
+ * transcript kon maken: geen captions en geen yt-dlp/Whisper op serverless.
+ * Zelfde stappen als /api/videos, maar hier mét de tools. Staat auto_plan
+ * aan op de campagne, dan gaat er meteen een clip-plan achteraan — dan is
+ * de video klaar als je terugkomt.
+ */
+async function maakVideoMetTranscript(campaignId: string, params: VideoTranscriptParams) {
+  const supabase = db();
+  const sourceUrl = params.source_url;
+  if (!sourceUrl) throw new Error('video_transcript zonder source_url');
+
+  // Al toegevoegd (bijv. door de kanaalcheck)? Dan niets dubbel doen.
+  const { data: bestaand } = await supabase
+    .from('videos')
+    .select('id')
+    .eq('campaign_id', campaignId)
+    .eq('source_url', sourceUrl)
+    .is('archived_at', null)
+    .limit(1);
+  if (bestaand?.length) return { video_id: bestaand[0].id, overgeslagen: 'bestond al' };
+
+  const captions = params.force_transcribe ? null : await fetchYoutubeCaptions(sourceUrl).catch(() => null);
+  let segments;
+  let source: 'youtube_captions' | 'whisper';
+  let title = params.title ?? null;
+  let duration: number | null;
+  if (captions) {
+    segments = captions.segments;
+    source = 'youtube_captions';
+    title = title ?? captions.title;
+    duration = captions.durationSeconds;
+  } else {
+    const transcribed = await transcribeYoutube(sourceUrl);
+    segments = transcribed.segments;
+    source = 'whisper';
+    title = title ?? transcribed.title;
+    duration = transcribed.durationSeconds;
+  }
+
+  const { data: video, error } = await supabase
+    .from('videos')
+    .insert({
+      campaign_id: campaignId,
+      title: title ?? 'Naamloze video',
+      source_url: sourceUrl,
+      duration_seconds: duration ?? Math.round(transcriptDuration(segments)),
+      transcript: segments,
+      transcript_raw: JSON.stringify(segments),
+      transcript_source: source,
+    })
+    .select('id')
+    .single();
+  if (error) throw error;
+
+  const { data: campagne } = await supabase.from('campaigns').select('auto_plan').eq('id', campaignId).maybeSingle();
+  let planInWachtrij = false;
+  if (campagne?.auto_plan !== false) {
+    const { error: planFout } = await supabase
+      .from('ai_jobs')
+      .insert({ soort: 'clip_plan', doel_id: video.id, parameters: { opnieuw_analyseren: false } });
+    planInWachtrij = !planFout;
+  }
+
+  return { video_id: video.id, segments: segments.length, bron: source, planInWachtrij };
 }
 
 main().catch((e) => {

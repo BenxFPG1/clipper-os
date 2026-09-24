@@ -1,7 +1,6 @@
 import { STORYCRAFT } from '../vault/storycraft';
 import { STORYSTIJLEN } from '../vault/storystijlen';
 import { ONDERZOEK } from '../vault/onderzoek';
-import { EFFECTEN } from '../vault/effecten';
 import { EDITCRAFT } from '../vault/editcraft';
 import { SPREEKTAAL } from '../vault/spreektaal';
 export const CHARACTER_MAP_SYSTEM = `Je bent een verhaalanalist. Je leest het volledige transcript van een lange video en brengt de narratieve structuur in kaart.
@@ -91,28 +90,26 @@ STAP 1 — SNOEIEN (oordeel over alle kandidaten voordat je er één uitwerkt):
 3. Toets tegen storycraft: klopt het belofte/payoff-contract, is er een open vraag die pas aan het einde sluit, escaleert elke beat?
 4. Toets tegen het onderzoek: geen seconde aanloop vóór de spanning; zit er rond het midden een moment dat de verwachting breekt of de inzet verhoogt?
 5. Ken elke kandidaat een score (1-10) toe. Wees hard: een score van 8+ is zeldzaam, een 5 is middelmatig en hoort niet in het eindplan.
-6. Behoud alleen kandidaten met score 6 of hoger, en van de rest hoogstens de sterkste tot je bij ${maxClips} clips zit. Schrap de rest volledig — werk ze NIET verder uit in stap 2, dat is precies de moeite die je hiermee bespaart. Liever ${Math.max(8, Math.floor(maxClips * 0.6))} clips die allemaal een 7+ scoren dan ${maxClips} waarvan de helft een 5 is.
+6. Snoeiregel, zonder uitzondering: een kandidaat onder de 6 gaat eruit, altijd. Vul NIET aan tot ${maxClips} — dat getal is een plafond, geen doel. Blijven er vier goede over, dan lever je vier. Zijn er méér dan ${maxClips} kandidaten met een 6 of hoger, dan houd je de ${maxClips} sterkste. Wat je schrapt werk je NIET uit in stap 2; dat is precies de moeite die deze opzet bespaart.
 
 STAP 2 — UITWERKEN (alleen voor wie stap 1 overleeft):
-7. Smeed DRIE hooks in "hooks": drie volwaardige openingen op dezelfde verhaallijn, elk uit een ándere formule uit de vault, elk met een eigen tekst-overlay, gesproken instappunt en "waarom" (welke kijker dit vangt die de andere twee missen). De sterkste zet je ook in "hook" — dat is de versie die als eerste gerenderd wordt. Drie keer bijna dezelfde zin telt niet.
-8. Retentie-simulatie: speel de clip in je hoofd af als iemand die scrolt en deze video niet kent. Loop hem seconde voor seconde langs en benoem de twee of drie momenten waar wegswipen het waarschijnlijkst is — met tijdstip en reden. Zet ze in "uitval_risicos" en herstel elk moment: verschuif een re-hook ernaartoe, schrap de dode seconden, of trek een detail naar voren. Een risico benoemen zonder fix telt niet.
-9. Vul per shot "spanning" (1-10): de emotiecurve van de clip. Begin laag bij de hook/setup en laat hem oplopen naar de payoff — een vlakke lijn is geen verhaal.
-10. Vul per shot "sfx" en "beeld_effect" met een slug uit de effectenvault (of "geen"), plus "effect_waarom". Elke tijdsprong krijgt beeld_effect "tekstkaart", met in de edit_notitie de regel die op die kaart staat. Vul op clipniveau "muziek". Context (1-2s na de hook, "context_kaart") mag null zijn als de clip zonder kan.
-11. Vul per shot "focus" (links/midden/rechts) alleen als uit de context duidelijk is waar de kijker moet kijken; laat het anders weg. Bij een botsing of een anekdote met een wending is de reactie van de ander vaak sterker dan de spreker zelf — vul dan bewust "focus" op de reagerende persoon.
+7. Je krijgt per kandidaat het brontranscript rond zijn shots mee. Elk "transcript_fragment" en elk "gesproken_start" moet daar letterlijk in staan; een shot dat halverwege een zin begint of eindigt corrigeer je met tijden uit dat transcript (hele zinnen, zie de shotregels van de schets). Kun je een fragment niet in het transcript terugvinden, dan is het verzonnen: vervang het door wat er wél staat, of schrap het shot.
+8. Smeed DRIE hooks in "hooks": drie volwaardige openingen op dezelfde verhaallijn, elk uit een ándere formule uit de vault, elk met een eigen tekst-overlay, gesproken instappunt en "waarom" (welke kijker dit vangt die de andere twee missen). De sterkste zet je ook in "hook" — dat is de versie die als eerste gerenderd wordt; alle drie worden als eigen clip gerenderd, dus drie keer bijna dezelfde zin is drie keer dezelfde clip.
+9. Retentie-simulatie: speel de clip in je hoofd af als iemand die scrolt en deze video niet kent. Loop hem seconde voor seconde langs en benoem de twee of drie momenten waar wegswipen het waarschijnlijkst is — met tijdstip en reden. Zet ze in "uitval_risicos" en herstel elk moment in de shots zelf (met het transcript ernaast): verschuif een re-hook ernaartoe, schrap de dode seconden, of trek een detail naar voren. Een risico benoemen zonder fix telt niet. Wil je op dat moment een re-hook-regel in beeld, zet die dan tussen aanhalingstekens in de "fix" — die wordt letterlijk als kaart gerenderd.
+10. Vul per shot "spanning" (1-10): de emotiecurve van de clip. Begin laag bij de hook/setup en laat hem oplopen naar de payoff — een vlakke lijn is geen verhaal.
+11. Tijdsprongen benoem je in de edit_notitie ("tijdsprong: 20 minuten later"); de edit-agent zet daar bij de montage de tekstkaart, effecten, geluid en muziek op — dat is niet jouw werk en hoort niet in het plan. Context (één regel situering, 1-2s na de hook, "context_kaart") mag null zijn als de clip zonder kan.
 12. Schrijf "caption" (tiktok/reels/shorts, altijd een vraag, geen beschrijving), "verplichte_elementen" (tags en beschrijvingsregel uit de campagneregels), 2-3 "varianten" (ander instappunt met een andere hook, nooit dezelfde edit met andere tekst — dat is ban-risico bij re-uploads), en "waarom_dit_werkt".
-13. Alles wat je hier zelf schrijft — overlays, tekstkaarten, captions — valt onder de spreektaalregels verderop: kort, concreet, geen aankondigingen, het krachtwoord aan het eind.
+13. Alles wat je hier zelf schrijft — overlays, contextkaart, captions — valt onder de spreektaalregels verderop: kort, concreet, geen aankondigingen, het krachtwoord aan het eind.
 
 Harde eisen: tijdcodes in seconden binnen de videoduur en oplopend per clip; structure_type en hook.type exact een vault-slug; verplichte elementen uit de campagneregels intact; captions zijn vragen. Hersorteer de prioriteit op score aflopend (1 = hoogste score).
 
-Lever het volledige plan — uitsluitend de clips die stap 1 overleefden, en die volledig uitgewerkt volgens stap 2.
+Lever het plan — uitsluitend de clips die stap 1 overleefden, en die volledig uitgewerkt volgens stap 2.
 
 ${STORYCRAFT}
 
 ${STORYSTIJLEN}
 
 ${ONDERZOEK}
-
-${EFFECTEN}
 
 ${EDITCRAFT}
 
@@ -145,9 +142,9 @@ Werkwijze per clip:
 
 Een meegeleverd "MECHANISCHE SIGNALEN"-blok is geen oordeel maar een aanwijzing waar je extra kritisch moet kijken — soms is een signaal loos alarm (een omslag mag in eigen woorden dicht bij de payoff liggen als de wending zelf echt is), maar negeer het nooit zonder het na te lopen.
 
-Wat je NIET doet: hooks herschrijven, spreektaal keuren, de retentie-simulatie overdoen, shots of tijdcodes wijzigen — dat is al gebeurd en staat vast. Raak alleen "verhaallijn", "score" en welke clips overblijven aan.
+Wat je NIET doet: hooks herschrijven, spreektaal keuren, de retentie-simulatie overdoen, shots of tijdcodes wijzigen — dat is al gebeurd en staat vast. Je krijgt daarom ook alleen de verhaallijn, de score en het transcript per clip te zien.
 
-Lever het volledige plan, inclusief de clips die je ongemoeid liet.
+Je levert per clip één regel: het clipnummer, "verwijderen" (true als hij vervalt), de definitieve "score", een korte "reden", en — alleen als je hem veranderd hebt — de herschreven "verhaallijn". Clips die je ongemoeid laat noem je wél (met verwijderen=false en hun score), zonder verhaallijn. Wat je niet noemt blijft zoals het was.
 
 ${STORYCRAFT}`;
 

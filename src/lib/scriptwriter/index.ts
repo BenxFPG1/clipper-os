@@ -44,7 +44,9 @@ export const scriptSchema = z.object({
    */
   hook_kandidaten: z
     .array(z.object({ tekst: z.string(), formule: z.string(), waarom_afgevallen: z.string() }))
-    .optional(),
+    // Verplicht en minstens vijf: als optioneel veld liet het model de
+    // smederij in de praktijk gewoon weg (zie "vondsten" in de planner).
+    .min(5),
   shotlist: z
     .array(
       z.object({
@@ -78,6 +80,12 @@ export const scriptSchema = z.object({
   poortrapport: z
     .object({ goed: z.boolean(), fouten: z.array(z.string()), waarschuwingen: z.array(z.string()) })
     .optional(),
+  /**
+   * Uitkomst van de poort ná de herstelronde: 'afgekeurd' betekent dat er
+   * nog harde fouten in zitten (placeholder, woordbudget, aankondiging) en
+   * het script niet zonder mensenhand de deur uit mag.
+   */
+  status: z.enum(['goedgekeurd', 'afgekeurd']).optional(),
   /**
    * Retentie-simulatie uit het examen: de momenten waar een scrollende kijker
    * het waarschijnlijkst wegswipet, met per moment de reden en wat eraan
@@ -202,7 +210,7 @@ export async function generateScript(
           .join('\n')}`
       : '';
 
-  const bijgeleerd = await geleerdeKennis();
+  const bijgeleerd = await geleerdeKennis('script');
 
   // Bestaand materiaal reist als letterlijk transcript mee. Zonder dit blok
   // schrijft de agent om de bron heen ("dan zegt hij iets over geld") in
@@ -241,17 +249,19 @@ ${STORYCRAFT}\n\n${SPREEKTAAL}\n\n${STORYSTIJLEN}\n\n${ONDERZOEK}\n\n${EFFECTEN}
   // De examinator oordeelt goed over verhaal, maar liet precies deze telbare
   // fouten door — er is een script goedgekeurd waarvan de payoff letterlijk
   // "[DE ZIN]" was.
-  const conceptRapport = keurScriptTekst(concept, {
+  const poortOpties = {
     duurSeconden: brief.duurSeconden,
     briefing: brief.briefing,
-  });
+    vaultHookSlugs: vault.hooks.map((h) => h.slug),
+  };
+  const conceptRapport = keurScriptTekst(concept, poortOpties);
   const poortBlok = rapportVoorPrompt(conceptRapport);
 
   // Examinatie-pass: het concept wordt verhoord op zijn keuzes en herschreven
   // waar het faalt, vóórdat er iets naar buiten gaat. Twee ronden kosten twee
   // calls, maar het concept ongezien doorsturen is precies hoe je opsommingen
   // in plaats van verhalen krijgt.
-  const script = await structuredCall({
+  let script = await structuredCall({
     system: EXAMEN_SYSTEM + bijgeleerd,
     user: `=== CONCEPTSCRIPT (te verhoren en verbeteren) ===
 ${JSON.stringify(concept, null, 2)}
@@ -271,17 +281,56 @@ ${STORYCRAFT}\n\n${SPREEKTAAL}\n\n${STORYSTIJLEN}\n\n${ONDERZOEK}\n\n${EFFECTEN}
     operation: 'scriptwriter_examen',
   });
 
-  // Eindkeuring: het rapport reist mee met het script. Staan er dan nóg harde
-  // fouten in, dan is dat zichtbaar in plaats van stil — en de volgende
-  // verbeterronde weet precies waar hij moet beginnen.
-  const eindRapport: ScriptPoortRapport = keurScriptTekst(script, {
-    duurSeconden: brief.duurSeconden,
-    briefing: brief.briefing,
-  });
+  // Eindkeuring. Staan er ná het examen nóg harde fouten in, dan blokkeert
+  // de poort: één gerichte herstelronde die alleen de gemeten fouten
+  // repareert (geen nieuw verhaal, geen nieuwe hooks). Blijft het daarna
+  // fout, dan gaat het script als 'afgekeurd' de deur uit — zichtbaar, met
+  // het rapport erbij, in plaats van stil als goedgekeurde versie. Eerder
+  // reisde het rapport alleen mee en werd een script met "[DE ZIN]" als
+  // payoff gewoon bewaard.
+  let eindRapport: ScriptPoortRapport = keurScriptTekst(script, poortOpties);
+  if (!eindRapport.goed) {
+    try {
+      const hersteld = await structuredCall({
+        system: HERSTEL_SYSTEM + bijgeleerd,
+        user: `=== SCRIPT MET GEMETEN FOUTEN ===
+${JSON.stringify(script, null, 2)}
+${rapportVoorPrompt(eindRapport)}
+
+=== DE BRIEFING ===
+${brief.briefing}${bronBlok}`,
+        schema: scriptSchema,
+        toolName: 'lever_hersteld_script',
+        toolDescription: 'Lever het script met uitsluitend de gemeten fouten hersteld.',
+        maxTokens: 32000,
+        effort: SCRIPT_EXAMEN_EFFORT,
+        operation: 'scriptwriter_herstel',
+      });
+      const herkeurd = keurScriptTekst(hersteld, poortOpties);
+      // Alleen overnemen als het er beter van werd; een herstelronde die
+      // nieuwe fouten introduceert is erger dan de oude versie.
+      if (herkeurd.fouten.length <= eindRapport.fouten.length) {
+        script = hersteld;
+        eindRapport = herkeurd;
+      }
+    } catch (e) {
+      console.warn('[scriptwriter] herstelronde mislukt:', (e as Error).message.slice(0, 160));
+    }
+  }
   script.poortrapport = eindRapport;
+  script.status = eindRapport.goed ? 'goedgekeurd' : 'afgekeurd';
+  if (!eindRapport.goed) {
+    console.warn(`[scriptwriter] script afgekeurd na herstel: ${eindRapport.fouten.join(' | ')}`);
+  }
 
   return { script, vaultSnapshot: vault };
 }
+
+const HERSTEL_SYSTEM = `Je bent de hersteller van een short-form script. Je krijgt een script dat inhoudelijk al is goedgekeurd, plus een lijst MECHANISCH GEMETEN FOUTEN (placeholder in gesproken tekst, te veel woorden voor de shotduur, een aankondiging, verzonnen sociale bewijskracht, te weinig verschillende hookformules, een shot na de payoff).
+
+Je herstelt uitsluitend die fouten, met de kleinst mogelijke ingreep: een placeholder wordt een echte zin (uit het bronmateriaal als dat er is), te veel woorden worden minder woorden of een langer shot, een aankondiging wordt de spanning zelf. Je verandert het verhaal, de hook, de stijl en de shotvolgorde niet. Alles wat niet in de lijst staat laat je letterlijk staan.
+
+Lever het volledige script terug.`;
 
 /**
  * Genereert één of meer scriptvarianten voor een opgeslagen briefing en bewaart

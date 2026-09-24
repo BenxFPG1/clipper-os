@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { resolveBinary } from '../ingest/binaries';
 import { focusNaarX, kaderKeten, type Kader } from './kader';
 import { basisZoom, type Shot } from './index';
+import { instelling } from './instellingen';
 
 /**
  * Controleert of de spreker daadwerkelijk in de uitsnede past, en corrigeert
@@ -26,7 +27,7 @@ const DOEL_VERHOUDING = 1080 / 1920;
 const BRON_VERHOUDING = 16 / 9;
 
 /** Marge rond het gezicht die binnen de uitsnede moet vallen. */
-const MARGE = 0.35;
+const MARGE = instelling('KADER_MARGE');
 
 export type Uitsnede = { x0: number; x1: number; y0: number; y1: number };
 
@@ -119,7 +120,14 @@ export function corrigeerKadrering(
     // erboven. De klassieke ooglijn op een derde duwt het hoofd hoog in beeld;
     // op een telefoon leest dat als "hij hangt bovenin" en raakt de kruin
     // sneller de rand zodra iemand beweegt.
-    let focusY = Math.min(0.85, Math.max(0.15, g.top + g.hoogte * 0.5 + 0.03));
+    //
+    // Staat er al een focusY (van een eerdere ronde, of van de visuele
+    // controle die "hoger"/"lager" zei), dan is dát het vertrekpunt. Deze
+    // controle draait ná elke visuele correctieronde, en overschreef de duw
+    // van de agent daarbij stilletjes met zijn eigen berekening — de agent
+    // riep dan elke ronde opnieuw "hoger", zonder dat er ooit iets veranderde.
+    const berekendY = Math.min(0.85, Math.max(0.15, g.top + g.hoogte * 0.5 + 0.03));
+    let focusY = shot.focusY ?? berekendY;
     const gedaan: string[] = [];
 
     // Valt de spreker buiten het paneel dat we kozen? Dan klopte het paneel
@@ -196,9 +204,10 @@ export function corrigeerKadrering(
       shot.focusX = shot.paneel ? shot.paneel[0] + focusX * (shot.paneel[1] - shot.paneel[0]) : focusX;
       shot.focusY = focusY;
       correcties.push({ volgorde: shot.volgorde, wat: gedaan.join(' + ') });
-    } else {
+    } else if (shot.focusY === undefined) {
       // Ook zonder correctie de ooghoogte toepassen: de kin hoort niet tegen de
-      // onderrand te staan.
+      // onderrand te staan. Maar alleen als er nog niets staat — een bewuste
+      // verticale keuze van een eerdere ronde blijft anders nooit staan.
       shot.focusY = focusY;
     }
   }
@@ -240,9 +249,13 @@ export async function maakControlebeelden(
       shot.paneel && typeof opMoment === 'number'
         ? (opMoment - shot.paneel[0]) / (shot.paneel[1] - shot.paneel[0])
         : opMoment;
+    // Dezelfde zoom als de render straks neemt. Met "?? 1" zag de agent een
+    // wijd totaalshot dat nooit gerenderd zou worden, zei "inzoomen", en de
+    // correctie zette een zoom die lager uitkwam dan de basiszoom — feitelijk
+    // een uitzoom. Wat hier in beeld komt moet zijn wat de kijker krijgt.
     const keten = kaderKeten(kader, {
       focusX: focusNaarX(shot.focus, focusInPaneel),
-      zoom: shot.zoom ?? 1,
+      zoom: shot.zoom ?? basisZoom(shot),
       focusY: shot.focusY,
     });
 

@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import './globals.css';
+import { Inhoud, Nav } from './nav';
 
 export const metadata: Metadata = {
   title: 'Clipper OS',
@@ -20,8 +21,13 @@ export default function RootLayout({
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-status-bar-style" content="default" />
       </head>
-      <body className="min-h-screen bg-white antialiased">
-        {children}
+      {/*
+        Geen bg-white hier: de app is donker (globals.css). De inlogschermen
+        brengen hun eigen witte opmaak mee en Nav/Inhoud blijven daar weg.
+      */}
+      <body className="min-h-screen antialiased">
+        <Nav />
+        <Inhoud>{children}</Inhoud>
       </body>
     </html>
   );

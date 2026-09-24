@@ -64,6 +64,7 @@ async function main() {
   await mkdir(UITVOERMAP, { recursive: true });
   console.log(`${teDoen.length} clip(s) uit "${video.title}"\nUitvoer: ${UITVOERMAP}\n`);
 
+  let mislukt = 0;
   for (const [i, clip] of teDoen.entries()) {
     const nummer = alleenClip ?? i + 1;
     const naam = `${String(nummer).padStart(2, '0')} - ${veiligeNaam(clip.titel_intern)}.mp4`;
@@ -81,12 +82,19 @@ async function main() {
       });
       console.log(`   klaar: ${naam} (${duur}s)\n`);
     } catch (e) {
+      mislukt += 1;
       console.error(`   MISLUKT: ${e instanceof Error ? e.message : e}\n`);
     }
   }
 
   console.log(`Klaar. Open de map en werk ze af in CapCut.`);
   console.log(`Bronvideo's opruimen als je klaar bent: npm run roughcut -- --opruimen`);
+  // Een mislukte clip is een rode run: anders lijkt het in een script of CI
+  // alsof alles gelukt is.
+  if (mislukt > 0) {
+    console.error(`${mislukt} clip(s) mislukt.`);
+    process.exitCode = 1;
+  }
 }
 
 function veiligeNaam(naam: string): string {

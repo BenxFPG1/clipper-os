@@ -486,6 +486,13 @@ alter table ai_jobs drop constraint if exists ai_jobs_soort_check;
 alter table ai_jobs add constraint ai_jobs_soort_check
   check (soort in ('clip_plan', 'scripts', 'concepten', 'broll_ingest', 'broll_plan'));
 
+-- Video toevoegen zonder captions op de live site: daar is geen yt-dlp/Whisper,
+-- dus het transcript wordt in de cloud gemaakt. doel_id = campaign_id;
+-- source_url, title en force_transcribe staan in parameters.
+alter table ai_jobs drop constraint if exists ai_jobs_soort_check;
+alter table ai_jobs add constraint ai_jobs_soort_check
+  check (soort in ('clip_plan', 'scripts', 'concepten', 'broll_ingest', 'broll_plan', 'video_transcript'));
+
 -- ============================================================ uitbreiding v1.9
 -- Trendrapporten: de geaggregeerde "wat werkt er nu"-laag bovenop scout_finds.
 -- De scout verzamelt en decodeert losse vondsten, maar niemand keek ooit over
@@ -531,3 +538,22 @@ create table if not exists password_access_log (
   accessed_at timestamptz not null default now()
 );
 create index if not exists password_access_log_admin_idx on password_access_log (admin_user_id, accessed_at desc);
+
+
+-- ============================================================ research-kwaliteit (sep 2026)
+-- Een scout-run waarvan de decodering faalde is geen mislukking (de vondsten
+-- zijn bewaard) maar ook geen schone run: 'partial' maakt dat zichtbaar in de
+-- historie in plaats van dat het in input_summary.fouten verstopt zit.
+alter table agent_runs drop constraint if exists agent_runs_status_check;
+alter table agent_runs add constraint agent_runs_status_check
+  check (status in ('pending', 'approved', 'rejected', 'auto', 'failed', 'partial'));
+
+-- De wekelijkse consolidatie van vault_kennis logt zijn eigen run.
+alter table agent_runs drop constraint if exists agent_runs_agent_check;
+alter table agent_runs add constraint agent_runs_agent_check
+  check (agent in ('retro', 'scout', 'eval', 'kennis', 'trends', 'consolideer'));
+
+-- Kandidaat-heuristieken dragen hun thema en bewijs (posts, accounts) mee,
+-- zodat de retro ze kan toetsen en activeren.
+alter table vault_heuristics add column if not exists theme text;
+alter table vault_heuristics add column if not exists evidence jsonb;

@@ -1,11 +1,56 @@
+import { existsSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
 import { z } from 'zod';
 import { structuredCall } from '../claude';
 import { db } from '../supabase';
+import { BEELD_EFFECTEN_BEKEND, KADERS } from '../roughcut/kader';
 import { EDITCRAFT } from '../vault/editcraft';
 import { EFFECTEN } from '../vault/effecten';
 import { geleerdeKennis } from '../vault/kennis';
 
-export const EDIT_PROMPT_VERSIE = 'edit-1.0';
+export const EDIT_PROMPT_VERSIE = 'edit-1.1';
+
+/**
+ * Wat de render werkelijk kan uitvoeren. De effectenvault beschrijft ook
+ * ingrepen die (nog) niet bestaan in de keten — crowd_reactie zonder bestand,
+ * speed_ramp, slow_motion, pijl_of_cirkel, split_screen. Die kreeg de agent
+ * wél te zien, koos ze, en "verantwoordde" ingrepen die nooit gebeurden. Hier
+ * wordt de vaulttekst gefilterd op wat er echt is: sfx-bestanden in
+ * assets/sfx, de beeldingrepen die effectKeten kent, en de muziekbedden in
+ * assets/muziek.
+ */
+export function effectenVoorRender(): string {
+  const sfxMap = join(process.cwd(), 'assets', 'sfx');
+  const muziekMap = join(process.cwd(), 'assets', 'muziek');
+  const bestandSlugs = (map: string) =>
+    existsSync(map) ? readdirSync(map).map((b) => b.replace(/\.(wav|mp3)$/i, '')) : [];
+  const bekend = new Set<string>([
+    'geen',
+    'stilte',
+    ...bestandSlugs(sfxMap),
+    ...bestandSlugs(muziekMap),
+    ...BEELD_EFFECTEN_BEKEND,
+    ...KADERS,
+  ]);
+  return EFFECTEN.split('\n')
+    .filter((regel) => {
+      const m = regel.match(/^- ([a-z_]+):/);
+      return !m || bekend.has(m[1]);
+    })
+    .join('\n');
+}
+
+/** Slugs die de render kent; alles daarbuiten wordt bij toepassing gelogd en genegeerd. */
+export function bekendeEffectSlugs(): Set<string> {
+  const bekend = new Set<string>(['geen', 'stilte', ...BEELD_EFFECTEN_BEKEND]);
+  const sfxMap = join(process.cwd(), 'assets', 'sfx');
+  if (existsSync(sfxMap)) for (const b of readdirSync(sfxMap)) bekend.add(b.replace(/\.(wav|mp3)$/i, ''));
+  return bekend;
+}
+
+/** Meetdata per shot, uit de gezichtsdetectie: wat de agent níet uit tekst kan halen. */
+export type ShotMeting = { personen?: number; spreiding?: number; focusX?: number };
+export type PlanMeetdata = Record<number, Record<number, ShotMeting>>;
 
 const editSchema = z.object({
   clips: z.array(
@@ -16,7 +61,9 @@ const editSchema = z.object({
       shots: z.array(
         z.object({
           volgorde: z.number().int().min(1),
-          focus: z.enum(['links', 'midden', 'rechts', 'auto']),
+          focus: z
+            .enum(['links', 'midden', 'rechts', 'auto'])
+            .describe('Alleen anders dan "auto" als er meerdere personen in beeld staan én de kijker de ander moet zien.'),
           beeld_effect: z.string().describe('Slug uit de effectenvault, of "geen".'),
           sfx: z.string().describe('Slug uit de effectenvault, of "geen".'),
           tekstkaart: z
@@ -43,7 +90,8 @@ Je verzint geen verhaal en verschuift geen tijdcodes — dat is het werk van de 
 
 Werk de zeven stappen af in volgorde en denk per shot:
 - Is dit een naad binnen dezelfde opname? Dan moet hij afgedekt: insert, kaderwissel (>10% schaalverschil) of naar de reactie. Nooit twee identieke kadreringen achter elkaar.
-- Wie moet de kijker zien: de spreker of de reactie? Zet focus op "auto" als de gezichtsdetectie het mag bepalen, en kies expliciet links/midden/rechts als het script of de inhoud iets anders vraagt (een reactie, een object).
+- Wie moet de kijker zien: de spreker of de reactie? De gezichtsdetectie kadreert standaard op wie er praat; "auto" is dus de norm. Per shot krijg je de meting mee (personen in beeld, hoe ver de spreker beweegt, waar hij staat). Kies alleen expliciet links/midden/rechts als er méér dan één persoon in beeld staat én de reactie van de ander sterker is dan de spreker — bij één persoon wordt een eigen focus genegeerd.
+- Kies alleen ingrepen uit de effectenvault hieronder: die lijst is precies wat de render kan uitvoeren. Een slug die er niet in staat wordt genegeerd.
 - Verdient dit shot een ingreep, of redt het zich? Hoogstens twee ingrepen per shot; een ingreep zonder functie kost aandacht.
 - Is dit een tijdsprong? Dan verplicht een tekstkaart met de sprong erop.
 - Kader: verticaal beeld hoort gevuld. "vullend" is de norm; "blur" alleen als de uitsnede echt iets belangrijks afsnijdt (twee mensen naast elkaar, tekst in beeld). Zwarte balken bestaan niet.
@@ -60,7 +108,7 @@ Sluit per clip af met de eindcontrole: benoem de zwakste plek van de montage die
  */
 export async function runEditAgent(
   videoId: string,
-  opties: { opnieuw?: boolean; onVoortgang?: (m: string) => void } = {},
+  opties: { opnieuw?: boolean; onVoortgang?: (m: string) => void; meetdata?: PlanMeetdata } = {},
 ) {
   const supabase = db();
 
@@ -88,14 +136,27 @@ export async function runEditAgent(
     clip_nummer: i + 1,
     titel: c.titel_intern,
     hook: c.hook?.tekst_overlay ?? null,
-    shots: c.shots.map((s) => ({
-      volgorde: s.volgorde,
-      functie: s.functie,
-      duur: Math.round((s.end - s.start) * 10) / 10,
-      bron_tijd: Math.round(s.start),
-      tekst: (s.transcript_fragment ?? '').slice(0, 180),
-      notitie: (s.edit_notitie ?? '').slice(0, 180),
-    })),
+    shots: c.shots.map((s) => {
+      const meting = opties.meetdata?.[i + 1]?.[s.volgorde];
+      return {
+        volgorde: s.volgorde,
+        functie: s.functie,
+        duur: Math.round((s.end - s.start) * 10) / 10,
+        bron_tijd: Math.round(s.start),
+        tekst: (s.transcript_fragment ?? '').slice(0, 180),
+        notitie: (s.edit_notitie ?? '').slice(0, 180),
+        // Uit de gezichtsdetectie: wat er te zíen is, niet wat de tekst suggereert.
+        ...(meting
+          ? {
+              meting: {
+                personen: meting.personen ?? null,
+                spreker_x: meting.focusX !== undefined ? Math.round(meting.focusX * 100) / 100 : null,
+                beweegt: (meting.spreiding ?? 0) > 0.08,
+              },
+            }
+          : {}),
+      };
+    }),
   }));
 
   // In batches van zes clips: één antwoord voor 23 clips wordt zo lang dat de
@@ -136,7 +197,7 @@ async function editCall(
 
 ${EDITCRAFT}
 
-${EFFECTEN}${await geleerdeKennis()}`,
+${effectenVoorRender()}${await geleerdeKennis('edit')}`,
     user: `Ontwerp de montage voor deze ${brok.length} clips.
 
 Let op de samenhang: wissel het kader af over de clips heen, en herhaal niet steeds dezelfde ingreep.${

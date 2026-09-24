@@ -151,8 +151,7 @@ export async function laadWerkStatus(): Promise<WerkStatus> {
       const bezig = j.status === 'bezig' && j.gestart_at;
       if (j.status === 'wachtend') plek += 1;
       return {
-        soort:
-          j.soort === 'clip_plan' ? 'Clip-plan' : j.soort === 'scripts' ? 'Verhaallijnen' : 'Concepten',
+        soort: SOORT_LABEL[j.soort as string] ?? (j.soort as string),
         wat: naamVoor(j.soort as string, j.doel_id as string, videoLijst, briefLijst, campagnes.data ?? []),
         status: j.status as string,
         sinds: (j.created_at as string) ?? null,
@@ -252,6 +251,19 @@ export async function laadWerkStatus(): Promise<WerkStatus> {
   };
 }
 
+/**
+ * Leesbare naam per ai_jobs.soort. Alles wat hier niet in staat toonde
+ * eerder als "Concepten" — een B-roll-ingest zag je dus niet als zodanig.
+ */
+const SOORT_LABEL: Record<string, string> = {
+  clip_plan: 'Clip-plan',
+  scripts: 'Verhaallijnen',
+  concepten: 'Concepten',
+  broll_ingest: 'B-roll ophalen',
+  broll_plan: 'B-roll-editplan',
+  video_transcript: 'Transcript',
+};
+
 function naamVoor(
   soort: string,
   doelId: string,
@@ -261,5 +273,6 @@ function naamVoor(
 ): string {
   if (soort === 'clip_plan') return videos.find((v) => v.id === doelId)?.title ?? 'video';
   if (soort === 'scripts') return briefs.find((b) => b.id === doelId)?.titel ?? 'opdracht';
+  // concepten, broll_* en video_transcript hangen aan een campagne.
   return campagnes.find((c) => c.id === doelId)?.name ?? 'campagne';
 }

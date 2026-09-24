@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { resolveBinary } from './binaries';
-import { fetchYoutubeCaptions, ytdlpAuthArgs } from './youtube';
+import { fetchYoutubeCaptions, voerYtdlpUit } from './youtube';
 import { transcribeYoutube } from './whisper';
 import { transcriptDuration } from './transcript';
 import { db } from '../supabase';
@@ -17,8 +17,7 @@ export async function haalKanaalVideos(kanaalUrl: string, maxItems = 10): Promis
   // afstruinen: campagnes gaan vaak over precies één aflevering.
   const videoId = losseVideoId(kanaalUrl);
   if (videoId) {
-    const uit = await run(resolveBinary('yt-dlp'), [
-      ...ytdlpAuthArgs(),
+    const uit = await voerYtdlpUit([
       '--no-warnings',
       '--skip-download',
       '--dump-json',
@@ -33,8 +32,7 @@ export async function haalKanaalVideos(kanaalUrl: string, maxItems = 10): Promis
   let laatsteFout: Error | null = null;
   for (const url of kandidaatUrls(kanaalUrl)) {
     try {
-      const uit = await run(resolveBinary('yt-dlp'), [
-        ...ytdlpAuthArgs(),
+      const uit = await voerYtdlpUit([
         '--no-warnings',
         '--extractor-args',
         'youtubetab:skip=authcheck',

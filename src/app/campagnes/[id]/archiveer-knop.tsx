@@ -2,6 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
+import { roepApiAan } from '@/app/api-aanroep';
 
 /**
  * Campagne archiveren in plaats van verwijderen: alles blijft bewaard voor de
@@ -15,15 +16,13 @@ export function ArchiveerCampagne({ campaignId, status }: { campaignId: string; 
 
   async function toggle() {
     setBusy(true);
-    const res = await fetch(`/api/campaigns/${campaignId}`, {
+    const { ok, fout } = await roepApiAan(`/api/campaigns/${campaignId}`, {
       method: 'PATCH',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ status: gearchiveerd ? 'active' : 'ended' }),
+      body: { status: gearchiveerd ? 'active' : 'ended' },
     });
     setBusy(false);
-    if (!res.ok) {
-      const json = await res.json().catch(() => ({}));
-      alert(json.error ?? 'Archiveren mislukt');
+    if (!ok) {
+      alert(fout ?? 'Archiveren mislukt');
       return;
     }
     router.refresh();

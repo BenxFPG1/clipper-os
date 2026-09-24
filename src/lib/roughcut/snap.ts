@@ -1,3 +1,5 @@
+import { instelling } from './instellingen';
+
 export type SnapSegment = { start_seconds: number; end_seconds: number; text: string };
 export type SnapShot = { start: number; end: number; functie?: string; exact?: boolean };
 export type Stilte = { start: number; end: number };
@@ -50,7 +52,7 @@ export function snapShots<T extends SnapShot>(
   // midden in een woord ("volatiliteit" heeft er drie). Daar knippen klinkt
   // exact als een half afgekapt woord — dit was de oorzaak, niet het zoeken
   // zelf: hij vond keurig een stilte, alleen was het er geen.
-  const MIN_PAUZE = 0.25;
+  const MIN_PAUZE = instelling('SNAP_MIN_PAUZE');
   const stiltes = (opties.stiltes ?? []).filter((st) => st.end - st.start >= MIN_PAUZE);
   if (transcript.length === 0 && stiltes.length === 0) return shots;
 
@@ -171,8 +173,8 @@ export function verwijderDodeLucht<T extends SnapShot & { volgorde?: number }>(
   // al onder. Knipte je dan strak op die grens, dan verdween het staartje van
   // een woord — precies de klacht dat er middenin een woord geknipt wordt.
   // Alleen echt lange pauzes wegnemen, en ruim ademruimte laten staan.
-  const maxStilte = opties.maxStilte ?? 1.1;
-  const laat = opties.laat ?? 0.55;
+  const maxStilte = opties.maxStilte ?? instelling('DODE_LUCHT_MAX_STILTE');
+  const laat = opties.laat ?? instelling('DODE_LUCHT_LAAT');
   if (stiltes.length === 0) return shots;
 
   const uit: (T & { subKnip?: boolean })[] = [];

@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { readFile, rm, stat } from 'node:fs/promises';
+import { readFile, rename, rm, stat } from 'node:fs/promises';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -7,10 +7,30 @@ import { db } from '../src/lib/supabase';
 import { requireEnv } from '../src/lib/env';
 import { spawn, spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { Shot, maakRuweMontage, detecteerStiltes, meetRuisvloer, bepaalSegmenten, zorgVoorBron, type BurnOverlay } from '../src/lib/roughcut';
-import { maakTekstkaarten, tekenHookKaart, kleurUitThumbnail, kaartenMap, type Huisstijl } from '../src/lib/roughcut/tekstkaarten';
+import {
+  Shot,
+  maakRuweMontage,
+  brandOverlays,
+  detecteerStiltes,
+  meetRuisvloer,
+  bepaalSegmenten,
+  pasNaadZoomToe,
+  zorgVoorBron,
+  type BurnOverlay,
+} from '../src/lib/roughcut';
+import {
+  maakTekstkaarten,
+  tekenHookKaart,
+  tekenKaart,
+  hookDuur,
+  kleurUitThumbnail,
+  kaartenMap,
+  type Huisstijl,
+} from '../src/lib/roughcut/tekstkaarten';
+import { maakOndertitels, type Ondertitels } from '../src/lib/roughcut/ondertitels';
+import { afwijkendeInstellingen, gebruikteInstellingen } from '../src/lib/roughcut/instellingen';
 import { lijnShotsUit } from '../src/lib/roughcut/uitlijnen';
-import { runEditAgent, beslissingenVoorClip } from '../src/lib/agents/edit';
+import { runEditAgent, beslissingenVoorClip, bekendeEffectSlugs, type PlanMeetdata } from '../src/lib/agents/edit';
 
 import { zorgVoorMuziekbed } from '../src/lib/muziek';
 
@@ -31,7 +51,7 @@ import {
 import { controleerScript } from '../src/lib/roughcut/scriptcontrole';
 import { haalBronWoorden, vindFragment } from '../src/lib/roughcut/woorden';
 import { poort, verzetGrens } from '../src/lib/roughcut/poort';
-import { keurMontage } from '../src/lib/roughcut/keuring';
+import { keurMontage, type Keuringsrapport } from '../src/lib/roughcut/keuring';
 import { resolveBinary } from '../src/lib/ingest/binaries';
 import { pythonMetOpenCV } from '../src/lib/python';
 import { pakFrames } from '../src/lib/roughcut/frames';
@@ -76,6 +96,7 @@ async function main() {
     return;
   }
 
+  let mislukt = 0;
   for (const job of jobs) {
     console.log(`\nOpdracht ${job.id} — ${job.titel ?? 'zonder titel'}`);
     await supabase
@@ -93,12 +114,16 @@ async function main() {
     } catch (e) {
       const fout = e instanceof Error ? e.message : String(e);
       console.error(`  MISLUKT: ${fout}`);
+      mislukt += 1;
       await supabase
         .from('render_jobs')
         .update({ status: 'mislukt', fout: fout.slice(0, 500), klaar_at: new Date().toISOString() })
         .eq('id', job.id);
     }
   }
+  // Een mislukte opdracht is een rode run: anders staat CI groen terwijl er
+  // niets gerenderd is, en zie je het pas in het dashboard.
+  if (mislukt > 0) process.exitCode = 1;
 }
 
 type Job = {
@@ -139,6 +164,10 @@ async function verwerk(job: Job) {
     titel_intern: string;
     shots: Shot[];
     hook?: { tekst_overlay?: string };
+    /** De drie hookvarianten uit het plan; elk wordt een eigen mp4 (zelfde montage, andere kaart). */
+    hooks?: { tekst_overlay?: string; type?: string }[];
+    context_kaart?: string | null;
+    uitval_risicos?: { seconde: number; waarom: string; fix: string }[];
     kader?: 'staand' | 'vullend' | 'blur' | 'origineel';
     muziek?: string;
   }[];
@@ -163,12 +192,23 @@ async function verwerk(job: Job) {
   // eerst clip 3 en daarna clip 7 aan, dan wordt dezelfde video niet twee keer
   // gedownload — en downloaden is verreweg de traagste stap.
   const bronmap = join(tmpdir(), 'clipper-bron', job.video_id);
-  const bestanden: {
+  type Bestand = {
     naam: string;
     pad: string;
     bytes: number;
-    keuring?: { goed: boolean; regels: { naam: string; goed: boolean; detail: string }[] } | null;
-  }[] = [...alGedaan];
+    /** Hookvariant 2 of 3 van dezelfde clip; de hoofdversie heeft dit veld niet. */
+    hook_variant?: number;
+    hook_tekst?: string;
+    keuring?: {
+      goed: boolean;
+      status: Keuringsrapport['status'];
+      regels: { naam: string; goed: boolean | null; detail: string }[];
+    } | null;
+  };
+  const bestanden: Bestand[] = [...alGedaan];
+
+  const afwijkend = afwijkendeInstellingen();
+  if (afwijkend.length) console.log(`  instellingen afwijkend van standaard: ${afwijkend.join(', ')}`);
 
   await supabase
     .from('render_jobs')
@@ -183,23 +223,32 @@ async function verwerk(job: Job) {
   // en bewaren, zodat kaarten en hook bij het merk horen.
   const kaartMap = await kaartenMap(werkmap);
 
+  // Bron en stiltes vóór de eerste clip klaarzetten: anders mist clip 1 de
+  // spraakpauze-knippen en de gezichtsfocus die de rest wel krijgt.
+  const bronPad = await zorgVoorBron(video.source_url, bronmap, (m) => console.log(`  ${m}`));
+
   // De edit-agent bepaalt hoe er gemonteerd wordt: kader, focus, ingrepen,
   // kaarten en muziek per shot. Eén call voor alle clips, bewaard bij het
   // plan — een herrender kost dus niets extra.
+  //
+  // Pas ná de bron: de agent krijgt per shot de gezichtsmeting mee (hoeveel
+  // personen, waar de spreker staat, of hij beweegt). Zonder die meting
+  // beoordeelde hij "naad binnen dezelfde opname" en "wie moet de kijker
+  // zien" op 180 tekens tekst — en zijn focus-keuze werd daarna toch door de
+  // meting overschreven.
   let editPlan = (plan.edit_beslissingen as Awaited<ReturnType<typeof runEditAgent>> | null) ?? null;
   if (!editPlan) {
     try {
+      console.log('  gezichtsmeting voor de edit-agent…');
+      const meetdata = await meetPlanShots(bronPad, clips);
       console.log('  edit-agent ontwerpt de montage…');
-      editPlan = await runEditAgent(job.video_id, { onVoortgang: (m) => console.log(`  ${m}`) });
+      editPlan = await runEditAgent(job.video_id, { meetdata, onVoortgang: (m) => console.log(`  ${m}`) });
       console.log(`  montagebeslissingen voor ${editPlan.clips.length} clip(s)`);
     } catch (e) {
       console.log(`  edit-agent niet beschikbaar (${(e as Error).message.slice(0, 80)}); standaardregels`);
     }
   }
-
-  // Bron en stiltes vóór de eerste clip klaarzetten: anders mist clip 1 de
-  // spraakpauze-knippen en de gezichtsfocus die de rest wel krijgt.
-  const bronPad = await zorgVoorBron(video.source_url, bronmap, (m) => console.log(`  ${m}`));
+  const bekendeSlugs = bekendeEffectSlugs();
 
   // Huisstijl pas hier: de agent kijkt naar frames uit de bron, en die staat nu
   // op schijf. Eerder zou hij de hele video een tweede keer downloaden.
@@ -555,51 +604,95 @@ async function verwerk(job: Job) {
         const besluit = editClip.shots.find((sh) => sh.volgorde === seg.volgorde)
           ?? editClip.shots[Math.min(editClip.shots.length - 1, (seg.volgorde ?? 1) - 1)];
         if (!besluit) continue;
-        if (besluit.focus !== 'auto') seg.focus = besluit.focus;
-        seg.beeld_effect = besluit.beeld_effect;
-        seg.sfx = besluit.sfx;
+        // Een eigen focus alleen als er echt meer mensen in beeld staan: dan
+        // wil de agent de reactie laten zien, en dat kan de meting (die op de
+        // spreker kadreert) niet weten. Bij één persoon is de meting beter.
+        if (besluit.focus !== 'auto' && (seg.personen ?? 0) >= 2) {
+          seg.focus = besluit.focus;
+          // De meting zou de override direct weer overschrijven (focusNaarX
+          // en de kadercontrole werken op het gemeten gezicht); die laten we
+          // dan bewust los.
+          seg.focusX = undefined;
+          seg.gezicht = undefined;
+          seg.spoor = undefined;
+          seg.spoorY = undefined;
+          console.log(`     edit-agent: shot ${seg.volgorde} focus ${besluit.focus} (${seg.personen} personen in beeld)`);
+        } else if (besluit.focus !== 'auto') {
+          console.log(`     edit-agent: focus ${besluit.focus} op shot ${seg.volgorde} genegeerd (${seg.personen ?? 0} persoon in beeld; meting wint)`);
+        }
+        for (const [veld, slug] of [['beeld_effect', besluit.beeld_effect], ['sfx', besluit.sfx]] as const) {
+          if (slug && !bekendeSlugs.has(slug)) {
+            console.log(`     edit-agent: onbekende ${veld}-slug "${slug}" op shot ${seg.volgorde}; genegeerd`);
+          }
+        }
+        seg.beeld_effect = bekendeSlugs.has(besluit.beeld_effect) ? besluit.beeld_effect : 'geen';
+        seg.sfx = bekendeSlugs.has(besluit.sfx) ? besluit.sfx : 'geen';
         if (besluit.tekstkaart) {
-          seg.edit_notitie = `${seg.edit_notitie ?? ''} "${besluit.tekstkaart}"`.trim();
+          seg.tekstkaart = besluit.tekstkaart;
           seg.beeld_effect = 'tekstkaart';
         }
-        if ((seg as { subKnip?: boolean }).subKnip && besluit.beeld_effect === vorigeZoom) {
+        if (seg.subKnip && besluit.beeld_effect === vorigeZoom) {
           seg.beeld_effect = besluit.beeld_effect === 'punch_in' ? 'geen' : 'punch_in';
         }
         vorigeZoom = seg.beeld_effect;
       }
     }
 
-    // Kaarten en hook als functie: de aanloopcorrectie verderop kan het eerste
-    // segment inkorten, en dan moeten alle kaartposities opnieuw berekend
-    // worden. Subsegmenten (uit de dode-luchtsplitsing) krijgen geen eigen
-    // kaart, anders staat dezelfde kaart er twee keer.
+    // Alle hookteksten: de gekozen hook als hoofdversie, plus de twee
+    // alternatieven uit het plan als aparte varianten van dezelfde montage.
+    const hookTeksten = [
+      clip.hook?.tekst_overlay,
+      ...(clip.hooks ?? []).map((h) => h.tekst_overlay).filter((t) => t && t !== clip.hook?.tekst_overlay),
+    ].filter((t): t is string => Boolean(t)).slice(0, 3);
+    // De kaarten wijken uit voor de lángste hook, zodat geen enkele variant
+    // twee kaarten tegelijk in beeld heeft.
+    const hookTot = hookTeksten.length ? Math.max(...hookTeksten.map(hookDuur)) : 0;
+
+    // Kaarten als functie: de aanloopcorrectie verderop kan het eerste segment
+    // inkorten, en dan moeten alle kaartposities opnieuw berekend worden.
+    // Subsegmenten (uit de dode-luchtsplitsing) krijgen geen eigen kaart,
+    // anders staat dezelfde kaart er twee keer. De hookkaart zelf zit hier
+    // níet bij: die wordt ná alle controles per variant over de montage
+    // gebrand (brandOverlays), zodat drie hooks één render kosten.
     const bouwOverlays = async (): Promise<BurnOverlay[]> => {
-    const kaartSegmenten = segmenten.map((sgm) =>
-      (sgm as { subKnip?: boolean }).subKnip ? { ...sgm, edit_notitie: '', beeld_effect: undefined } : sgm,
-    );
-    const overlays: BurnOverlay[] = await maakTekstkaarten(
-      kaartSegmenten as never,
-      kaartMap,
-      `c${nummer}`,
-      stijl,
-    );
-    const hookTekst = clip.hook?.tekst_overlay;
-    if (hookTekst) {
-      const hookPad = join(kaartMap, `c${nummer}-hook.png`);
-      await tekenHookKaart(hookTekst, hookPad, stijl);
-      const hookTot = 2.6;
+      const kaartSegmenten = segmenten.map((sgm) =>
+        sgm.subKnip ? { ...sgm, edit_notitie: '', beeld_effect: undefined, tekstkaart: null } : sgm,
+      );
+      const overlays: BurnOverlay[] = await maakTekstkaarten(kaartSegmenten as never, kaartMap, `c${nummer}`, stijl);
+      const totaal = segmenten.reduce((t, sg) => t + (sg.end - sg.start), 0);
+
+      // De contextkaart (één regel situering, uit het plan) komt direct na de
+      // hook — kort, want de hook heeft de belofte al gedaan.
+      if (clip.context_kaart) {
+        const pad = join(kaartMap, `c${nummer}-context.png`);
+        await tekenKaart(clip.context_kaart, pad, stijl);
+        overlays.push({ pad, start: hookTot + 0.3, end: Math.min(totaal, hookTot + 0.3 + 2.2) });
+      }
+      // Uitvalrisico's uit de retentie-simulatie: op de genoemde seconde een
+      // korte re-hook-kaart met de fix, als die als regel tekst te lezen is.
+      for (const [i, risico] of (clip.uitval_risicos ?? []).entries()) {
+        const tekst = kaartRegelUit(risico.fix);
+        if (!tekst || risico.seconde < hookTot + 1 || risico.seconde > totaal - 1.5) continue;
+        const pad = join(kaartMap, `c${nummer}-rehook-${i}.png`);
+        await tekenKaart(tekst, pad, stijl);
+        overlays.push({ pad, start: risico.seconde, end: Math.min(totaal, risico.seconde + 2.0) });
+      }
+
       // Twee kaarten tegelijk in beeld is één te veel: de hook ís de belofte
       // en moet die eerste seconden alleen staan. Kaarten die eronder zouden
       // vallen schuiven erachteraan, of vervallen als er niets van overblijft.
+      // En kaarten onderling overlappen evenmin: de latere wint.
       for (let k = overlays.length - 1; k >= 0; k--) {
         if (overlays[k].start < hookTot) {
           if (overlays[k].end - hookTot < 0.7) overlays.splice(k, 1);
           else overlays[k] = { ...overlays[k], start: hookTot };
         }
       }
-      overlays.unshift({ pad: hookPad, start: 0, end: hookTot });
-    }
-    return overlays;
+      overlays.sort((a, b) => a.start - b.start);
+      for (let k = 0; k + 1 < overlays.length; k++) {
+        if (overlays[k].end > overlays[k + 1].start) overlays[k] = { ...overlays[k], end: overlays[k + 1].start };
+      }
+      return overlays.filter((o) => o.end - o.start >= 0.5);
     };
 
     // Kadercontrole in twee fases, met een lus eromheen. Fase 1 rekent uit wat
@@ -609,6 +702,9 @@ async function verwerk(job: Job) {
     // een zichtbare split-screen-naad, een benauwd kader.
     {
       const kaderKeuze = (editClip?.kader ?? clip.kader ?? 'vullend') as Kader;
+      // De naadbump (punch-in op een jump cut) vóór de controle in shot.zoom,
+      // zodat de controle en de keuring dezelfde zoom zien als de render.
+      for (const n of pasNaadZoomToe(segmenten)) console.log(`     naadknip shot ${n.volgorde}: zoom ${n.zoom.toFixed(2)}`);
       const eerste = corrigeerKadrering(segmenten);
       for (const c of eerste) console.log(`     kadercontrole shot ${c.volgorde}: ${c.wat}`);
 
@@ -625,7 +721,18 @@ async function verwerk(job: Job) {
           break;
         }
 
-        const fout = oordeel.shots.filter((o) => !o.goed);
+        // Wat er in beeld staat: een graphic (titel, grafiek, schermopname)
+        // wordt straks passend gekadreerd in plaats van op een gezicht.
+        for (const o of oordeel.shots) {
+          const seg = segmenten.find((sg) => sg.volgorde === o.volgorde);
+          if (!seg || !o.beeldtype) continue;
+          if (o.beeldtype === 'graphic' && seg.beeldtype !== 'graphic') {
+            console.log(`     kadercontrole shot ${o.volgorde}: graphic in beeld → passend kader (blur) in plaats van uitsnede`);
+          }
+          seg.beeldtype = o.beeldtype;
+        }
+
+        const fout = oordeel.shots.filter((o) => !o.goed && o.beeldtype !== 'graphic');
         if (fout.length === 0) {
           console.log(`     kadercontrole ronde ${ronde}: alle ${beelden.length} shots goed`);
           break;
@@ -689,6 +796,9 @@ async function verwerk(job: Job) {
           .update({
             montageplan: {
               ...bestaandPlan,
+              // De drempels die in déze run golden: zo kan de evaluatieset een
+              // slechte clip aan een instelling koppelen.
+              instellingen: gebruikteInstellingen(),
               clips: {
                 ...(bestaandPlan.clips ?? {}),
                 [String(nummer)]: {
@@ -705,6 +815,8 @@ async function verwerk(job: Job) {
                     paneel: sg.paneel,
                     spoor: sg.spoor,
                     spoorY: sg.spoorY,
+                    beeldtype: sg.beeldtype,
+                    tease: sg.tease,
                     transcript_fragment: (sg as { transcript_fragment?: string }).transcript_fragment,
                   })),
                 },
@@ -747,6 +859,8 @@ async function verwerk(job: Job) {
     let montage!: Awaited<ReturnType<typeof maakRuweMontage>>;
     let beeldRondeGedaan = false;
     let keuringsuitslag: Awaited<ReturnType<typeof keurMontage>> | null = null;
+    let ondertitels: Ondertitels | null = null;
+    const basisPad = join(werkmap, `basis-${naam}`);
     // Touwtrek-detectie: dezelfde poort-ingreep op hetzelfde shot in
     // opeenvolgende rondes betekent dat een correctielaag en een poortregel
     // tegen elkaar in werken — precies de stille oscillatie die de
@@ -779,14 +893,35 @@ async function verwerk(job: Job) {
         segmenten.push(...her.segmenten);
       }
     }
+    // Ondertitels op woordniveau uit de brontranscriptie — per poging opnieuw,
+    // want de segmenten kunnen nog verschuiven. Uit te zetten per campagne
+    // (huisstijl.ondertitels = false).
+    ondertitels = null;
+    if (bronWoorden && stijl.ondertitels !== false) {
+      try {
+        ondertitels = await maakOndertitels(segmenten, bronWoorden, kaartMap, `c${nummer}`, stijl);
+        console.log(
+          `     ondertitels: ${ondertitels.regels.length} regels` +
+            (ondertitels.assPad ? ' (ASS, woord in accentkleur)' : ondertitels.overlays.length ? ' (PNG-terugval: geen libass in deze ffmpeg)' : ''),
+        );
+      } catch (e) {
+        console.log(`     ondertitels overgeslagen (${(e as Error).message.slice(0, 70)})`);
+      }
+    } else if (!bronWoorden) {
+      console.log('     ondertitels overgeslagen: geen brontranscriptie');
+    }
+
     montage = await maakRuweMontage({
       sourceUrl: video.source_url,
       shots: segmenten,
       alGesegmenteerd: true,
-      outputPad: lokaal,
+      // De basis zonder hookkaart; de hookvarianten worden er na de controles
+      // overheen gebrand.
+      outputPad: basisPad,
       werkmap: bronmap,
       kader: editClip?.kader ?? clip.kader ?? 'vullend',
-      overlays: await bouwOverlays(),
+      overlays: [...(await bouwOverlays()), ...(ondertitels?.overlays ?? [])],
+      ondertitelAss: ondertitels?.assPad,
       // Eigen gelicenseerde audio uit assets/: muziekbed met ducking en
       // stiltevensters, sfx op de shots die erom vragen. Ontbreekt een
       // bestand, dan wordt het stil overgeslagen.
@@ -975,7 +1110,11 @@ async function verwerk(job: Job) {
         }
 
         const oordeel = await controleerKaderVisueel(beelden);
-        const fout = oordeel.shots.filter((o) => !o.goed);
+        for (const o of oordeel.shots) {
+          const seg = segmenten.find((sg) => sg.volgorde === o.volgorde);
+          if (seg && o.beeldtype) seg.beeldtype = o.beeldtype;
+        }
+        const fout = oordeel.shots.filter((o) => !o.goed && o.beeldtype !== 'graphic');
         if (fout.length === 0) {
           console.log(`     eindbeeldcontrole: alle ${beelden.length} shots goed in het eindbestand`);
         } else {
@@ -1005,6 +1144,41 @@ async function verwerk(job: Job) {
     break;
     }
 
+    // De hookkaarten over de basis branden: de hoofdversie (gekozen hook) op
+    // `lokaal`, de alternatieven als eigen bestand. Eén render, drie clips —
+    // de hooks stonden al in het plan en werden tot nu toe nooit gebruikt.
+    const varianten: { pad: string; naam: string; hook_variant?: number; hook_tekst?: string }[] = [];
+    {
+      const totaal = segmenten.reduce((t, sg) => t + (sg.end - sg.start), 0);
+      if (hookTeksten.length === 0) {
+        await rename(basisPad, lokaal);
+        varianten.push({ pad: lokaal, naam });
+      }
+      for (const [i, tekst] of hookTeksten.entries()) {
+        const hookPad = join(kaartMap, `c${nummer}-hook-${i + 1}.png`);
+        await tekenHookKaart(tekst, hookPad, stijl);
+        const uitNaam = i === 0 ? naam : naam.replace(/\.mp4$/, `-hook${i + 1}.mp4`);
+        const uitPad = i === 0 ? lokaal : join(werkmap, uitNaam);
+        try {
+          await brandOverlays(basisPad, [{ pad: hookPad, start: 0, end: hookDuur(tekst) }], uitPad, {
+            maxBytes: MAX_BYTES,
+            duur: totaal,
+          });
+          varianten.push(i === 0 ? { pad: uitPad, naam: uitNaam } : { pad: uitPad, naam: uitNaam, hook_variant: i + 1, hook_tekst: tekst });
+        } catch (e) {
+          console.log(`     hookvariant ${i + 1} mislukt (${(e as Error).message.slice(0, 80)})`);
+          if (i === 0) {
+            // Zonder hoofdversie is er niets: dan de basis zonder hook als hoofdversie.
+            await rename(basisPad, lokaal);
+            varianten.push({ pad: lokaal, naam });
+            break;
+          }
+        }
+      }
+      if (hookTeksten.length > 1) console.log(`     ${varianten.length} hookvarianten gebrand (hook ${hookDuur(hookTeksten[0]).toFixed(1)}s in beeld)`);
+      montage = { ...montage, pad: lokaal };
+    }
+
     // De keuring: het eindoordeel over precies datgene waarop geoordeeld
     // wordt. Zelfde meting als de evaluatieset gebruikt, zodat "groen bij mij"
     // en "groen bij jou" hetzelfde betekenen.
@@ -1013,13 +1187,37 @@ async function verwerk(job: Job) {
         python: pythonMetOpenCV(),
         bronPad,
       });
-      console.log(`     ── keuring: ${rapport.goed ? 'GOED' : 'NIET GOED'}`);
+      const kop =
+        rapport.status === 'goed' ? 'GOED' : rapport.status === 'review_nodig' ? 'REVIEW NODIG' : 'NIET GETOETST (geen enkele regel meetbaar)';
+      console.log(`     ── keuring: ${kop}`);
       for (const r of rapport.regels) {
-        console.log(`        ${r.goed ? '✓' : '✗'} ${r.naam}: ${r.detail}`);
+        console.log(`        ${r.goed === true ? '✓' : r.goed === false ? '✗' : '–'} ${r.naam}: ${r.detail}`);
       }
       keuringsuitslag = rapport;
     } catch (e) {
       console.log(`     keuring overgeslagen (${(e as Error).message.slice(0, 70)})`);
+    }
+
+    // De ondertitels als SRT bij het montageplan: de download naast de mp4
+    // komt zo uit dezelfde woorden als de ingebrande tekst.
+    if (ondertitels?.srt) {
+      try {
+        const { data: rij } = await supabase
+          .from('clip_plans')
+          .select('id, montageplan')
+          .eq('video_id', job.video_id)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .single();
+        const mp = (rij?.montageplan as { clips?: Record<string, Record<string, unknown>> } | null) ?? {};
+        const clipPlan = mp.clips?.[String(nummer)] ?? {};
+        await supabase
+          .from('clip_plans')
+          .update({ montageplan: { ...mp, clips: { ...(mp.clips ?? {}), [String(nummer)]: { ...clipPlan, srt: ondertitels.srt } } } })
+          .eq('id', rij!.id);
+      } catch (e) {
+        console.log(`     srt niet bewaard (${(e as Error).message.slice(0, 60)})`);
+      }
     }
 
     // Sluitstuk: het gerenderde bestand zelf nameten. De controles hiervóór
@@ -1056,34 +1254,43 @@ async function verwerk(job: Job) {
         });
     }
 
-    const { size } = await stat(lokaal);
-    if (size > MAX_BYTES) {
-      console.log(`     overgeslagen: ${Math.round(size / 1e6)}MB past zelfs na comprimeren niet`);
-      continue;
-    }
+    let hoofdGeupload = false;
+    for (const variant of varianten) {
+      const { size } = await stat(variant.pad);
+      if (size > MAX_BYTES) {
+        console.log(`     ${variant.naam} overgeslagen: ${Math.round(size / 1e6)}MB past zelfs na comprimeren niet`);
+        continue;
+      }
 
-    const pad = `${job.video_id}/${job.id}/${naam}`;
-    const { error: uploadError } = await r2Upload(pad, await readFile(lokaal), 'video/mp4');
-    if (uploadError) {
-      // Eén mislukte upload mag niet de hele montage weggooien: de andere
-      // clips zijn al gerenderd en bruikbaar.
-      console.log(`     upload mislukt, clip overgeslagen: ${uploadError.message}`);
-      continue;
-    }
+      const pad = `${job.video_id}/${job.id}/${variant.naam}`;
+      const { error: uploadError } = await r2Upload(pad, await readFile(variant.pad), 'video/mp4');
+      if (uploadError) {
+        // Eén mislukte upload mag niet de hele montage weggooien: de andere
+        // clips zijn al gerenderd en bruikbaar.
+        console.log(`     upload van ${variant.naam} mislukt, overgeslagen: ${uploadError.message}`);
+        continue;
+      }
 
-    // De keuringsuitslag reist mee met het bestand: in het dashboard zie je zo
-    // per clip of hij door alle regels kwam, zonder de log te hoeven lezen.
-    bestanden.push({
-      naam,
-      pad,
-      bytes: size,
-      keuring: keuringsuitslag
-        ? {
-            goed: keuringsuitslag.goed,
-            regels: keuringsuitslag.regels.map((r) => ({ naam: r.naam, goed: r.goed, detail: r.detail })),
-          }
-        : null,
-    });
+      // De keuringsuitslag reist mee met het bestand: in het dashboard zie je
+      // zo per clip of hij door alle regels kwam, zonder de log te hoeven
+      // lezen. De hookvarianten delen de montage en dus de keuring.
+      bestanden.push({
+        naam: variant.naam,
+        pad,
+        bytes: size,
+        ...(variant.hook_variant ? { hook_variant: variant.hook_variant, hook_tekst: variant.hook_tekst } : {}),
+        keuring: keuringsuitslag
+          ? {
+              goed: keuringsuitslag.goed,
+              status: keuringsuitslag.status,
+              regels: keuringsuitslag.regels.map((r) => ({ naam: r.naam, goed: r.goed, detail: r.detail })),
+            }
+          : null,
+      });
+      if (!variant.hook_variant) hoofdGeupload = true;
+      console.log(`     geüpload: ${variant.naam} (${Math.round(size / 1e6)}MB)`);
+    }
+    if (!hoofdGeupload) continue;
     gedaan += 1;
     // Meteen wegschrijven: wordt de run halverwege afgebroken, dan blijft dit
     // werk staan in plaats van verloren te gaan.
@@ -1091,11 +1298,52 @@ async function verwerk(job: Job) {
       .from('render_jobs')
       .update({ gedaan, bestanden, hartslag: new Date().toISOString() })
       .eq('id', job.id);
-    console.log(`     geüpload (${Math.round(size / 1e6)}MB)`);
   }
 
   if (bestanden.length === 0) throw new Error('Niets geüpload; alle clips waren te groot of mislukten.');
   return bestanden;
+}
+
+/**
+ * Een uitvalrisico-fix als kaartregel: alleen als hij kort genoeg is om als
+ * re-hook in beeld te staan. Een fix als "shot 3 ingekort" is geen kaart; een
+ * aangehaalde regel ("wacht op het bedrag") wel.
+ */
+function kaartRegelUit(fix: string): string | null {
+  const aangehaald = fix.match(/["“„]([^"”“]{3,48})["”]/)?.[1];
+  if (aangehaald) return aangehaald;
+  const kaal = fix.trim();
+  if (/^(re-?hook|kaart|tekstkaart|overlay)\s*[:\-–]\s*(.{3,48})$/i.test(kaal)) {
+    return kaal.replace(/^(re-?hook|kaart|tekstkaart|overlay)\s*[:\-–]\s*/i, '');
+  }
+  return null;
+}
+
+/**
+ * Gezichtsmeting van de planshots vóór de edit-agent draait: per clip en shot
+ * hoeveel personen er in beeld staan, waar de spreker staat en of hij
+ * beweegt. Grof (drie meetmomenten per shot) — het gaat om de situatie, niet
+ * om de exacte kadrering; die wordt later per segment opnieuw gemeten.
+ */
+async function meetPlanShots(
+  bronPad: string,
+  clips: { shots: Shot[] }[],
+): Promise<PlanMeetdata> {
+  const kopieen: (Shot & { clipNummer: number })[] = [];
+  clips.forEach((clip, i) => {
+    for (const shot of clip.shots) {
+      if (shot.end - shot.start < 0.5) continue;
+      kopieen.push({ ...shot, clipNummer: i + 1 });
+    }
+  });
+  if (kopieen.length === 0) return {};
+  await vulGezichtsFocus(bronPad, kopieen);
+  const uit: PlanMeetdata = {};
+  for (const k of kopieen) {
+    if (k.focusX === undefined && k.personen === undefined) continue;
+    (uit[k.clipNummer] ??= {})[k.volgorde] = { personen: k.personen, spreiding: k.spreiding, focusX: k.focusX };
+  }
+  return uit;
 }
 
 /**
@@ -1114,7 +1362,7 @@ async function verwerkBroll(job: Job, plan: import('../src/lib/broll/plan').Brol
     .single();
   const { data: bronVideos } = await supabase
     .from('videos')
-    .select('id, source_url')
+    .select('id, source_url, broll_analyse')
     .eq('campaign_id', anker?.campaign_id as string)
     .eq('soort', 'broll');
   const bronnen = new Map<string, string>(
@@ -1122,6 +1370,13 @@ async function verwerkBroll(job: Job, plan: import('../src/lib/broll/plan').Brol
       .filter((v) => typeof v.source_url === 'string' && (v.source_url as string).startsWith('storage:'))
       .map((v) => [v.id as string, v.source_url as string]),
   );
+  // Waar het onderwerp per shot staat, uit de kijk-agent: daarop wordt de
+  // staande uitsnede gecentreerd in plaats van blind op het midden.
+  const brollFocus = new Map<string, number>();
+  for (const v of bronVideos ?? []) {
+    const fx = (v.broll_analyse as { kijk?: { focus_x?: number } } | null)?.kijk?.focus_x;
+    if (typeof fx === 'number') brollFocus.set(v.id as string, fx);
+  }
 
   const { data: campagne } = await supabase
     .from('campaigns')
@@ -1156,6 +1411,7 @@ async function verwerkBroll(job: Job, plan: import('../src/lib/broll/plan').Brol
       werkmap,
       outputPad: lokaal,
       huisstijl,
+      focus: brollFocus,
       log: (m) => console.log(`     ${m}`),
     });
 
@@ -1200,12 +1456,15 @@ async function bepaalHuisstijl(
   bronBestand?: string,
 ): Promise<Huisstijl> {
   const { data: v } = await supabase.from('videos').select('campaign_id').eq('id', videoId).single();
-  if (!v?.campaign_id) return { font: 'archivo' };
+  if (!v?.campaign_id) return { font: 'archivo', ondertitels: true };
   const { data: c } = await supabase.from('campaigns').select('huisstijl').eq('id', v.campaign_id).single();
-  const bestaand = (c?.huisstijl as { accent?: string; font?: string } | null) ?? {};
+  const bestaand = (c?.huisstijl as { accent?: string; font?: string; ondertitels?: boolean } | null) ?? {};
+  // De ondertitel-vlag reist altijd mee: uit te zetten per campagne met
+  // huisstijl.ondertitels = false, standaard aan.
+  const ondertitels = bestaand.ondertitels !== false;
   // Al bepaald? Dan niet opnieuw: de huisstijl hoort over alle clips van een
   // campagne hetzelfde te zijn, en dit scheelt een call per render.
-  if (bestaand.accent && bestaand.font) return { accent: bestaand.accent, font: bestaand.font };
+  if (bestaand.accent && bestaand.font) return { accent: bestaand.accent, font: bestaand.font, ondertitels };
 
   const kleur = bestaand.accent ?? (await kleurUitThumbnail(sourceUrl));
 
@@ -1231,10 +1490,10 @@ async function bepaalHuisstijl(
       });
       await supabase
         .from('campaigns')
-        .update({ huisstijl: { accent: keuze.accent, font: keuze.font, bron: 'gezien', waarom: keuze.waarom } })
+        .update({ huisstijl: { ...bestaand, accent: keuze.accent, font: keuze.font, bron: 'gezien', waarom: keuze.waarom } })
         .eq('id', v.campaign_id);
       console.log(`  huisstijl gezien: ${keuze.accent} + ${keuze.font} — ${keuze.waarom}`);
-      return { accent: keuze.accent, font: keuze.font };
+      return { accent: keuze.accent, font: keuze.font, ondertitels };
     }
   } catch (e) {
     console.log(`  huisstijl-agent niet gelukt (${(e as Error).message.slice(0, 90)}); kleur uit thumbnail`);
@@ -1248,7 +1507,7 @@ async function bepaalHuisstijl(
       .update({ huisstijl: { ...bestaand, accent: kleur, bron: 'thumbnail' } })
       .eq('id', v.campaign_id);
   }
-  return { accent: kleur, font: bestaand.font ?? 'archivo' };
+  return { accent: kleur, font: bestaand.font ?? 'archivo', ondertitels };
 }
 
 /**
@@ -1551,6 +1810,9 @@ async function vulGezichtsFocus(bronPad: string, segmenten: Shot[]): Promise<voi
       // meetmomenten mag de spreiding niet opblazen.
       s.spreiding = kernX[kernX.length - 1] - kernX[0];
       if (s.spreiding > 0.15) breedGeteld++;
+      // Hoeveel mensen er in beeld staan (het maximum over de meetmomenten):
+      // de edit-agent mag alleen bij twee of meer een eigen focus kiezen.
+      s.personen = Math.max(...groep.map((m) => m.personen ?? 1));
 
       // Alleen binnen een paneel kadreren als alle metingen het eens zijn; is
       // het beeld halverwege omgesprongen, dan klopt de uitsnede maar de helft

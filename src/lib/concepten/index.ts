@@ -4,6 +4,8 @@ import { db } from '../supabase';
 import { loadVault, renderVaultForPrompt } from '../vault';
 import { ONDERZOEK } from '../vault/onderzoek';
 import { STORYSTIJLEN } from '../vault/storystijlen';
+import { STORYCRAFT } from '../vault/storycraft';
+import { SPREEKTAAL } from '../vault/spreektaal';
 
 const conceptenSchema = z.object({
   concepten: z
@@ -12,6 +14,10 @@ const conceptenSchema = z.object({
         titel: z.string(),
         platform: z.enum(['tiktok', 'reels', 'shorts']),
         doel: z.string(),
+        /** Wat de hook belooft — de kijker blijft hiervoor. Verplicht: zonder belofte is het een thema, geen concept. */
+        belofte: z.string().min(10),
+        /** Wat de payoff inlost, letterlijk het antwoord op de belofte. */
+        payoff: z.string().min(10),
         briefing: z
           .string()
           .describe('Volledige werkbriefing: het idee, de spanning, wat er gebeurt, waarom dit bij deze campagne past.'),
@@ -20,14 +26,16 @@ const conceptenSchema = z.object({
     .min(3),
 });
 
-const CONCEPTEN_SYSTEM = `Je bedenkt clip-concepten voor een clipping-campagne. Je krijgt de campagneregels, onze gemeten vault-kennis, en wat er op dit moment op de platforms werkt (Scout-vondsten). Daaruit bedenk je ZELF zoveel mogelijk sterke, verschillende concepten — de gebruiker hoeft niets aan te leveren.
+const CONCEPTEN_SYSTEM = `Je bedenkt clip-concepten voor een clipping-campagne. Je krijgt de campagne (thema en briefing), de campagneregels, onze gemeten vault-kennis, en wat er op dit moment op de platforms werkt (Scout-vondsten). Daaruit bedenk je ZELF zoveel mogelijk sterke, verschillende concepten — de gebruiker hoeft niets aan te leveren.
 
 Eisen per concept:
 - Een concreet idee met ingebouwde spanning, geen thema ("iets met humor" is geen concept).
-- De briefing is direct werkbaar: wat gebeurt er, wat is de belofte, wat is de payoff.
+- Vul "belofte" en "payoff" apart in, volgens het belofte/payoff-contract uit storycraft: de payoff is het letterlijke antwoord op de belofte, niet iets ernaast. Kun je die twee niet in één zin elk opschrijven, dan is het geen concept.
+- De briefing is direct werkbaar: wat gebeurt er, wat is de belofte, wat is de payoff, en waarom past dit bij het thema van déze campagne.
 - Concepten verschillen echt van elkaar: andere invalshoek, ander formaat, andere stijl uit de bibliotheek — geen vijf smaken van hetzelfde idee.
 - Blijf strikt binnen de campagneregels; verboden content stel je niet voor.
-- Gebruik de Scout-vondsten als bewijs voor wat werkt, niet om letterlijk te kopiëren.`;
+- Gebruik de Scout-vondsten als bewijs voor wat werkt, niet om letterlijk te kopiëren.
+- Titels en briefings volgen de spreektaalregels: kort, concreet, geen aankondigingen.`;
 
 /**
  * Bedenkt een batch opdrachten voor een campagne en bewaart ze als briefs,
@@ -69,13 +77,18 @@ export async function bedenkConcepten(campaignId: string, aantal = 8) {
 
 === CAMPAGNE ===
 ${campagne.name}
-Regels: ${JSON.stringify(campagne.platform_rules ?? {}, null, 2)}
+Thema: ${campagne.theme ?? 'niet opgegeven'}
+${campagne.briefing ? `Briefing van de campagne:\n${String(campagne.briefing).slice(0, 4000)}\n` : ''}Regels: ${JSON.stringify(campagne.platform_rules ?? {}, null, 2)}
 
 === VAULT (onze gemeten kennis) ===
 ${renderVaultForPrompt(vault)}
 
 === WAT NU WERKT OP DE PLATFORMS (Scout) ===
 ${JSON.stringify(finds ?? [], null, 2)}
+
+${STORYCRAFT}
+
+${SPREEKTAAL}
 
 ${STORYSTIJLEN}
 
@@ -94,7 +107,10 @@ ${ONDERZOEK}${bestaandBlok}`,
       parsed.concepten.slice(0, begrensd).map((c) => ({
         campaign_id: campaignId,
         titel: c.titel,
-        briefing: c.briefing,
+        // Belofte en payoff expliciet bovenaan de briefing: de scriptwriter
+        // bouwt zijn verhaallijn daarop, en een briefing waar dat contract
+        // in verstopt zit levert opsommingen op.
+        briefing: `Belofte: ${c.belofte}\nPayoff: ${c.payoff}\n\n${c.briefing}`,
         doel: c.doel,
         platform: c.platform,
         status: 'concept',

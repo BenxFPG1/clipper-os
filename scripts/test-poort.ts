@@ -11,7 +11,7 @@
  * Draaien: npm run test:poort
  */
 import { poort, verzetGrens, woordOnder } from '../src/lib/roughcut/poort';
-import { keurKnippen, keurOverlap } from '../src/lib/roughcut/keuring';
+import { keurKnippen, keurOverlap, keuringStatus } from '../src/lib/roughcut/keuring';
 import { corrigeerKadrering, uitsnedeVan } from '../src/lib/roughcut/kadercontrole';
 import { basisZoom, type Shot } from '../src/lib/roughcut';
 import type { BronWoord } from '../src/lib/roughcut/woorden';
@@ -149,10 +149,54 @@ console.log('poort is idempotent');
 console.log('keuring komt overeen met de poort');
 {
   const ruw = [shot(1, 11.3, 13.2), shot(2, 12.0, 14.0)];
-  toets('keurt ongefilterde segmenten af', !keurKnippen(ruw, woorden).goed && !keurOverlap(ruw).goed);
+  toets('keurt ongefilterde segmenten af', keurKnippen(ruw, woorden).goed === false && keurOverlap(ruw).goed === false);
   const na = poort(ruw.map((s) => ({ ...s })), woorden).segmenten;
-  toets('keurt de uitkomst van de poort goed', keurKnippen(na, woorden).goed && keurOverlap(na).goed,
+  toets('keurt de uitkomst van de poort goed', keurKnippen(na, woorden).goed === true && keurOverlap(na).goed === true,
     `${keurKnippen(na, woorden).detail} | ${keurOverlap(na).detail}`);
+}
+
+console.log('keuring — niet te toetsen is geen goedkeuring');
+{
+  const zonder = keurKnippen([shot(1, 10.75, 12.3)], null);
+  toets('zonder brontranscriptie is de regel null, niet true', zonder.goed === null, String(zonder.goed));
+  toets('status van alleen null-regels is niet_getoetst', keuringStatus([zonder]) === 'niet_getoetst');
+  toets('één echte fout is review nodig',
+    keuringStatus([zonder, { naam: 'x', goed: false, detail: '' }]) === 'review_nodig');
+  toets('null naast een echte goed is goed',
+    keuringStatus([zonder, { naam: 'x', goed: true, detail: '' }]) === 'goed');
+}
+
+console.log('poort — regel 2: de tease (cold open) blijft staan');
+{
+  // De worker markeert een korte cold open die de payoff vooruit laat horen
+  // als tease. Die deelt per definitie bronmateriaal met de payoff; de poort
+  // liet hem daardoor áltijd vervallen (inkorten kon niet: zelfde beginpunt),
+  // of — zonder woordankers — verloor de payoff zijn eerste zin.
+  const tease: Shot = { ...shot(1, 10.0, 12.3), functie: 'hook', tease: true, ankerStart: 10.0, ankerEind: 12.3 };
+  const payoff: Shot = { ...shot(2, 10.0, 14.2), functie: 'payoff', ankerStart: 10.0, ankerEind: 14.2 };
+  const { segmenten, ingrepen } = poort([tease, payoff], woorden);
+  toets('beide segmenten blijven bestaan', segmenten.length === 2, `${segmenten.length} over`);
+  const p = segmenten.find((s) => s.volgorde === 2);
+  toets('de payoff verliest zijn eerste zin niet', (p?.start ?? 99) <= 10.0 + 0.001, `payoff start=${p?.start}`);
+  toets('de tease is heel gebleven', (segmenten[0].end ?? 0) >= 12.3, `tease eind=${segmenten[0].end}`);
+  toets('en de poort meldt het als bewuste tease', ingrepen.some((i) => i.regel === 'tease'));
+  toets('de keuring accepteert het gedeelde materiaal ook', keurOverlap(segmenten).goed === true, keurOverlap(segmenten).detail);
+}
+{
+  // Zonder woordankers (geen brontranscriptie) mag de payoff evenmin worden
+  // aangesneden.
+  const tease: Shot = { ...shot(1, 10.0, 12.3), functie: 'hook', tease: true };
+  const payoff: Shot = { ...shot(2, 10.0, 14.2), functie: 'payoff' };
+  const { segmenten } = poort([tease, payoff], null);
+  const p = segmenten.find((s) => s.volgorde === 2);
+  toets('zonder ankers: payoff begint nog steeds op zijn eigen begin', p?.start === 10.0, `start=${p?.start}`);
+}
+{
+  // Een "tease" die te lang is, is gewoon een duplicaat en volgt de gewone regel.
+  const lang: Shot = { ...shot(1, 10.0, 16.0), tease: true, ankerStart: 10.0, ankerEind: 16.0 };
+  const payoff: Shot = { ...shot(2, 10.0, 16.0), ankerStart: 10.0, ankerEind: 16.0 };
+  const { segmenten } = poort([lang, payoff], woorden);
+  toets('een lange tease geldt niet als tease en vervalt als duplicaat', segmenten.length === 1);
 }
 
 console.log('poort — regel 0: een fragment wordt nooit gehalveerd');

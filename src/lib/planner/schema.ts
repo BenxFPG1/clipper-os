@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 export const SCHEMA_VERSION = '1.0';
 export const PROMPT_VERSION_CHARACTER_MAP = 'charmap-3.1';
-export const PROMPT_VERSION_PLAN = 'plan-6.0';
+export const PROMPT_VERSION_PLAN = 'plan-6.1';
 
 // ------------------------------------------------------- stap 1: character map
 export const sleutelmomentSchema = z.object({
@@ -175,6 +175,45 @@ export const clipPlanSchema = z.object({
 
 export type Clip = z.infer<typeof clipSchema>;
 export type ClipPlan = z.infer<typeof clipPlanSchema>;
+
+/**
+ * Het schema dat het examen daadwerkelijk invult. Zónder sfx, beeld_effect,
+ * effect_waarom, focus, muziek en kader: die keuzes maakt de edit-agent bij
+ * de render (met de gezichtsmeting erbij), en overschreef daar tot nu toe
+ * exact wat de planner had geschreven — dubbel werk waarvan de eerste helft
+ * werd weggegooid. Het volledige clipSchema blijft bestaan om oudere plannen
+ * te kunnen lezen; een tool-schema met optionele velden nodigt het model
+ * alleen maar uit ze toch te vullen.
+ */
+export const examenShotSchema = shotSchema.omit({ sfx: true, beeld_effect: true, effect_waarom: true, focus: true });
+export const examenClipSchema = clipSchema
+  .omit({ muziek: true, kader: true })
+  .extend({ shots: z.array(examenShotSchema).min(1) });
+export const examenPlanSchema = z.object({
+  clips: z.array(examenClipSchema).min(1),
+});
+
+/**
+ * De verhaaldokter levert geen volledig plan terug maar alleen wat hij mag
+ * aanraken: per clip de verhaallijn, de score en of de clip vervalt. Het
+ * volledige plan terugvragen kostte 64k uitvoertokens per run en gaf hem de
+ * kans shots en hooks "per ongeluk" te herschrijven — nu wordt in code
+ * samengevoegd en kan dat niet.
+ */
+export const verhaaldokterDiffSchema = z.object({
+  clips: z.array(
+    z.object({
+      /** 1-gebaseerd nummer van de clip zoals meegestuurd. */
+      clip: z.number().int().min(1),
+      verwijderen: z.boolean(),
+      score: z.number().min(1).max(10),
+      /** Alleen invullen als er iets veranderd is; anders weglaten. */
+      verhaallijn: clipSchema.shape.verhaallijn.optional(),
+      reden: z.string(),
+    }),
+  ),
+});
+export type VerhaaldokterDiff = z.infer<typeof verhaaldokterDiffSchema>;
 
 // ------------------------------------------------- stap 2a: schets (toernooi)
 /**

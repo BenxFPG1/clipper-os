@@ -16,14 +16,15 @@ on:
     - cron: '0 10 * * 2,4,6'     # kijken: di/do/za, topvondsten visueel analyseren
     - cron: '0 9 * * *'          # editleraar: dagelijks, leren van edit-tutorials
     - cron: '30 10 * * 0'        # editleraar_visueel: zondag, toffe effecten spotten in topvondsten
-    - cron: '0 6,15 * * *'       # trends: 2x per dag, net na elke scout-run (~7:30/16:30 NL) — rankings+rapport+diff
+    - cron: '0 6,15 * * *'       # trends: 2x per dag, net na elke scout-run (~7:30/16:30 NL) — slaat zichzelf over zonder genoeg nieuwe vondsten
+    - cron: '0 12 * * 0'         # consolideer: zondag ~14:00 NL, bijna-duplicaten in vault_kennis samenvoegen
   workflow_dispatch:
     inputs:
       job:
         description: 'Welke taak'
         required: true
         type: choice
-        options: [tracking, scout, retro, kennis, kanaal, cliparmy, kijken, editleraar, editleraar_visueel, trends, diag]
+        options: [tracking, scout, retro, kennis, kanaal, cliparmy, kijken, editleraar, editleraar_visueel, trends, consolideer, diag]
 
 concurrency:
   group: clipper-jobs
@@ -57,6 +58,8 @@ jobs:
             echo "job=editleraar_visueel" >> "$GITHUB_OUTPUT"
           elif [ "${{ github.event.schedule }}" = "0 6,15 * * *" ]; then
             echo "job=trends" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event.schedule }}" = "0 12 * * 0" ]; then
+            echo "job=consolideer" >> "$GITHUB_OUTPUT"
           else
             echo "job=tracking" >> "$GITHUB_OUTPUT"
           fi
@@ -71,7 +74,7 @@ jobs:
       # ffmpeg staat al op de GitHub-runner. yt-dlp halen we als kant-en-klare
       # binary op: apt-get bleek minutenlang te kunnen hangen op de runner.
       - name: Installeer yt-dlp
-        if: ${{ steps.kies.outputs.job != 'cliparmy' }}
+        if: ${{ steps.kies.outputs.job != 'cliparmy' && steps.kies.outputs.job != 'consolideer' }}
         run: |
           sudo curl -sSL --retry 3 --max-time 120 \
             https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux \
@@ -86,7 +89,7 @@ jobs:
       # bruikbare ondertiteling gevonden" was in werkelijkheid deze
       # ontbrekende stap, niet een probleem met de zoek- of leeslogica.
       - name: Installeer deno (challenge-solver voor yt-dlp)
-        if: ${{ steps.kies.outputs.job != 'cliparmy' }}
+        if: ${{ steps.kies.outputs.job != 'cliparmy' && steps.kies.outputs.job != 'consolideer' }}
         run: |
           curl -fsSL --retry 3 https://github.com/denoland/deno/releases/latest/download/deno-x86_64-unknown-linux-gnu.zip -o /tmp/deno.zip
           sudo unzip -oq /tmp/deno.zip -d /usr/local/bin

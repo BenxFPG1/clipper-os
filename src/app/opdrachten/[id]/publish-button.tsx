@@ -2,6 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
+import { roepApiAan } from '@/app/api-aanroep';
 
 export type PublishedClip = {
   id: string;
@@ -32,26 +33,27 @@ export function PublishButton({
   async function publish() {
     setBusy(true);
     setMelding(null);
-    const res = await fetch(`/api/briefs/${briefId}/publish`, {
+    const { ok, json, fout } = await roepApiAan<{ waarschuwing?: string | null }>(`/api/briefs/${briefId}/publish`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(scriptId ? { scriptId } : {}),
+      body: scriptId ? { scriptId } : {},
     });
-    const json = await res.json();
     setBusy(false);
-    setMelding(res.ok ? (json.waarschuwing ?? null) : (json.error ?? 'Publiceren mislukt'));
+    setMelding(ok ? (json.waarschuwing ?? null) : (fout ?? 'Publiceren mislukt'));
     router.refresh();
   }
 
+  // Het antwoord tonen: een afgekeurde status of URL sprong eerder na de
+  // refresh stilzwijgend terug.
   async function patch(body: Record<string, unknown>) {
     if (!clip) return;
     setBusy(true);
-    await fetch(`/api/clips/${clip.id}`, {
-      method: 'PATCH',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(body),
-    });
+    setMelding(null);
+    const { ok, fout } = await roepApiAan(`/api/clips/${clip.id}`, { method: 'PATCH', body });
     setBusy(false);
+    if (!ok) {
+      setMelding(fout ?? 'Bijwerken mislukt');
+      return;
+    }
     router.refresh();
   }
 

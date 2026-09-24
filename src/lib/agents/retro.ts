@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { structuredCall } from '../claude';
 import { AGENT_EFFORT } from '../env';
 import { db, one } from '../supabase';
-import { ALL, loadWeights, upsertWeight } from '../vault';
+import { ALL, loadVault, loadWeights, renderVaultForPrompt, upsertWeight } from '../vault';
 import { median } from '../tracking/performance';
 
 /** Minimum aantal waarnemingen per kant (eigen of extern) om mee te tellen. */
@@ -13,6 +13,24 @@ export const MAX_WEIGHT_STEP = 0.15;
  * de vault leert net zo hard van werkende content van anderen als van onszelf.
  */
 export const EIGEN_GEWICHT = 0.5;
+/**
+ * Externe vondsten ouder dan dit tellen niet meer mee. Wat drie maanden
+ * geleden werkte is geen meting van nu; de scout ziet de post bovendien
+ * opnieuw als hij nog steeds uitschiet.
+ */
+export const EXTERN_VENSTER_DAGEN = 90;
+/**
+ * Een kandidaat-heuristiek van de scout wordt pas actief als hij bij zoveel
+ * verschillende accounts terugkwam. Eén account is een stijl, drie is een
+ * patroon.
+ */
+export const MIN_ACCOUNTS_VOOR_ACTIVATIE = 3;
+/**
+ * Oudere kandidaten hebben geen bewijs-kolom; daar valt de toets terug op de
+ * evidence_score (posts x accounts). 9 = minstens drie accounts met elk
+ * minstens drie posts, of drie posts van drie accounts.
+ */
+export const MIN_EVIDENCE_SCORE_ZONDER_BEWIJS = 9;
 
 const proposalSchema = z.object({
   wijzigingen: z.array(
@@ -28,6 +46,15 @@ const proposalSchema = z.object({
       bewijs_post_urls: z.array(z.string()),
     }),
   ),
+  heuristiek_activaties: z
+    .array(
+      z.object({
+        id: z.string().describe('Het id van de kandidaat-heuristiek.'),
+        reden: z.string().describe('Waarom deze regel de toets doorstaat, met de accounts erbij.'),
+      }),
+    )
+    .default([])
+    .describe('Kandidaat-heuristieken die actief mogen worden. Alleen uit de lijst met toetsbaar=true.'),
   samenvatting: z.string(),
 });
 
@@ -49,22 +76,36 @@ export type GroupStats = {
   post_urls: string[];
 };
 
-const RETRO_SYSTEM = `Je bent de Retro-agent van een clipping-tool. Je krijgt prestatiecijfers per structuur- en hook-type, uitgesplitst naar platform en thema, en de huidige vault-gewichten. Je stelt gewichtswijzigingen voor.
+export type HeuristiekKandidaat = {
+  id: string;
+  rule: string;
+  platform: string | null;
+  theme: string | null;
+  evidence_score: number;
+  accounts: string[];
+  post_urls: string[];
+  /** Haalt de mechanische drempel (accounts of evidence_score). */
+  toetsbaar: boolean;
+};
+
+const RETRO_SYSTEM = `Je bent de Retro-agent van een clipping-tool. Je krijgt prestatiecijfers per structuur- en hook-type, uitgesplitst naar platform en thema, de huidige vault (met gewichten), de laatste gewichtswijzigingen, en de kandidaat-craftregels die de scout verzamelde. Je stelt gewichtswijzigingen en activaties voor.
 
 Belangrijk: de cijfers komen uit twee bronnen die even zwaar wegen.
 - eigen_mediaan: hoe onze eigen geposte clips presteerden (outlier-score t.o.v. onze mediaan).
-- extern_mediaan: hoe dezelfde structuur/hook presteerde bij andere accounts die de scout vond.
-De gecombineerde_score is het gewogen gemiddelde van beide. Een score boven 1 is bovengemiddeld, onder 1 ondergemiddeld.
+- extern_mediaan: hoe dezelfde structuur/hook presteerde bij andere accounts die de scout vond. Let op: de scout bewaart alleen posts die al uitschieters waren, dus extern_mediaan ligt per definitie boven 1. Vergelijk slugs daarom ONDERLING (welke scoort hoger dan de andere, met meer waarnemingen), niet tegen de grens van 1.
+De gecombineerde_score is het gewogen gemiddelde van beide.
 
 Harde regels:
-- Stel alleen een wijziging voor als eigen_n >= ${MIN_N_PER_GROUP} of extern_n >= ${MIN_N_PER_GROUP}. Groepen met minder data laat je ongemoeid.
+- Stel alleen een wijziging voor als eigen_n >= ${MIN_N_PER_GROUP} of extern_n >= ${MIN_N_PER_GROUP}. Je krijgt alleen die groepen.
 - De stap is maximaal ${MAX_WEIGHT_STEP} omhoog of omlaag per run.
 - Gewichten blijven tussen 0 en 1.
 - Elk voorstel geldt voor precies één combinatie van platform en thema; die neem je letterlijk over uit de data.
 - Onderbouw met de clip_ids en post_urls uit de groep.
 - Wat op het ene platform werkt hoeft op het andere niet te werken; behandel elke combinatie los.
-- Steunt een voorstel maar op één bron, zeg dat dan expliciet in de reden.
-- Geen duidelijke richting? Dan stel je niets voor; een lege lijst is een geldig antwoord.`;
+- Steunt een voorstel maar op één bron, zeg dat dan expliciet in de reden. Ontbreekt eigen data helemaal, benoem dat in de samenvatting.
+- Kijk naar de laatste wijzigingen: een gewicht dat vorige week omhoog ging niet deze week weer omlaag zonder nieuwe data.
+- Kandidaat-heuristieken: activeer alleen wat toetsbaar=true heeft én concreet genoeg is om tijdens het editen toe te passen. Een vage regel activeer je niet, ook niet met veel bewijs.
+- Geen duidelijke richting? Dan stel je niets voor; lege lijsten zijn een geldig antwoord.`;
 
 /**
  * Verzamelt prestaties per (structuur/hook × platform × thema) uit twee bronnen:
@@ -75,6 +116,7 @@ Harde regels:
 export async function collectRetroStats(): Promise<GroupStats[]> {
   const supabase = db();
   const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString();
+  const externSinds = new Date(Date.now() - EXTERN_VENSTER_DAGEN * 24 * 3600 * 1000).toISOString();
 
   const [eigenRes, externRes, weights] = await Promise.all([
     supabase
@@ -82,7 +124,11 @@ export async function collectRetroStats(): Promise<GroupStats[]> {
       .select('id, structure_type, hook_type, platform, theme, posted_at, clip_performance(outlier_score)')
       .eq('status', 'posted')
       .lte('posted_at', sevenDaysAgo),
-    supabase.from('scout_finds').select('post_url, platform, theme, outlier_score, decoded').not('decoded', 'is', null),
+    supabase
+      .from('scout_finds')
+      .select('post_url, platform, theme, outlier_score, decoded')
+      .not('decoded', 'is', null)
+      .gte('created_at', externSinds),
     loadWeights(),
   ]);
   if (eigenRes.error) throw eigenRes.error;
@@ -197,42 +243,133 @@ export function combineer(eigen: number | null, extern: number | null): number |
 }
 
 /**
+ * De kandidaat-craftregels van de scout, met de mechanische toets erbij. De
+ * scout schrijft ze weg als 'candidate'; niemand zette ze ooit op 'active',
+ * dus alles wat de scout leerde aan regels bereikte de planner niet.
+ */
+export async function collectHeuristiekKandidaten(): Promise<HeuristiekKandidaat[]> {
+  const { data } = await db().from('vault_heuristics').select('*').eq('status', 'candidate');
+  return (data ?? []).map((h) => {
+    const bewijs = (h.evidence ?? {}) as { accounts?: unknown; post_urls?: unknown };
+    const accounts = Array.isArray(bewijs.accounts) ? (bewijs.accounts as string[]) : [];
+    const postUrls = Array.isArray(bewijs.post_urls) ? (bewijs.post_urls as string[]) : [];
+    const score = Number(h.evidence_score ?? 0);
+    return {
+      id: h.id as string,
+      rule: h.rule as string,
+      platform: (h.platform as string | null) ?? null,
+      theme: (h.theme as string | null) ?? null,
+      evidence_score: score,
+      accounts,
+      post_urls: postUrls,
+      toetsbaar: toetsHeuristiek(accounts.length, score),
+    };
+  });
+}
+
+/** Puur en testbaar: genoeg verschillende accounts, of (zonder bewijs-kolom) genoeg evidence_score. */
+export function toetsHeuristiek(aantalAccounts: number, evidenceScore: number): boolean {
+  if (aantalAccounts >= MIN_ACCOUNTS_VOOR_ACTIVATIE) return true;
+  return aantalAccounts === 0 && evidenceScore >= MIN_EVIDENCE_SCORE_ZONDER_BEWIJS;
+}
+
+/**
  * Draait de wekelijkse retro en zet het voorstel klaar in de agent-inbox.
  * De agent muteert nooit zelf de vault — Antonie keurt goed (sectie 3, principe 4).
  */
 export async function runRetroAgent(): Promise<{ agentRunId: string; proposal: RetroProposal; stats: GroupStats[] }> {
   const stats = await collectRetroStats();
   const eligible = stats.filter((s) => s.eigen_n >= MIN_N_PER_GROUP || s.extern_n >= MIN_N_PER_GROUP);
+  const kandidaten = await collectHeuristiekKandidaten();
+  const toetsbaar = kandidaten.filter((k) => k.toetsbaar);
+  const eigenDataOntbreekt = !stats.some((s) => s.eigen_n >= MIN_N_PER_GROUP);
 
-  const proposal: RetroProposal =
-    eligible.length === 0
-      ? {
-          wijzigingen: [],
-          samenvatting: `Geen enkele groep haalt de drempel van ${MIN_N_PER_GROUP} waarnemingen (eigen clips of externe vondsten). Nog geen voorstel.`,
-        }
-      : enforceRules(
-          await structuredCall({
-            system: RETRO_SYSTEM,
-            user: `Groepen die de drempel halen:\n${JSON.stringify(eligible, null, 2)}\n\nAlle gemeten groepen ter context:\n${JSON.stringify(stats, null, 2)}`,
-            schema: proposalSchema,
-            toolName: 'lever_vault_voorstel',
-            toolDescription: 'Lever de voorgestelde vault-gewichtswijzigingen met bewijs.',
-            maxTokens: 16000,
-            effort: AGENT_EFFORT,
-            operation: 'retro_agent',
-          }),
-          eligible,
-        );
+  let proposal: RetroProposal;
+  if (eligible.length === 0 && toetsbaar.length === 0) {
+    proposal = {
+      wijzigingen: [],
+      heuristiek_activaties: [],
+      samenvatting: `Geen enkele groep haalt de drempel van ${MIN_N_PER_GROUP} waarnemingen (eigen clips of externe vondsten) en geen kandidaat-heuristiek haalt de toets. Nog geen voorstel.`,
+    };
+  } else {
+    const supabase = db();
+    const [vault, changelog] = await Promise.all([
+      loadVault(),
+      supabase
+        .from('vault_changelog')
+        .select('entity_key, field, old_value, new_value, reason, created_at')
+        .order('created_at', { ascending: false })
+        .limit(5),
+    ]);
+    const laatsteWijzigingen = (changelog.data ?? [])
+      .map(
+        (c) =>
+          `- ${new Date(c.created_at as string).toLocaleDateString('nl-NL')} ${c.entity_key} ${c.field}: ${JSON.stringify(c.old_value)} → ${JSON.stringify(c.new_value)} (${String(c.reason ?? '').slice(0, 120)})`,
+      )
+      .join('\n');
+
+    proposal = enforceRules(
+      await structuredCall({
+        system: RETRO_SYSTEM,
+        user: `=== ONZE VAULT (huidige gewichten) ===
+${renderVaultForPrompt(vault)}
+
+=== LAATSTE GEWICHTSWIJZIGINGEN ===
+${laatsteWijzigingen || '— (nog geen)'}
+
+=== GROEPEN DIE DE DREMPEL HALEN (${eligible.length}) ===
+${eigenDataOntbreekt ? `Let op: geen enkele groep heeft eigen_n >= ${MIN_N_PER_GROUP}. Alles hieronder steunt uitsluitend op externe vondsten.\n` : ''}${JSON.stringify(eligible, null, 1)}
+
+=== KANDIDAAT-HEURISTIEKEN VAN DE SCOUT (${kandidaten.length}, waarvan ${toetsbaar.length} toetsbaar) ===
+${JSON.stringify(
+  kandidaten.map((k) => ({
+    id: k.id,
+    regel: k.rule,
+    platform: k.platform,
+    thema: k.theme,
+    accounts: k.accounts,
+    posts: k.post_urls.length,
+    evidence_score: k.evidence_score,
+    toetsbaar: k.toetsbaar,
+  })),
+  null,
+  1,
+)}`,
+        schema: proposalSchema,
+        toolName: 'lever_vault_voorstel',
+        toolDescription: 'Lever de voorgestelde vault-gewichtswijzigingen en heuristiek-activaties met bewijs.',
+        maxTokens: 16000,
+        effort: AGENT_EFFORT,
+        operation: 'retro_agent',
+      }),
+      eligible,
+      toetsbaar,
+    );
+  }
+
+  // Ontbrekende eigen data is de belangrijkste kanttekening bij elk voorstel;
+  // die zetten we mechanisch voorop, ongeacht wat het model schreef.
+  if (eigenDataOntbreekt && proposal.wijzigingen.length > 0) {
+    proposal.samenvatting = `Zonder eigen data (geen groep met eigen_n >= ${MIN_N_PER_GROUP}; er zijn nog te weinig geposte clips met metingen) steunen alle voorstellen uitsluitend op externe vondsten. ${proposal.samenvatting}`;
+  }
 
   const { data, error } = await db()
     .from('agent_runs')
     .insert({
       agent: 'retro',
-      input_summary: { groepen: stats.length, in_aanmerking: eligible.length, stats },
+      input_summary: {
+        groepen: stats.length,
+        in_aanmerking: eligible.length,
+        eigen_data_ontbreekt: eigenDataOntbreekt,
+        kandidaat_heuristieken: kandidaten.length,
+        toetsbaar: toetsbaar.length,
+        stats,
+        heuristieken: kandidaten,
+      },
       proposal,
       // Een run zonder wijzigingen vraagt niets van je; die hoort in de historie,
       // niet in de inbox. Anders staat er elke week een leeg voorstel te wachten.
-      status: proposal.wijzigingen.length > 0 ? 'pending' : 'auto',
+      status: proposal.wijzigingen.length > 0 || proposal.heuristiek_activaties.length > 0 ? 'pending' : 'auto',
     })
     .select()
     .single();
@@ -243,9 +380,10 @@ export async function runRetroAgent(): Promise<{ agentRunId: string; proposal: R
 
 /**
  * De regels uit sectie 10 worden in code afgedwongen, niet alleen in de prompt:
- * onvoldoende data of een te grote stap wordt hier gecorrigeerd of geweigerd.
+ * onvoldoende data of een te grote stap wordt hier gecorrigeerd of geweigerd,
+ * en een activatie van een niet-toetsbare heuristiek valt af.
  */
-function enforceRules(proposal: RetroProposal, eligible: GroupStats[]): RetroProposal {
+function enforceRules(proposal: RetroProposal, eligible: GroupStats[], toetsbaar: HeuristiekKandidaat[]): RetroProposal {
   const byKey = new Map(eligible.map((s) => [`${s.entity}:${s.slug}:${s.platform}:${s.theme}`, s]));
 
   const wijzigingen = proposal.wijzigingen
@@ -271,10 +409,18 @@ function enforceRules(proposal: RetroProposal, eligible: GroupStats[]): RetroPro
     })
     .filter((w): w is NonNullable<typeof w> => w !== null);
 
-  return { ...proposal, wijzigingen };
+  const toegestaan = new Set(toetsbaar.map((k) => k.id));
+  const gezien = new Set<string>();
+  const heuristiek_activaties = proposal.heuristiek_activaties.filter((a) => {
+    if (!toegestaan.has(a.id) || gezien.has(a.id)) return false;
+    gezien.add(a.id);
+    return true;
+  });
+
+  return { ...proposal, wijzigingen, heuristiek_activaties };
 }
 
-/** Voert een goedgekeurd voorstel uit: gewicht bijwerken, version bumpen, changelog schrijven. */
+/** Voert een goedgekeurd voorstel uit: gewicht bijwerken, version bumpen, heuristieken activeren, changelog schrijven. */
 export async function applyRetroProposal(agentRunId: string, decidedBy: string) {
   const supabase = db();
 
@@ -323,12 +469,34 @@ export async function applyRetroProposal(agentRunId: string, decidedBy: string) 
     });
   }
 
+  // Heuristieken activeren: vanaf nu gaan ze via loadVault mee in elke
+  // plan- en scriptcall als craft-regel.
+  let geactiveerd = 0;
+  for (const a of proposal.heuristiek_activaties) {
+    const { data: h } = await supabase.from('vault_heuristics').select('id, rule, status').eq('id', a.id).maybeSingle();
+    if (!h || h.status !== 'candidate') continue;
+    const { error: updErr } = await supabase.from('vault_heuristics').update({ status: 'active' }).eq('id', a.id);
+    if (updErr) continue;
+    geactiveerd++;
+    await supabase.from('vault_changelog').insert({
+      entity: 'heuristic',
+      entity_key: String(h.rule).slice(0, 120),
+      field: 'status',
+      old_value: 'candidate',
+      new_value: 'active',
+      reason: a.reden,
+      evidence: { heuristic_id: a.id },
+      agent_run_id: agentRunId,
+      decided_by: decidedBy,
+    });
+  }
+
   await supabase
     .from('agent_runs')
     .update({ status: 'approved', decided_by: decidedBy, decided_at: new Date().toISOString() })
     .eq('id', agentRunId);
 
-  return { applied: proposal.wijzigingen.length };
+  return { applied: proposal.wijzigingen.length, geactiveerd };
 }
 
 export async function rejectRetroProposal(agentRunId: string, decidedBy: string) {

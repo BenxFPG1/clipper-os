@@ -171,7 +171,7 @@ export async function genereerBrollPlan(campaignId: string): Promise<{ planId: s
     .single();
   const stijlgids = (campagne?.broll_stijlgids as BrollStijlgids | null) ?? (await bouwStijlgids(campaignId));
 
-  const bijgeleerd = await geleerdeKennis();
+  const bijgeleerd = await geleerdeKennis('broll');
 
   const materiaal = videos.map((v) => {
     const a = v.broll_analyse as (BrollAnalyse & { kijk?: KijkOordeel }) | null;

@@ -2,6 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
+import { roepApiAan } from '@/app/api-aanroep';
 
 export function NewBriefForm({ campaigns }: { campaigns: { id: string; name: string }[] }) {
   const router = useRouter();
@@ -19,23 +20,21 @@ export function NewBriefForm({ campaigns }: { campaigns: { id: string; name: str
     setBusy(true);
     setError(null);
 
-    const res = await fetch('/api/briefs', {
+    const { ok, json, fout } = await roepApiAan<{ brief: { id: string } }>('/api/briefs', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
+      body: {
         titel,
         briefing,
         doel: doel || undefined,
         platform,
         duur_seconden: duur ? Number(duur) : undefined,
         campaign_id: campaignId || undefined,
-      }),
+      },
     });
-    const json = await res.json();
 
     setBusy(false);
-    if (!res.ok) {
-      setError(json.error ?? 'Opslaan mislukt');
+    if (!ok) {
+      setError(fout ?? 'Opslaan mislukt');
       return;
     }
     router.push(`/opdrachten/${json.brief.id}`);

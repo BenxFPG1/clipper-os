@@ -2,6 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
+import { roepApiAan } from '@/app/api-aanroep';
 
 type Theme = {
   slug: string;
@@ -29,18 +30,17 @@ export function ThemesPanel({ themes }: { themes: Theme[] }) {
     setBusy(true);
     setMelding(null);
 
-    const res = await fetch('/api/themes', {
+    const { ok, fout } = await roepApiAan('/api/themes', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
+      body: {
         slug: naam,
         name: naam,
         zoektermen: zoektermen.split(',').map((z) => z.trim()).filter(Boolean),
-      }),
+      },
     });
     setBusy(false);
-    if (!res.ok) {
-      setMelding((await res.json()).error ?? 'Toevoegen mislukt');
+    if (!ok) {
+      setMelding(fout ?? 'Toevoegen mislukt');
       return;
     }
     setNaam('');
@@ -52,43 +52,52 @@ export function ThemesPanel({ themes }: { themes: Theme[] }) {
   async function suggereer(slug: string) {
     setBusy(true);
     setMelding(null);
-    const res = await fetch('/api/themes/suggest', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ slug }),
-    });
-    const json = await res.json();
+    const { ok, json, fout } = await roepApiAan<{ suggesties?: { term: string; waarom: string }[] }>(
+      '/api/themes/suggest',
+      { method: 'POST', body: { slug } },
+    );
     setBusy(false);
-    if (!res.ok) {
-      setMelding(json.error ?? 'Voorstellen mislukt');
+    if (!ok) {
+      setMelding(fout ?? 'Voorstellen mislukt');
       return;
     }
-    setSuggesties((s) => ({ ...s, [slug]: json.suggesties }));
-    if (json.suggesties.length === 0) setMelding('Geen nieuwe termen gevonden.');
+    const suggestiesVoorThema = json.suggesties ?? [];
+    setSuggesties((s) => ({ ...s, [slug]: suggestiesVoorThema }));
+    if (suggestiesVoorThema.length === 0) setMelding('Geen nieuwe termen gevonden.');
   }
 
   /** Neemt één voorgestelde term over in het thema. */
   async function neemOver(thema: Theme, term: string) {
     setBusy(true);
-    await fetch('/api/themes', {
+    setMelding(null);
+    const { ok, fout } = await roepApiAan('/api/themes', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
+      body: {
         slug: thema.slug,
         name: thema.name,
         description: thema.description,
         zoektermen: [...thema.zoektermen, term],
-      }),
+      },
     });
-    setSuggesties((s) => ({ ...s, [thema.slug]: (s[thema.slug] ?? []).filter((x) => x.term !== term) }));
     setBusy(false);
+    if (!ok) {
+      setMelding(fout ?? 'Overnemen mislukt');
+      return;
+    }
+    setSuggesties((s) => ({ ...s, [thema.slug]: (s[thema.slug] ?? []).filter((x) => x.term !== term) }));
     router.refresh();
   }
 
   async function remove(slug: string) {
     setBusy(true);
-    await fetch(`/api/themes?slug=${encodeURIComponent(slug)}`, { method: 'DELETE' });
+    setMelding(null);
+    const { ok, fout } = await roepApiAan(`/api/themes?slug=${encodeURIComponent(slug)}`, { method: 'DELETE' });
     setBusy(false);
+    // Eerder verdween er stilzwijgend niets als het verwijderen misging.
+    if (!ok) {
+      setMelding(fout ?? 'Verwijderen mislukt');
+      return;
+    }
     router.refresh();
   }
 

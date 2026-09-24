@@ -3,7 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { resolveBinary } from '../ingest/binaries';
-import { ytdlpAuthArgs } from '../ingest/youtube';
+import { voerYtdlpUit } from '../ingest/youtube';
 import { TranscriptSegment } from '../ingest/transcript';
 import { Energiemoment } from './schema';
 
@@ -27,11 +27,21 @@ import { Energiemoment } from './schema';
 
 const STILTE_DREMPEL_DB = -32;
 const STILTE_MIN_DUUR = 1.8;
+/** Terugval als het gemiddelde niveau niet te meten is. */
 const PIEK_DREMPEL_DB = -16;
+/** Een piek is zoveel dB boven het gemiddelde spraakniveau van de bron. */
+const PIEK_BOVEN_GEMIDDELDE_DB = 8;
 const PIEK_MIN_DUUR = 0.35;
 
 /** Hoeveel momenten er hoogstens meegaan de prompt in; anders wordt hij te lang. */
 const MAX_MOMENTEN = 40;
+/**
+ * Quotum per soort. Zonder quotum verdrongen de volumepieken (sterkte
+ * minimaal 0,5) de stiltes (sterkte duur/5, dus 0,36 bij 1,8s) structureel
+ * uit de top-40 — terwijl juist de stilte na een vraag het signaal is waar
+ * de prompt om vraagt (bekentenis, ontweken vraag).
+ */
+const QUOTA: Record<Energiemoment['soort'], number> = { stilte: 15, volumepiek: 15, tempowisseling: 10 };
 
 export async function mijnEnergie(
   sourceUrl: string | null,
@@ -47,10 +57,33 @@ export async function mijnEnergie(
     }
   }
 
-  return momenten
-    .sort((a, b) => b.sterkte - a.sterkte)
-    .slice(0, MAX_MOMENTEN)
-    .sort((a, b) => a.start - b.start);
+  return selecteerMomenten(momenten);
+}
+
+/**
+ * Per soort de sterkste binnen het quotum; blijft er ruimte over (een soort
+ * heeft minder dan zijn quotum), dan vult de rest op sterkte aan tot
+ * MAX_MOMENTEN. Uitvoer op tijdvolgorde.
+ */
+export function selecteerMomenten(momenten: Energiemoment[]): Energiemoment[] {
+  const opSterkte = [...momenten].sort((a, b) => b.sterkte - a.sterkte);
+  const gekozen: Energiemoment[] = [];
+  const teller: Record<string, number> = {};
+  const rest: Energiemoment[] = [];
+  for (const m of opSterkte) {
+    const n = teller[m.soort] ?? 0;
+    if (n < QUOTA[m.soort]) {
+      gekozen.push(m);
+      teller[m.soort] = n + 1;
+    } else {
+      rest.push(m);
+    }
+  }
+  for (const m of rest) {
+    if (gekozen.length >= MAX_MOMENTEN) break;
+    gekozen.push(m);
+  }
+  return gekozen.slice(0, MAX_MOMENTEN).sort((a, b) => a.start - b.start);
 }
 
 /** Compact voor in de character-map-prompt; leeg blok als er niets gemeten is. */
@@ -138,8 +171,7 @@ async function audioMomenten(sourceUrl: string): Promise<Energiemoment[]> {
   const workdir = await mkdtemp(join(tmpdir(), 'clipper-energie-'));
   try {
     const audioPath = join(workdir, 'audio.m4a');
-    await run('yt-dlp', [
-      ...ytdlpAuthArgs(),
+    await voerYtdlpUit([
       '-f',
       'bestaudio/best',
       '-x',
@@ -153,11 +185,19 @@ async function audioMomenten(sourceUrl: string): Promise<Energiemoment[]> {
       sourceUrl,
     ]);
 
+    // De piekdrempel relatief aan de bron: een vaste -16 dB markeerde op
+    // genormaliseerde podcastaudio vrijwel alle luide spraak als "piek".
+    // Boven het gemiddelde niveau plus acht dB komt alleen wat er echt
+    // bovenuit springt — een lach, een uitroep, een stem die aanzet.
+    const gemiddelde = await gemiddeldNiveau(audioPath);
+    const piekDrempel =
+      gemiddelde === null ? PIEK_DREMPEL_DB : Math.max(-30, Math.min(-6, gemiddelde + PIEK_BOVEN_GEMIDDELDE_DB));
+
     const [stiltes, pieken] = await Promise.all([
       silenceRanges(audioPath, STILTE_DREMPEL_DB, STILTE_MIN_DUUR),
       // Bij een hoge drempel is "silence" alles behalve de uitschieters; de
       // gaten tussen twee silence-vensters zijn dus de pieken zelf.
-      silenceRanges(audioPath, PIEK_DREMPEL_DB, 0.05).then((stil) => gatenTussen(stil, PIEK_MIN_DUUR)),
+      silenceRanges(audioPath, piekDrempel, 0.05).then((stil) => gatenTussen(stil, PIEK_MIN_DUUR)),
     ]);
 
     return [
@@ -176,6 +216,17 @@ async function audioMomenten(sourceUrl: string): Promise<Energiemoment[]> {
     ];
   } finally {
     await rm(workdir, { recursive: true, force: true });
+  }
+}
+
+/** Het gemiddelde niveau van de hele bron (dBFS), via volumedetect; null als het niet te lezen is. */
+async function gemiddeldNiveau(audioPath: string): Promise<number | null> {
+  try {
+    const uit = await run('ffmpeg', ['-i', audioPath, '-af', 'volumedetect', '-f', 'null', '-']);
+    const m = uit.match(/mean_volume:\s*(-?[\d.]+) dB/);
+    return m ? Number(m[1]) : null;
+  } catch {
+    return null;
   }
 }
 

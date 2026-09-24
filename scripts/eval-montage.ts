@@ -40,7 +40,8 @@ type Geval = {
   bestand?: string;
 };
 
-type Uitslag = { naam: string; goed: boolean; regels: Record<string, boolean>; details: Record<string, string> };
+/** `null` in regels = niet te toetsen op deze machine; telt niet als regressie of verbetering. */
+type Uitslag = { naam: string; goed: boolean; regels: Record<string, boolean | null>; details: Record<string, string> };
 
 const EVAL_MAP = join(process.cwd(), 'eval');
 const CASES = join(EVAL_MAP, 'montage-cases.json');

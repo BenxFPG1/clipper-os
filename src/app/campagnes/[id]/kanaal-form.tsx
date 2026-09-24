@@ -2,6 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
+import { roepApiAan } from '@/app/api-aanroep';
 import { datumTijd } from '@/lib/format';
 
 /** Ouder dan dit is vastgelopen, niet "nog bezig" — zie ook lib/status.ts. */
@@ -55,15 +56,13 @@ export function KanaalForm({
     setBusy(true);
     setMelding(null);
     const schoon = lijst.map((k) => k.trim()).filter(Boolean);
-    const res = await fetch(`/api/campaigns/${campaignId}/kanaal`, {
+    const { ok, fout } = await roepApiAan(`/api/campaigns/${campaignId}/kanaal`, {
       method: 'PATCH',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ bron_kanalen: schoon, auto_plan: plan }),
+      body: { bron_kanalen: schoon, auto_plan: plan },
     });
-    const json = await res.json().catch(() => ({}));
     setBusy(false);
-    if (!res.ok) {
-      setMelding(json.error ?? 'Opslaan mislukt');
+    if (!ok) {
+      setMelding(fout ?? 'Opslaan mislukt');
       return;
     }
     setLijst(schoon.length ? schoon : ['']);
@@ -78,10 +77,12 @@ export function KanaalForm({
   async function nuOphalen() {
     setBusy(true);
     setMelding(null);
-    const res = await fetch(`/api/campaigns/${campaignId}/kanaal`, { method: 'POST' });
-    const json = await res.json().catch(() => ({}));
+    const { ok, json, fout } = await roepApiAan<{ melding?: string; fouten?: string[] }>(
+      `/api/campaigns/${campaignId}/kanaal`,
+      { method: 'POST' },
+    );
     setBusy(false);
-    setMelding(res.ok ? (json.melding ?? 'Ophalen gestart.') : (json.error ?? 'Ophalen mislukt'));
+    setMelding(ok ? (json.melding ?? 'Ophalen gestart.') : (fout ?? 'Ophalen mislukt'));
     // De problemen uit dit antwoord direct tonen: eerder stond er alleen
     // "4 probleem(en) — zie hieronder" zonder dat er iets onder stond.
     setFouten(Array.isArray(json.fouten) ? json.fouten : []);

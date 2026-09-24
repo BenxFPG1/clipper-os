@@ -3,6 +3,7 @@
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import type { Clip, ClipPlan } from '@/lib/planner/schema';
+import { roepApiAan } from '@/app/api-aanroep';
 
 type ClipRow = {
   id: string;
@@ -48,14 +49,19 @@ export function PlanEditor({
 
 function ClipCard({ clip, row, variants }: { clip: Clip; row?: ClipRow; variants: ClipRow[] }) {
   const [open, setOpen] = useState(false);
+  const [fout, setFout] = useState<string | null>(null);
 
   async function maakHookVariant(hook: { type: string; tekst_overlay: string }) {
     if (!row) return;
-    await fetch(`/api/clips/${row.id}/variant`, {
+    setFout(null);
+    const r = await roepApiAan(`/api/clips/${row.id}/variant`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ hook_type: hook.type, hook_text: hook.tekst_overlay }),
+      body: { hook_type: hook.type, hook_text: hook.tekst_overlay },
     });
+    if (!r.ok) {
+      setFout(r.fout ?? 'Variant aanmaken mislukt');
+      return;
+    }
     window.location.reload();
   }
 
@@ -81,6 +87,7 @@ function ClipCard({ clip, row, variants }: { clip: Clip; row?: ClipRow; variants
         </div>
         {row && <ClipControls row={row} />}
       </header>
+      {fout && <p className="px-4 pb-2 text-sm text-red-400">{fout}</p>}
 
       <div className="border-t border-neutral-800 px-4 py-3">
         <p className="text-sm">
@@ -236,27 +243,37 @@ function ClipControls({ row }: { row: ClipRow }) {
   const router = useRouter();
   const [postUrl, setPostUrl] = useState(row.post_url ?? '');
   const [busy, setBusy] = useState(false);
+  const [fout, setFout] = useState<string | null>(null);
 
+  // Eerder werd het antwoord genegeerd: een mislukte wijziging sprong na de
+  // refresh stilzwijgend terug zonder dat je zag waarom.
   async function patch(body: Record<string, unknown>) {
     setBusy(true);
-    await fetch(`/api/clips/${row.id}`, {
-      method: 'PATCH',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(body),
-    });
+    setFout(null);
+    const r = await roepApiAan(`/api/clips/${row.id}`, { method: 'PATCH', body });
     setBusy(false);
+    if (!r.ok) {
+      setFout(r.fout ?? 'Bijwerken mislukt');
+      return;
+    }
     router.refresh();
   }
 
   async function createVariant() {
     setBusy(true);
-    await fetch(`/api/clips/${row.id}/variant`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+    setFout(null);
+    const r = await roepApiAan(`/api/clips/${row.id}/variant`, { method: 'POST', body: {} });
     setBusy(false);
+    if (!r.ok) {
+      setFout(r.fout ?? 'Variant aanmaken mislukt');
+      return;
+    }
     router.refresh();
   }
 
   return (
     <div className="flex flex-wrap items-center gap-2">
+      {fout && <span className="w-full text-sm text-red-400">{fout}</span>}
       <select
         value={row.status}
         disabled={busy}

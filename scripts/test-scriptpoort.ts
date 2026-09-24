@@ -51,6 +51,13 @@ function basisScript(overrides: Partial<Script> = {}): Script {
     ],
     risico: 'geen',
     onderbouwing: 'test',
+    hook_kandidaten: [
+      { tekst: 'a', formule: 'vonnis_zonder_context', waarom_afgevallen: 'x' },
+      { tekst: 'b', formule: 'getal_absurditeit', waarom_afgevallen: 'x' },
+      { tekst: 'c', formule: 'onthoud_deze_zin', waarom_afgevallen: 'x' },
+      { tekst: 'd', formule: 'vonnis_zonder_context', waarom_afgevallen: 'x' },
+      { tekst: 'e', formule: 'getal_absurditeit', waarom_afgevallen: 'x' },
+    ],
     ...overrides,
   } as Script;
 }
@@ -59,6 +66,24 @@ console.log('schoon script passeert');
 {
   const r = keurScriptTekst(basisScript(), { duurSeconden: 15 });
   toets('geen fouten', r.goed, r.fouten.join('; '));
+}
+
+console.log('hook-smederij');
+{
+  const s = basisScript({ hook_kandidaten: [] });
+  const r = keurScriptTekst(s);
+  toets('zonder kandidaten is het een fout', !r.goed && r.fouten.some((f) => f.includes('hook-smederij')), r.fouten.join('; '));
+}
+{
+  const s = basisScript({
+    hook_kandidaten: Array.from({ length: 5 }, (_, i) => ({ tekst: `h${i}`, formule: 'vonnis_zonder_context', waarom_afgevallen: 'x' })),
+  });
+  const r = keurScriptTekst(s);
+  toets('vijf keer dezelfde formule is een fout', !r.goed && r.fouten.some((f) => f.includes('verschillende formule')), r.fouten.join('; '));
+}
+{
+  const r = keurScriptTekst(basisScript(), { vaultHookSlugs: ['vonnis_zonder_context', 'getal_absurditeit'] });
+  toets('een formule buiten de vault is een verhoorpunt, geen fout', r.goed && r.waarschuwingen.some((w) => w.includes('onthoud_deze_zin')), r.waarschuwingen.join('; '));
 }
 
 console.log('placeholders blokkeren');

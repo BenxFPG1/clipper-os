@@ -1,7 +1,8 @@
 'use client';
 
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
+import { useState } from 'react';
 
 /**
  * De navigatie hoort niet op de inlogschermen: daar is nog niemand
@@ -28,15 +29,50 @@ export function Nav() {
 
   return (
     <header className="border-b border-neutral-800">
-      <nav className="mx-auto flex max-w-6xl items-center gap-6 px-6 py-4">
+      <nav className="mx-auto flex max-w-6xl flex-wrap items-center gap-x-6 gap-y-2 px-6 py-4">
         <span className="font-semibold tracking-tight">Clipper OS</span>
         {NAV.map((item) => (
           <Link key={item.href} href={item.href} className="text-sm text-neutral-400 hover:text-neutral-100">
             {item.label}
           </Link>
         ))}
+        <UitlogKnop />
       </nav>
     </header>
+  );
+}
+
+/**
+ * Beëindigt beide sloten tegelijk (app-sessie én Google-sessie) en zet je
+ * weer voor de deur. Zonder deze knop was de enige uitweg cookies wissen.
+ */
+function UitlogKnop() {
+  const router = useRouter();
+  const [busy, setBusy] = useState(false);
+
+  async function uitloggen() {
+    setBusy(true);
+    try {
+      await fetch('/api/auth/logout', { method: 'POST' });
+    } catch {
+      // Ook als het verzoek mislukt sturen we door: de middleware wijst
+      // een sessie die niet meer klopt toch af.
+    } finally {
+      setBusy(false);
+      router.push('/toegang');
+      router.refresh();
+    }
+  }
+
+  return (
+    <button
+      onClick={uitloggen}
+      disabled={busy}
+      className="ml-auto text-sm text-neutral-500 hover:text-neutral-200 disabled:opacity-40"
+      title="Uitloggen"
+    >
+      {busy ? 'Bezig…' : 'Uitloggen'}
+    </button>
   );
 }
 

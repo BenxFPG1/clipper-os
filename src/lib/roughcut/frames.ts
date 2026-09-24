@@ -27,7 +27,13 @@ export async function pakFrames(
      */
     bronBestand?: string;
   } = {},
-): Promise<{ map: string; frames: { pad: string; seconde: number }[]; duur: number | null }> {
+): Promise<{
+  map: string;
+  frames: { pad: string; seconde: number }[];
+  duur: number | null;
+  /** Eerste ffmpeg-fout, als frames ontbreken. Anders weet de aanroeper niet wáárom er niets te zien is. */
+  fout: string | null;
+}> {
   const maxFrames = opties.maxFrames ?? 12;
   const hookSeconden = opties.hookSeconden ?? 6;
 
@@ -39,7 +45,10 @@ export async function pakFrames(
       ...ytdlpAuthArgs(),
       '--no-warnings',
       '--extractor-args', 'youtube:player_client=default,tv',
-      '-f', 'bv*[height<=1080]+ba/b[height<=1080]/b',
+      // h264 (avc1) eerst: VP9/AV1-streams gaven ffmpeg-fouten bij het
+      // frame-pakken op de runner, en die werden stil weggeslikt — de kijk-
+      // passen meldden dan "geen frames" zonder oorzaak.
+      '-f', 'bv*[vcodec^=avc1][height<=1080]+ba/b[vcodec^=avc1][height<=1080]/bv*[height<=1080]+ba/b',
       '--merge-output-format', 'mp4',
       '-o', video,
       bronUrl,
@@ -77,19 +86,29 @@ export async function pakFrames(
   }
   tijden.sort((a, b) => a - b);
 
+  // Eén frame dat mislukt (bv. een tijdstip voorbij het eind) mag de rest
+  // niet tegenhouden, maar de fout gaat niet meer verloren: gelogd, en de
+  // eerste gaat mee terug zodat "geen frames" een oorzaak heeft.
+  let eersteFout: string | null = null;
   for (const [i, t] of tijden.entries()) {
     const naam = join(map, `f${String(i).padStart(2, '0')}-${Math.round(t)}s.jpg`);
-    await run(resolveBinary('ffmpeg'), [
-      '-nostdin', '-y',
-      '-ss', t.toFixed(2),
-      '-i', video,
-      '-frames:v', '1',
-      // Kleiner dan het origineel: voor kaderanalyse is 480 breed genoeg en het
-      // scheelt fors in tokens.
-      '-vf', 'scale=480:-2',
-      '-q:v', '4',
-      naam,
-    ]).catch(() => undefined);
+    try {
+      await run(resolveBinary('ffmpeg'), [
+        '-nostdin', '-y',
+        '-ss', t.toFixed(2),
+        '-i', video,
+        '-frames:v', '1',
+        // Kleiner dan het origineel: voor kaderanalyse is 480 breed genoeg en het
+        // scheelt fors in tokens.
+        '-vf', 'scale=480:-2',
+        '-q:v', '4',
+        naam,
+      ]);
+    } catch (e) {
+      const bericht = e instanceof Error ? e.message : String(e);
+      console.warn(`[frames] ffmpeg faalde op ${t.toFixed(1)}s: ${bericht.slice(0, 200)}`);
+      eersteFout ??= bericht.slice(0, 300);
+    }
   }
 
   const bestanden = (await readdir(map))
@@ -103,6 +122,7 @@ export async function pakFrames(
       seconde: Number(b.match(/-(\d+)s\.jpg$/)?.[1] ?? 0),
     })),
     duur,
+    fout: bestanden.length === 0 ? (eersteFout ?? (tijden.length === 0 ? 'geen tijdstippen bepaald (duur onbekend?)' : null)) : null,
   };
 }
 

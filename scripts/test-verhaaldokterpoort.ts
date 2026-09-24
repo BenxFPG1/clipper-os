@@ -7,7 +7,9 @@
  * Draaien: npm run test:verhaaldokter
  */
 import { keurVerhaaldokter, rapportVoorPrompt } from '../src/lib/planner/verhaaldokterpoort';
-import type { Clip, ClipPlan } from '../src/lib/planner/schema';
+import { pasVerhaaldokterToe } from '../src/lib/planner';
+import { selecteerMomenten } from '../src/lib/planner/energie';
+import type { Clip, ClipPlan, Energiemoment } from '../src/lib/planner/schema';
 
 let gefaald = 0;
 let gedaan = 0;
@@ -150,6 +152,42 @@ console.log('rapportVoorPrompt');
 
   const gevuld = rapportVoorPrompt({ signalen: [{ clipIndex: 0, titel: 'x', signaal: 'test-signaal' }] });
   toets('gevuld rapport bevat het signaal', gevuld.includes('test-signaal') && gevuld.includes('MECHANISCHE SIGNALEN'));
+}
+
+console.log('pasVerhaaldokterToe — alleen verhaallijn, score en selectie veranderen');
+{
+  const plan = planVan(basisClip({}, 'een'), basisClip({}, 'twee'), basisClip({}, 'drie'));
+  const nieuweLijn = { ...plan.clips[0].verhaallijn, payoff: 'Een heel andere payoff met een concreet detail.' };
+  const uit = pasVerhaaldokterToe(plan, {
+    clips: [
+      { clip: 1, verwijderen: false, score: 9, verhaallijn: nieuweLijn, reden: 'sterker' },
+      { clip: 2, verwijderen: true, score: 4, reden: 'weetje' },
+      // clip 3 niet genoemd: blijft zoals hij was
+    ],
+  });
+  toets('verwijderde clip is weg', uit.clips.length === 2 && !uit.clips.some((c) => c.titel_intern === 'twee'));
+  toets('verhaallijn en score overgenomen', uit.clips[0].verhaallijn.payoff === nieuweLijn.payoff && uit.clips[0].score === 9);
+  toets('hooks en shots blijven byte voor byte staan',
+    JSON.stringify(uit.clips[0].hooks) === JSON.stringify(plan.clips[0].hooks) &&
+      JSON.stringify(uit.clips[0].shots) === JSON.stringify(plan.clips[0].shots));
+  toets('niet-genoemde clip blijft ongewijzigd', JSON.stringify(uit.clips[1]) === JSON.stringify(plan.clips[2]));
+
+  const alles = pasVerhaaldokterToe(plan, { clips: plan.clips.map((_, i) => ({ clip: i + 1, verwijderen: true, score: 3, reden: 'x' })) });
+  toets('alles verwijderen wordt genegeerd', alles.clips.length === 3);
+}
+
+console.log('energie — quotum per soort');
+{
+  const momenten: Energiemoment[] = [
+    ...Array.from({ length: 30 }, (_, i) => ({ soort: 'volumepiek' as const, start: i * 10, end: i * 10 + 1, sterkte: 0.9 })),
+    ...Array.from({ length: 10 }, (_, i) => ({ soort: 'stilte' as const, start: 500 + i * 10, end: 500 + i * 10 + 2, sterkte: 0.4 })),
+    ...Array.from({ length: 4 }, (_, i) => ({ soort: 'tempowisseling' as const, start: 900 + i * 10, end: 900 + i * 10 + 5, sterkte: 0.6 })),
+  ];
+  const uit = selecteerMomenten(momenten);
+  const tel = (soort: string) => uit.filter((m) => m.soort === soort).length;
+  toets('stiltes worden niet verdrongen door pieken', tel('stilte') === 10, `stiltes=${tel('stilte')}`);
+  toets('pieken vullen de restruimte op, tot het plafond', uit.length === 40 && tel('volumepiek') === 26, `totaal=${uit.length} pieken=${tel('volumepiek')}`);
+  toets('uitvoer staat op tijdvolgorde', uit.every((m, i) => i === 0 || m.start >= uit[i - 1].start));
 }
 
 console.log(`\n${gedaan - gefaald}/${gedaan} geslaagd`);

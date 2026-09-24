@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { resolveBinary } from '../ingest/binaries';
-import { tekenHookKaart, kaartenMap, type Huisstijl } from '../roughcut/tekstkaarten';
+import { tekenHookKaart, tekenKaart, kaartenMap, type Huisstijl } from '../roughcut/tekstkaarten';
 import { zorgVoorMuziekbed } from '../muziek';
 import { downloadBroll } from './ingest';
 import type { BrollClip } from './plan';
@@ -27,6 +27,8 @@ export async function maakBrollMontage(opties: {
   werkmap: string;
   outputPad: string;
   huisstijl?: Huisstijl | null;
+  /** video_id → horizontale plek van het onderwerp (0..1), uit de kijk-agent. */
+  focus?: Map<string, number>;
   log?: (m: string) => void;
 }): Promise<void> {
   const log = opties.log ?? (() => undefined);
@@ -67,14 +69,16 @@ export async function maakBrollMontage(opties: {
     hookPng = join(map, 'broll-hook.png');
     await tekenHookKaart(clip.hook_overlay, hookPng, opties.huisstijl ?? null);
   }
-  // Losse overlay-teksten per shot, zelfde stijl.
+  // Losse overlay-teksten per shot: een kleine kaart (zoals de tijdsprong-
+  // kaart), niet de grote hookkaart. Met de hookkaart voor élke overlay
+  // stond er tekst op tekst en was elke regel even schreeuwerig als de hook.
   const overlayPngs: (string | null)[] = [];
   {
     const map = await kaartenMap(opties.werkmap);
     for (const [i, sh] of shots.entries()) {
       if (sh.overlay_tekst) {
         const pad = join(map, `broll-ov-${i}.png`);
-        await tekenHookKaart(sh.overlay_tekst, pad, opties.huisstijl ?? null);
+        await tekenKaart(sh.overlay_tekst, pad, opties.huisstijl ?? null);
         overlayPngs.push(pad);
       } else {
         overlayPngs.push(null);
@@ -82,7 +86,8 @@ export async function maakBrollMontage(opties: {
     }
   }
 
-  // ffmpeg-opbouw: per shot een input (-ss/-t), 9:16 center-crop, concat.
+  // ffmpeg-opbouw: per shot een input (-ss/-t), 9:16 uitsnede op het
+  // onderwerp, concat.
   const args: string[] = ['-nostdin', '-y'];
   for (const sh of shots) {
     args.push('-ss', sh.start.toFixed(3), '-t', (sh.end - sh.start).toFixed(3), '-i', lokaal.get(sh.video_id)!);
@@ -96,10 +101,13 @@ export async function maakBrollMontage(opties: {
 
   let filter = '';
   const vLabels: string[] = [];
-  for (const [i] of shots.entries()) {
-    // Landscape → staand: schalen tot de hoogte en het midden uitsnijden.
+  for (const [i, sh] of shots.entries()) {
+    // Landscape → staand: schalen tot de hoogte en uitsnijden op het punt
+    // waar de kijk-agent het onderwerp zag (focus_x), geklemd binnen het
+    // beeld. Zonder meting het midden.
+    const fx = Math.min(1, Math.max(0, opties.focus?.get(sh.video_id) ?? 0.5)).toFixed(3);
     filter +=
-      `[${i}:v]setpts=PTS-STARTPTS,fps=30,scale=-2:1920,crop=1080:1920:(iw-1080)/2:(ih-1920)/2,` +
+      `[${i}:v]setpts=PTS-STARTPTS,fps=30,scale=-2:1920,crop=1080:1920:min(max(iw*${fx}-540\\,0)\\,iw-1080):(ih-1920)/2,` +
       `format=yuv420p,setsar=1[v${i}];`;
     vLabels.push(`[v${i}]`);
   }

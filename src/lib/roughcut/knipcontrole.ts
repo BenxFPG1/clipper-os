@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import { resolveBinary } from '../ingest/binaries';
+import { instelling } from './instellingen';
 import type { Shot } from './index';
 import type { Stilte } from './snap';
 
@@ -18,10 +19,10 @@ import type { Stilte } from './snap';
  */
 
 /** Boven dit niveau beschouwen we een knippunt als "middenin de spraak". */
-const DREMPEL_DB = -38;
+const DREMPEL_DB = instelling('KNIP_DREMPEL_DB');
 
 /** Hoe lang we luisteren aan de buitenkant van de knip. */
-const VENSTER = 0.16;
+const VENSTER = instelling('KNIP_VENSTER');
 
 export type KnipOordeel = {
   volgorde: number;

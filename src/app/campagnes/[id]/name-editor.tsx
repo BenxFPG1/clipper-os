@@ -2,6 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
+import { roepApiAan } from '@/app/api-aanroep';
 
 /** Campagnenaam ter plekke aanpassen: klik op het potlood, typ, opslaan. */
 export function NameEditor({ campaignId, naam }: { campaignId: string; naam: string }) {
@@ -17,15 +18,13 @@ export function NameEditor({ campaignId, naam }: { campaignId: string; naam: str
       return;
     }
     setBusy(true);
-    const res = await fetch(`/api/campaigns/${campaignId}`, {
+    const { ok, fout } = await roepApiAan(`/api/campaigns/${campaignId}`, {
       method: 'PATCH',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ name: waarde.trim() }),
+      body: { name: waarde.trim() },
     });
     setBusy(false);
-    if (!res.ok) {
-      const json = await res.json().catch(() => ({}));
-      alert(json.error ?? 'Naam opslaan mislukt');
+    if (!ok) {
+      alert(fout ?? 'Naam opslaan mislukt');
       return;
     }
     setBewerken(false);

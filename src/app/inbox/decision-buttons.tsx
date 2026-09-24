@@ -2,6 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
+import { roepApiAan } from '@/app/api-aanroep';
 
 export function DecisionButtons({ runId, hasChanges }: { runId: string; hasChanges: boolean }) {
   const router = useRouter();
@@ -12,16 +13,14 @@ export function DecisionButtons({ runId, hasChanges }: { runId: string; hasChang
     setBusy(true);
     setError(null);
 
-    const res = await fetch(`/api/agents/runs/${runId}/decision`, {
+    const { ok, fout } = await roepApiAan(`/api/agents/runs/${runId}/decision`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ decision }),
+      body: { decision },
     });
-    const json = await res.json();
 
     setBusy(false);
-    if (!res.ok) {
-      setError(json.error ?? 'Beslissing verwerken mislukt');
+    if (!ok) {
+      setError(fout ?? 'Beslissing verwerken mislukt');
       return;
     }
     router.refresh();

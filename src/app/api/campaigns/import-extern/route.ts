@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { SchemaValidationError } from '@/lib/claude';
 import { importeerCampagneTekst } from '@/lib/campagne-import';
+import { bookmarkletSleutelKlopt } from '@/app/api/bookmarklet-sleutel';
 
 export const maxDuration = 120;
 
@@ -21,8 +22,7 @@ export function OPTIONS() {
  * zelf, de tool vangt alleen wat jij al ziet.
  */
 export async function POST(req: NextRequest) {
-  const sleutel = req.headers.get('x-clipper-sleutel');
-  if (!process.env.APP_PASSWORD || sleutel !== process.env.APP_PASSWORD) {
+  if (!bookmarkletSleutelKlopt(req.headers.get('x-clipper-sleutel'))) {
     return NextResponse.json({ error: 'Ongeldige sleutel' }, { status: 401, headers: CORS });
   }
 

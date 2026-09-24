@@ -2,6 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
+import { roepApiAan } from '@/app/api-aanroep';
 
 /**
  * B-roll-campagnes: een Drive-map met losse shots in plaats van één lange
@@ -18,14 +19,12 @@ export function BrollForm({ campaignId, driveUrl, aantalShots }: { campaignId: s
   async function start() {
     setBusy(true);
     setMelding(null);
-    const res = await fetch(`/api/campaigns/${campaignId}/broll`, {
+    const { ok, json, fout } = await roepApiAan<{ melding?: string }>(`/api/campaigns/${campaignId}/broll`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ drive_url: url }),
+      body: { drive_url: url },
     });
-    const json = await res.json().catch(() => ({}));
     setBusy(false);
-    setMelding(res.ok ? (json.melding ?? 'Gestart.') : (json.error ?? 'Starten mislukt'));
+    setMelding(ok ? (json.melding ?? 'Gestart.') : (fout ?? 'Starten mislukt'));
     router.refresh();
   }
 

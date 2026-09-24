@@ -2,6 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
+import { roepApiAan } from '@/app/api-aanroep';
 
 /**
  * Genereert verhaallijnen voor deze opdracht. Het aantal is instelbaar; elke
@@ -27,19 +28,17 @@ export function GenerateScriptButton({
     setBusy(true);
     setError(null);
 
-    const res = await fetch(`/api/briefs/${briefId}/script`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ aantal }),
-    });
-    const json = await res.json();
+    const { ok, json, fout } = await roepApiAan<{ inWachtrij?: boolean; melding?: string }>(
+      `/api/briefs/${briefId}/script`,
+      { method: 'POST', body: { aantal } },
+    );
 
     setBusy(false);
-    if (!res.ok) {
-      setError(json.error ?? 'Genereren mislukt');
+    if (!ok) {
+      setError(fout ?? 'Genereren mislukt');
       return;
     }
-    if (json.inWachtrij) setMelding(json.melding);
+    if (json.inWachtrij) setMelding(json.melding ?? null);
     router.refresh();
   }
 

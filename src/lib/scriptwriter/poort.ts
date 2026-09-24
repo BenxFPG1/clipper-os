@@ -54,11 +54,32 @@ const woorden = (t: string) =>
 
 export function keurScriptTekst(
   script: Script,
-  opties: { duurSeconden?: number | null; briefing?: string } = {},
+  opties: { duurSeconden?: number | null; briefing?: string; vaultHookSlugs?: string[] } = {},
 ): ScriptPoortRapport {
   const fouten: string[] = [];
   const waarschuwingen: string[] = [];
   const briefing = (opties.briefing ?? '').toLowerCase();
+
+  // 0. De hook-smederij: minstens vijf kandidaten uit minstens drie
+  //    verschillende formules. Vijf verwoordingen van dezelfde formule is
+  //    geen selectie maar een eerste ingeving in vijfvoud.
+  {
+    const kandidaten = script.hook_kandidaten ?? [];
+    if (kandidaten.length < 5) {
+      fouten.push(`hook-smederij: ${kandidaten.length} kandidaten, er horen er minstens 5 te zijn`);
+    }
+    const formules = new Set(kandidaten.map((k) => k.formule.trim().toLowerCase()).filter(Boolean));
+    if (kandidaten.length > 0 && formules.size < 3) {
+      fouten.push(`hook-smederij: maar ${formules.size} verschillende formule(s) (${[...formules].join(', ')}); minstens 3 uit de vault`);
+    }
+    if (opties.vaultHookSlugs?.length) {
+      const bekend = new Set(opties.vaultHookSlugs.map((s) => s.toLowerCase()));
+      const onbekend = [...formules].filter((f) => !bekend.has(f));
+      if (onbekend.length > 0) {
+        waarschuwingen.push(`hook-smederij: formule(s) niet uit de vault: ${onbekend.join(', ')}`);
+      }
+    }
+  }
 
   // 1. Placeholders: elk woord moet uitspreekbaar zijn. Een script met
   //    "[FRAGMENT A]" is een sjabloon, en sjablonen zijn eerder doorgelaten

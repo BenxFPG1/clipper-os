@@ -28,7 +28,10 @@ export async function fetchTiktokAccountPosts(handle: string, limit = 30): Promi
     likes: numberOf(entry.like_count),
     comments: numberOf(entry.comment_count),
     caption: (entry.description as string | undefined) ?? (entry.title as string | undefined) ?? null,
-    handle: (entry.channel as string | undefined) ?? clean,
+    // `channel` is bij TikTok de weergavenaam ("ESPN NL"); `uploader` de echte
+    // @handle (espnnl). Alleen de handle is een adres — op de weergavenaam
+    // ontstonden dubbele tracked_accounts die elke run 404/402 gaven.
+    handle: (entry.uploader as string | undefined) ?? clean,
     raw: { id: entry.id, duration: entry.duration, repost_count: entry.repost_count },
   }));
 }
@@ -36,12 +39,14 @@ export async function fetchTiktokAccountPosts(handle: string, limit = 30): Promi
 /** Recente shorts van een YouTube-kanaal, zonder API-key. */
 export async function fetchYoutubeChannelShorts(handle: string, limit = 30): Promise<AccountPost[]> {
   const clean = handle.replace(/^@/, '');
+  // Een kanaal-id (UC…) heeft een ander adres dan een @handle.
+  const basis = /^UC[\w-]{20,}$/.test(clean) ? `https://www.youtube.com/channel/${clean}` : `https://www.youtube.com/@${clean}`;
   const out = await runYtdlp([
     '--flat-playlist',
     '--dump-json',
     '-I',
     `1:${limit}`,
-    `https://www.youtube.com/@${clean}/shorts`,
+    `${basis}/shorts`,
   ]);
   return parseNdjson(out).map((entry) => ({
     post_url: (entry.url as string | undefined) ?? `https://www.youtube.com/shorts/${entry.id}`,

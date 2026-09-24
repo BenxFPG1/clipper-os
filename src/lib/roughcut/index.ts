@@ -3,9 +3,11 @@ import { mkdir, readdir, rename, rm, stat } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { resolveBinary } from '../ingest/binaries';
-import { ytdlpAuthArgs } from '../ingest/youtube';
+import { voerYtdlpUit } from '../ingest/youtube';
 import { effectKeten, focusNaarX, kaderKeten, spoorExpressie, type Kader } from './kader';
 import { snapShots, verwijderDodeLucht, type SnapSegment, type Stilte } from './snap';
+import { instelling } from './instellingen';
+import { assFilter } from './ondertitels';
 
 export type Shot = {
   volgorde: number;
@@ -86,6 +88,23 @@ export type Shot = {
    * blijft de vaste 0,34 van vroeger gewoon gelden — geen gedragswijziging.
    */
   spanning?: number;
+  /**
+   * Korte cold open die de payoff bewust vooruit laat horen. De poort en de
+   * keuring staan dit gedeelde bronmateriaal toe; alles zonder deze vlag niet.
+   */
+  tease?: boolean;
+  /** De regel op de tekstkaart bij dit shot (van de edit-agent); null = geen kaart. */
+  tekstkaart?: string | null;
+  /** Aantal personen dat de gezichtsdetectie in dit shot zag. */
+  personen?: number;
+  /** Ontstaan door een split (dode lucht, sprekerswissel); erft van zijn bronshot. */
+  subKnip?: boolean;
+  /**
+   * Wat er in beeld staat volgens de visuele controle. Bij 'graphic' (een
+   * titel, grafiek, schermopname) wordt niet op een gezicht gekadreerd maar
+   * passend gemaakt: het hele beeld, met een geblurde achtergrond.
+   */
+  beeldtype?: 'persoon' | 'graphic' | 'gemengd';
 };
 
 export type BurnOverlay = {
@@ -158,6 +177,8 @@ export async function maakRuweMontage(opties: {
   sfxMap?: string;
   /** Maximale bestandsgrootte; groter wordt automatisch gecomprimeerd. */
   maxBytes?: number;
+  /** ASS-bestand met woordelijke ondertitels; ingebrand vóór de overlays. */
+  ondertitelAss?: string;
   onVoortgang?: (bericht: string) => void;
 }): Promise<{ pad: string; duur: number; bron: BronEigenschappen | null }> {
   const { sourceUrl, shots, outputPad, werkmap } = opties;
@@ -193,6 +214,11 @@ export async function maakRuweMontage(opties: {
   const kader: Kader = opties.verticaal === false ? 'origineel' : (opties.kader ?? 'vullend');
   log(`Monteren in één doorloop (${gesorteerd.length} segmenten, kader: ${kader})…`);
 
+  // De framerate van de bron aanhouden. Een vaste 30 op een 25 fps-bron
+  // (gangbaar bij Nederlandse YouTube) dupliceert elke vijfde frame — dat
+  // stottert zichtbaar bij een meelopend kader en bij de shake.
+  const fpsUit = fpsVoorRender(bronInfo);
+
   // Bron per shot als eigen invoer met -ss vóór -i: ffmpeg springt dan direct
   // naar het fragment in plaats van de hele video te decoderen (dat werd op de
   // runner afgeschoten). Per shot een eigen kaderketen: focuspunt en punch-in
@@ -200,46 +226,23 @@ export async function maakRuweMontage(opties: {
   // Hoe lang de audio van twee shots over elkaar heen loopt. 0,14s is de
   // vuistregel uit de montagepraktijk: lang genoeg om een harde overgang te
   // verzachten, kort genoeg om geen echo of dubbele stem te horen.
-  const OVERLAP = Number(process.env.CROSSFADE ?? 0.14);
+  const OVERLAP = Number(process.env.CROSSFADE ?? instelling('CROSSFADE'));
 
+  // De naadbump (punch-in op een jump cut) is al vóór de kadercontrole in
+  // `shot.zoom` gezet (pasNaadZoomToe); hier wordt hij alleen nog uitgevoerd.
+  // Eerder gebeurde dat pas hier in de render, onzichtbaar voor de
+  // kadercontrole én de keuring — die toetsten dan een andere zoom dan er
+  // werkelijk uitkwam.
   const invoer: string[] = [];
-  const delenFilter: string[] = [];
-  let vorigeZoom = 1;
+  const delenVideo: string[] = [];
+  const delenAudio: string[] = [];
   gesorteerd.forEach((shot, i) => {
     const duur = shot.end - shot.start;
-    // Basis-zoom uit de gekozen ingreep, plus een correctie als de spreker
-    // klein in beeld staat. Bij een tweeshot of een wijd camerastandpunt vult
-    // een 1:1 uitsnede het verticale kader met vooral decor; dan hoort er
-    // ingezoomd te worden tot het hoofd het beeld draagt.
-    const ingreepZoom =
-      shot.beeld_effect === 'punch_in' ? 1.12 : shot.beeld_effect === 'snelle_zoom' ? 1.18 : 1;
-    const gemetenBreedte =
-      shot.paneel && shot.focusW ? shot.focusW / (shot.paneel[1] - shot.paneel[0]) : shot.focusW;
     // Heeft de kadercontrole een zoom vastgesteld, dan wint die: hij is
-    // getoetst tegen het werkelijke gezichtsvak.
-    //
-    // Beweegt de spreker binnen het shot, dan zetten we de zoom niet uit maar
-    // begrenzen we hem: zo ver inzoomen als kan zonder dat hij het kader
-    // uitloopt. "Bij twijfel wijd" leverde een slotshot op waarin hij klein
-    // wegviel tussen het decor.
-    let zoom = shot.zoom ?? Math.max(ingreepZoom, basisZoom(shot));
-    // Jump-cut afdekken (editcraft): een knip binnen dezelfde opname is
-    // zichtbaar als een hapering. Dat geldt voor de dode-luchtknippen én voor
-    // elk paar opeenvolgende shots dat in de bron vrijwel aansluit (zelfde
-    // camera, zelfde houding). Een schaalverschil van ruim 10% maakt er een
-    // bewuste punch-in van; zonder dat verschil leest de naad als "niet
-    // smooth". Gevolgde shots slaan we over — daar beweegt het kader al.
-    const vorige = i > 0 ? gesorteerd[i - 1] : null;
-    const doorloop =
-      (shot as { subKnip?: boolean }).subKnip ||
-      (vorige !== null && shot.start - vorige.end > -0.1 && shot.start - vorige.end < 2.5);
-    if (doorloop && !shot.spoor?.length && Math.abs(zoom - vorigeZoom) < 0.08) {
-      // Altijd eerst omhóóg: een naadknip hoort een punch-in te zijn. Omlaag
-      // gaf precies de klacht "de zoom gebeurt niet" — het vervolgshot werd
-      // wijder en de tweeshot kwam terug in beeld.
-      zoom = vorigeZoom + 0.12 <= 1.7 ? vorigeZoom + 0.12 : Math.max(1, vorigeZoom - 0.12);
-    }
-    vorigeZoom = zoom;
+    // getoetst tegen het werkelijke gezichtsvak. Anders de zoom die het shot
+    // uit zichzelf verdient (spreker klein in beeld → inzoomen tot het hoofd
+    // het beeld draagt, begrensd op zijn bewegingsruimte).
+    const zoom = shot.zoom ?? basisZoom(shot);
     // Is de bron hier een split screen, dan eerst het paneel met de spreker
     // uitsnijden; daarna doet de rest van de keten alsof dat het hele beeld is.
     const paneel = shot.paneel;
@@ -250,10 +253,6 @@ export async function maakRuweMontage(opties: {
       paneel && typeof shot.focusX === 'number'
         ? Math.min(1, Math.max(0, (shot.focusX - paneel[0]) / (paneel[1] - paneel[0])))
         : shot.focusX;
-    // In een half zo breed paneel is hetzelfde hoofd twee keer zo groot; de
-    // vulzoom moet dus met die schaal meerekenen.
-    const breedteInPaneel =
-      paneel && shot.focusW ? shot.focusW / (paneel[1] - paneel[0]) : shot.focusW;
 
     // Volgt de uitsnede de spreker? Het spoor staat in absolute brontijd en
     // wordt hier pas omgerekend naar shot-tijd — zo overleeft het elke latere
@@ -263,14 +262,17 @@ export async function maakRuweMontage(opties: {
       x: paneel ? (punt.x - paneel[0]) / (paneel[1] - paneel[0]) : punt.x,
     }));
     const spoorYRel = shot.spoorY?.map((punt) => ({ t: punt.t - shot.start, x: punt.x }));
-    const keten = kaderKeten(kader, {
+    // Een graphic (titel, grafiek, schermopname) wordt niet op een gezicht
+    // gekadreerd maar passend gemaakt, anders snijd je de titel af.
+    const shotKader: Kader = kader === 'vullend' && shot.beeldtype === 'graphic' ? 'blur' : kader;
+    const keten = kaderKeten(shotKader, {
       focusX: focusNaarX(shot.focus, focusInPaneel),
       focusExpr: spoorInPaneel ? (spoorExpressie(spoorInPaneel) ?? undefined) : undefined,
       zoom,
       focusY: shot.focusY,
       focusYExpr: spoorYRel ? (spoorExpressie(spoorYRel) ?? undefined) : undefined,
     });
-    const effect = effectKeten(shot.beeld_effect, duur);
+    const effect = effectKeten(shot.beeld_effect, duur, { fps: fpsUit, staand: shotKader !== 'origineel' });
     // Twee invoeren per shot: beeld precies op de knip, geluid met handles
     // eromheen. Die handles zijn wat een crossfade mogelijk maakt — zonder
     // materiaal vóór en ná het knippunt valt er niets te vervlechten en blijft
@@ -287,14 +289,14 @@ export async function maakRuweMontage(opties: {
       '-t', (duur + handleVoor + handleNa).toFixed(3),
       '-i', bronBestand,
     );
-    delenFilter.push(
-      `[${i * 2}:v]setpts=PTS-STARTPTS,fps=30,${paneelKnip}${keten}${effect ? `,${effect}` : ''},setsar=1[v${i}]`,
+    delenVideo.push(
+      `[${i * 2}:v]setpts=PTS-STARTPTS,fps=${fpsUit},${paneelKnip}${keten}${effect ? `,${effect}` : ''},setsar=1[v${i}]`,
     );
     // Per-shot fades zijn niet meer nodig: de crossfade hieronder vervlecht de
     // naden. Alleen een minimale fade aan de buitenranden van de clip blijft,
     // tegen een klik bij het starten en stoppen.
 
-    delenFilter.push(
+    delenAudio.push(
       `[${i * 2 + 1}:a]asetpts=PTS-STARTPTS,aformat=sample_rates=48000:channel_layouts=stereo[a${i}]`,
     );
   });
@@ -306,8 +308,12 @@ export async function maakRuweMontage(opties: {
   // De lengte klopt vanzelf. Elk shot behalve het eerste en laatste is aan
   // beide kanten een halve overlap langer; de crossfades consumeren precies
   // die extra lengte weer, dus het geluid duurt exact even lang als het beeld.
+  //
+  // Beeld en geluid worden als twee losse grafen opgebouwd: de geluidsgraaf
+  // draait straks een keer extra, alleen om de luidheid te meten.
   const beeldKoppel = gesorteerd.map((_, i) => `[v${i}]`).join('');
-  let filter = `${delenFilter.join(';')};${beeldKoppel}concat=n=${gesorteerd.length}:v=1:a=0[vuit]`;
+  let videoFilter = `${delenVideo.join(';')};${beeldKoppel}concat=n=${gesorteerd.length}:v=1:a=0[vuit]`;
+  let filter = delenAudio.join(';');
 
   if (gesorteerd.length === 1) {
     filter += `;[a0]anull[aruw]`;
@@ -357,7 +363,7 @@ export async function maakRuweMontage(opties: {
       }
       if (shot.spanning !== undefined) {
         const spanning = Math.min(10, Math.max(1, shot.spanning));
-        const vol = 0.4 - ((spanning - 1) / 9) * 0.18;
+        const vol = instelling('MUZIEK_RUSTIG') - ((spanning - 1) / 9) * instelling('MUZIEK_SPANNING_BEREIK');
         duckVensters.push({ van: cursor, tot: cursor + duur, vol: Math.round(vol * 100) / 100 });
       }
       cursor += duur;
@@ -377,9 +383,20 @@ export async function maakRuweMontage(opties: {
     const rondes = bedDuur > 0 ? Math.max(0, Math.ceil(totaleDuur / bedDuur)) : 0;
     extraInvoer.push('-stream_loop', String(rondes), '-i', opties.muziekPad);
 
+    // De stilte op de payoff niet als harde stap maar als korte ramp: per
+    // venster een factor die vóór `van` in een kwart seconde naar 0 zakt en
+    // na `tot` in een derde seconde terugkomt. Een stap van 0,34 naar 0 per
+    // frame klonk als een klik in plaats van als "de muziek valt weg".
+    const rampUit = instelling('MUZIEK_RAMP_UIT').toFixed(2);
+    const rampIn = instelling('MUZIEK_RAMP_IN').toFixed(2);
     const stilExpr = stilteVensters.length
-      ? stilteVensters.map((v) => `between(t\,${v.van.toFixed(2)}\,${v.tot.toFixed(2)})`).join('+')
-      : '0';
+      ? stilteVensters
+          .map(
+            (v) =>
+              `min(1,max(0,max((${v.van.toFixed(2)}-t)/${rampUit},(t-${v.tot.toFixed(2)})/${rampIn})))`,
+          )
+          .join('*')
+      : '1';
 
     // Basisniveau van het bed: 0,34 zonder emotiecurve (het oude gedrag,
     // ongewijzigd), of per shot opgebouwd uit duckVensters als die er zijn.
@@ -387,7 +404,7 @@ export async function maakRuweMontage(opties: {
     // elk shot dat geen spanning meekreeg.
     const basisVolExpr = duckVensters.reduceRight(
       (acc, v) => `if(between(t\\,${v.van.toFixed(2)}\\,${v.tot.toFixed(2)})\\,${v.vol}\\,${acc})`,
-      '0.34',
+      String(instelling('MUZIEK_BASIS')),
     );
 
     // Ducking in twee lagen. De sidechain volgt de spraak op de voet (snel
@@ -399,7 +416,7 @@ export async function maakRuweMontage(opties: {
       `;[${extraIndex}:a]aformat=sample_rates=48000:channel_layouts=stereo,` +
       `atrim=0:${(totaleDuur + 0.5).toFixed(3)},asetpts=PTS-STARTPTS,` +
       `afade=t=in:st=0:d=1.2,afade=t=out:st=${Math.max(0, totaleDuur - 1.2).toFixed(3)}:d=1.2,` +
-      `volume='if(${stilExpr}\,0\,${basisVolExpr})':eval=frame[muz]` +
+      `volume='(${basisVolExpr})*(${stilExpr})':eval=frame[muz]` +
       // De spraak wordt hier twee keer gebruikt: als stuursignaal voor de
       // ducking én in de uiteindelijke mix. Eén filterlabel kan maar door één
       // filter opgegeten worden, dus eerst splitsen. Zonder die split loopt de
@@ -443,32 +460,47 @@ export async function maakRuweMontage(opties: {
     }
   }
 
+  invoer.push(...extraInvoer);
+
   // Tot slot de hele mix op één luidheid zetten. Social-platforms mikken rond
   // -14 LUFS; zit je daaronder dan klinkt je clip zwak naast de rest van de
   // feed, zit je erboven dan draaien ze hem zelf terug. De limiter houdt de
   // ware piek onder -1,5 dBFS zodat de omzetting naar AAC bij het platform
   // niet alsnog gaat klippen.
-  filter += `;[${audioUit}]loudnorm=I=-14:TP=-1.5:LRA=9,alimiter=limit=0.86:level=disabled[aklaar]`;
+  //
+  // In twee passes. Zonder gemeten waarden draait loudnorm in zijn
+  // "dynamische" stand en dat pompt hoorbaar op spraak — bovenop speechnorm
+  // en de ducking. Eerst meten (alleen de geluidsgraaf, geen beeld), dan met
+  // de meting in lineaire stand: één vaste versterking, geen gepomp.
+  const LOUDNORM = 'I=-14:TP=-1.5:LRA=9';
+  const meting = await meetLoudnorm(invoer, `${filter};[${audioUit}]loudnorm=${LOUDNORM}:print_format=json[ameet]`, log);
+  filter += meting
+    ? `;[${audioUit}]loudnorm=${LOUDNORM}:measured_I=${meting.input_i}:measured_LRA=${meting.input_lra}:measured_TP=${meting.input_tp}:measured_thresh=${meting.input_thresh}:offset=${meting.target_offset}:linear=true,alimiter=limit=0.86:level=disabled[aklaar]`
+    : `;[${audioUit}]loudnorm=${LOUDNORM},alimiter=limit=0.86:level=disabled[aklaar]`;
   audioUit = 'aklaar';
 
-  invoer.push(...extraInvoer);
+  // Ondertitels: ingebrand vóór de kaarten, zodat een kaart erbovenop ligt.
+  let laatsteV = 'vuit';
+  if (opties.ondertitelAss && existsSync(opties.ondertitelAss)) {
+    videoFilter += `;[vuit]${assFilter(opties.ondertitelAss)}[vsub]`;
+    laatsteV = 'vsub';
+  }
 
   // Tekstkaarten en hook in het beeld branden: elke PNG als extra invoer, met
   // een tijdvenster waarin hij zichtbaar is.
   const overlays = opties.overlays ?? [];
-  let laatsteV = 'vuit';
   overlays.forEach((o, n) => {
     const inputIndex = extraIndex + n;
     invoer.push('-i', o.pad);
     const uitLabel = n === overlays.length - 1 ? 'vfinal' : `vo${n}`;
-    filter += `;[${laatsteV}][${inputIndex}:v]overlay=0:0:enable='between(t\,${o.start.toFixed(2)}\,${o.end.toFixed(2)})'[${uitLabel}]`;
+    videoFilter += `;[${laatsteV}][${inputIndex}:v]overlay=0:0:enable='between(t,${o.start.toFixed(2)},${o.end.toFixed(2)})'[${uitLabel}]`;
     laatsteV = uitLabel;
   });
 
   await run(resolveBinary('ffmpeg'), [
     '-y',
     ...invoer,
-    '-filter_complex', filter,
+    '-filter_complex', `${videoFilter};${filter}`,
     '-map', `[${laatsteV}]`, '-map', `[${audioUit}]`,
     '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20',
     ...bitrateGrens,
@@ -524,8 +556,7 @@ export async function zorgVoorBron(
 
   if (!existsSync(bronBestand)) {
     log('Bronvideo downloaden…');
-    await run(resolveBinary('yt-dlp'), [
-      ...ytdlpAuthArgs(),
+    await voerYtdlpUit([
       '--no-warnings',
       '--extractor-args', 'youtube:player_client=default,tv',
       '-f',
@@ -533,7 +564,7 @@ export async function zorgVoorBron(
       '--merge-output-format', 'mp4',
       '-o', bronBestand,
       sourceUrl,
-    ]);
+    ], { log });
   } else {
     log('Bronvideo staat al klaar.');
   }
@@ -703,8 +734,140 @@ export async function meetRuisvloer(
 function vulZoom(focusW?: number): number {
   if (!focusW || focusW <= 0) return 1;
   const inUitsnede = focusW * 3; // 1080 van 1920 breed is grofweg een derde
-  const gewenst = 0.45;
-  return Math.min(1.7, Math.max(1, gewenst / inUitsnede));
+  const gewenst = instelling('ZOOM_GEWENST_HOOFDBREEDTE');
+  return Math.min(instelling('ZOOM_MAX'), Math.max(1, gewenst / inUitsnede));
+}
+
+/**
+ * De framerate waarin gerenderd wordt: die van de bron, als die er is en
+ * plausibel is. Een breuk als 30000/1001 gaat als decimaal door, dat kent het
+ * fps-filter.
+ */
+export function fpsVoorRender(bron: BronEigenschappen | null): string {
+  const fps = bron?.fps;
+  if (!fps || !Number.isFinite(fps) || fps < 23 || fps > 61) return '30';
+  return Number.isInteger(fps) ? String(fps) : fps.toFixed(3);
+}
+
+/**
+ * Jump-cuts afdekken (editcraft): een knip binnen dezelfde opname is
+ * zichtbaar als een hapering. Dat geldt voor de dode-luchtknippen én voor elk
+ * paar opeenvolgende shots dat in de bron vrijwel aansluit (zelfde camera,
+ * zelfde houding). Een schaalverschil van ruim 10% maakt er een bewuste
+ * punch-in van; zonder dat verschil leest de naad als "niet smooth".
+ *
+ * Schrijft de bump in `shot.zoom`, zodat de kadercontrole en de keuring
+ * dezelfde zoom zien als de render. Gevolgde shots slaan we over — daar
+ * beweegt het kader al. Aan te roepen vóór corrigeerKadrering.
+ */
+export function pasNaadZoomToe(segmenten: Shot[]): { volgorde: number; zoom: number }[] {
+  const bump = instelling('ZOOM_NAADBUMP');
+  const minVerschil = instelling('ZOOM_NAAD_MIN_VERSCHIL');
+  const max = instelling('ZOOM_MAX');
+  const gedaan: { volgorde: number; zoom: number }[] = [];
+  let vorigeZoom = 1;
+  const gesorteerd = [...segmenten].sort((a, b) => a.volgorde - b.volgorde);
+  gesorteerd.forEach((shot, i) => {
+    let zoom = shot.zoom ?? basisZoom(shot);
+    const vorige = i > 0 ? gesorteerd[i - 1] : null;
+    const doorloop =
+      shot.subKnip || (vorige !== null && shot.start - vorige.end > -0.1 && shot.start - vorige.end < 2.5);
+    if (doorloop && !shot.spoor?.length && Math.abs(zoom - vorigeZoom) < minVerschil) {
+      // Altijd eerst omhóóg: een naadknip hoort een punch-in te zijn. Omlaag
+      // gaf precies de klacht "de zoom gebeurt niet" — het vervolgshot werd
+      // wijder en de tweeshot kwam terug in beeld.
+      zoom = vorigeZoom + bump <= max ? vorigeZoom + bump : Math.max(1, vorigeZoom - bump);
+      shot.zoom = Math.round(zoom * 1000) / 1000;
+      gedaan.push({ volgorde: shot.volgorde, zoom: shot.zoom });
+    }
+    vorigeZoom = zoom;
+  });
+  return gedaan;
+}
+
+type LoudnormMeting = {
+  input_i: string;
+  input_tp: string;
+  input_lra: string;
+  input_thresh: string;
+  target_offset: string;
+};
+
+/**
+ * Eerste pass van loudnorm: dezelfde geluidsgraaf draaien zonder beeld en de
+ * meting uit de JSON op stderr lezen. Mislukt dit, dan valt de render terug
+ * op de dynamische stand — liever gepomp dan geen clip.
+ */
+async function meetLoudnorm(
+  invoer: string[],
+  audioFilter: string,
+  log: (m: string) => void,
+): Promise<LoudnormMeting | null> {
+  try {
+    const uit = await runMetStderr(resolveBinary('ffmpeg'), [
+      '-nostdin', '-y', ...invoer,
+      '-filter_complex', audioFilter,
+      '-map', '[ameet]', '-vn', '-f', 'null', '-',
+    ]);
+    const json = uit.match(/\{[^{}]*"input_i"[^{}]*\}/);
+    if (!json) return null;
+    const m = JSON.parse(json[0]) as Partial<LoudnormMeting>;
+    const velden = ['input_i', 'input_tp', 'input_lra', 'input_thresh', 'target_offset'] as const;
+    if (velden.some((v) => m[v] === undefined || !Number.isFinite(Number(m[v])))) return null;
+    // loudnorm geeft -inf op stilte; daar kan de lineaire stand niets mee.
+    return m as LoudnormMeting;
+  } catch (e) {
+    log(`luidheidsmeting mislukt (${(e as Error).message.slice(0, 80)}); loudnorm in dynamische stand`);
+    return null;
+  }
+}
+
+/**
+ * Een overlay (hookkaart) over een al gerenderde montage branden. Voor de
+ * hookvarianten: dezelfde montage, drie keer een andere kaart, zonder de
+ * filterketen of een Claude-call opnieuw te draaien. Geluid wordt gekopieerd.
+ */
+export async function brandOverlays(
+  bronPad: string,
+  overlays: BurnOverlay[],
+  uitPad: string,
+  opties: { maxBytes?: number; duur?: number } = {},
+): Promise<void> {
+  if (overlays.length === 0) throw new Error('Geen overlays om te branden.');
+  const invoer = ['-i', bronPad];
+  let filter = '';
+  let laatste = '0:v';
+  overlays.forEach((o, n) => {
+    invoer.push('-i', o.pad);
+    const uit = n === overlays.length - 1 ? 'vfinal' : `vo${n}`;
+    filter += `${filter ? ';' : ''}[${laatste}][${n + 1}:v]overlay=0:0:enable='between(t,${o.start.toFixed(2)},${o.end.toFixed(2)})'[${uit}]`;
+    laatste = uit;
+  });
+  const plafond =
+    opties.maxBytes && opties.duur
+      ? Math.max(800_000, Math.floor(((opties.maxBytes * 8) / opties.duur) * 0.85) - 192_000)
+      : null;
+  await run(resolveBinary('ffmpeg'), [
+    '-y', ...invoer,
+    '-filter_complex', filter,
+    '-map', `[${laatste}]`, '-map', '0:a?',
+    '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20',
+    ...(plafond ? ['-maxrate', String(plafond), '-bufsize', String(plafond * 2)] : []),
+    '-c:a', 'copy',
+    '-movflags', '+faststart',
+    uitPad,
+  ]);
+}
+
+function runMetStderr(command: string, args: string[]): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args);
+    let alles = '';
+    child.stdout.on('data', (d) => (alles += d));
+    child.stderr.on('data', (d) => (alles += d));
+    child.on('error', () => reject(new Error(`${command} niet gevonden`)));
+    child.on('close', (code) => (code === 0 ? resolve(alles) : reject(new Error(`${command} exit ${code}: ${alles.trim().slice(-300)}`))));
+  });
 }
 
 /**
@@ -728,8 +891,9 @@ function vulZoom(focusW?: number): number {
  */
 function centreerbaarVanaf(focusX: number): number {
   const rand = Math.min(focusX, 1 - focusX);
-  if (rand <= 0.01) return 1.7;
-  return Math.min(1.7, (1080 / (1920 * (16 / 9))) / (2 * rand));
+  const max = instelling('ZOOM_MAX');
+  if (rand <= 0.01) return max;
+  return Math.min(max, (1080 / (1920 * (16 / 9))) / (2 * rand));
 }
 
 export function basisZoom(shot: Shot): number {
@@ -762,7 +926,7 @@ export function basisZoom(shot: Shot): number {
     // weegt zwaarder dan de kadergrootte.
     zoom = Math.min(zoom, Math.max(1.35, nodig));
   }
-  return Math.max(1, Math.min(1.7, zoom));
+  return Math.max(1, Math.min(instelling('ZOOM_MAX'), zoom));
 }
 
 /**

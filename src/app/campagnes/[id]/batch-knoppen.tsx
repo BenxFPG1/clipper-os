@@ -2,6 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
+import { roepApiAan } from '@/app/api-aanroep';
 
 /**
  * De batch-acties van een campagne: concepten laten bedenken (geen briefing
@@ -25,18 +26,16 @@ export function BatchKnoppen({
   async function concepten() {
     setBusy('concepten');
     setMelding(null);
-    const res = await fetch(`/api/campaigns/${campaignId}/concepten`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ aantal: aantalConcepten }),
-    });
-    const json = await res.json();
+    const { ok, json, fout } = await roepApiAan<{ inWachtrij?: boolean; melding?: string; briefs?: unknown[] }>(
+      `/api/campaigns/${campaignId}/concepten`,
+      { method: 'POST', body: { aantal: aantalConcepten } },
+    );
     setBusy(null);
-    if (!res.ok) {
-      setMelding(json.error ?? 'Concepten bedenken mislukt');
+    if (!ok) {
+      setMelding(fout ?? 'Concepten bedenken mislukt');
       return;
     }
-    setMelding(json.inWachtrij ? json.melding : `${json.briefs.length} concepten toegevoegd.`);
+    setMelding(json.inWachtrij ? (json.melding ?? null) : `${json.briefs?.length ?? 0} concepten toegevoegd.`);
     router.refresh();
   }
 
@@ -45,19 +44,16 @@ export function BatchKnoppen({
     let klaar = 0;
     for (const brief of briefsZonderScript) {
       setBusy(`opdracht ${klaar + 1}/${briefsZonderScript.length}: ${brief.titel.slice(0, 40)}`);
-      const res = await fetch(`/api/briefs/${brief.id}/script`, {
+      const { ok, json, fout } = await roepApiAan<{ inWachtrij?: boolean }>(`/api/briefs/${brief.id}/script`, {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ aantal: perOpdracht }),
+        body: { aantal: perOpdracht },
       });
-      if (!res.ok) {
-        const json = await res.json().catch(() => ({}));
+      if (!ok) {
         setBusy(null);
-        setMelding(`Gestopt bij "${brief.titel}": ${json.error ?? 'genereren mislukt'} (${klaar} gelukt)`);
+        setMelding(`Gestopt bij "${brief.titel}": ${fout ?? 'genereren mislukt'} (${klaar} gelukt)`);
         router.refresh();
         return;
       }
-      const json = await res.json().catch(() => ({}));
       if (json.inWachtrij) {
         setBusy(null);
         setMelding(

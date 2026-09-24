@@ -34,6 +34,12 @@ export const kijkSchema = z.object({
       tags: z.array(z.string()).max(6),
       /** Onbruikbaar materiaal (onscherp, per ongeluk gefilmd, testbeeld) eerlijk markeren. */
       bruikbaar: z.boolean(),
+      /**
+       * Waar het onderwerp horizontaal staat (0 = linkerrand, 1 = rechterrand).
+       * De staande uitsnede pakt maar een derde van een liggend beeld; blind
+       * het midden nemen sneed een product aan de zijkant er precies af.
+       */
+      focus_x: z.number().min(0).max(1),
     }),
   ),
 });
@@ -49,6 +55,7 @@ Beschrijf per shot wat er echt te zien is — concreet en visueel, zodat een edi
 - "kleuren": de dominante kleuren.
 - "tags": trefwoorden waarop shots gematcht kunnen worden (onderwerp, setting, bewegingsrichting).
 - "bruikbaar": false alleen bij materiaal dat echt niet in een edit kan (onscherp, per ongeluk gefilmd, kleurenbalk).
+- "focus_x": waar het onderwerp horizontaal staat, 0 = helemaal links, 0.5 = midden, 1 = helemaal rechts. De montage snijdt een staand kader uit een liggend beeld en centreert op dit punt; staat het product rechts van het midden, dan 0.7 en niet 0.5.
 
 Wees feitelijk. Geen oordeel over of het mooi is; wel eerlijk over wat er staat.`;
 

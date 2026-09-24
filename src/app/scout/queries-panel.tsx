@@ -2,6 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
+import { roepApiAan } from '@/app/api-aanroep';
 
 type SearchQuery = {
   id: string;
@@ -26,14 +27,10 @@ export function QueriesPanel({ queries }: { queries: SearchQuery[] }) {
     e.preventDefault();
     setBusy(true);
     setMelding(null);
-    const res = await fetch('/api/search-queries', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ query, platform }),
-    });
+    const { ok, fout } = await roepApiAan('/api/search-queries', { method: 'POST', body: { query, platform } });
     setBusy(false);
-    if (!res.ok) {
-      setMelding((await res.json()).error ?? 'Toevoegen mislukt');
+    if (!ok) {
+      setMelding(fout ?? 'Toevoegen mislukt');
       return;
     }
     setQuery('');
@@ -42,8 +39,13 @@ export function QueriesPanel({ queries }: { queries: SearchQuery[] }) {
 
   async function remove(id: string) {
     setBusy(true);
-    await fetch(`/api/search-queries?id=${id}`, { method: 'DELETE' });
+    setMelding(null);
+    const { ok, fout } = await roepApiAan(`/api/search-queries?id=${id}`, { method: 'DELETE' });
     setBusy(false);
+    if (!ok) {
+      setMelding(fout ?? 'Verwijderen mislukt');
+      return;
+    }
     router.refresh();
   }
 

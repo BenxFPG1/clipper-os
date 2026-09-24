@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { optionalEnv } from '../env';
 import { resolveBinary } from './binaries';
 import { TranscriptSegment, closeOpenEnds } from './transcript';
-import { ytdlpAuthArgs } from './youtube';
+import { voerYtdlpUit } from './youtube';
 
 /**
  * Groq accepteert bestanden tot 25 MB (gratis tier). Op 32 kbps mono is dat
@@ -97,12 +97,10 @@ export async function transcribeLocalFile(path: string): Promise<TranscriptSegme
 }
 
 async function downloadAudio(url: string, outPath: string) {
-  const auth = ytdlpAuthArgs();
-  const infoRaw = await run('yt-dlp', [...auth, '--dump-single-json', '--no-warnings', '--skip-download', url]);
+  const infoRaw = await voerYtdlpUit(['--dump-single-json', '--no-warnings', '--skip-download', url]);
   const info = JSON.parse(infoRaw) as { title?: string; duration?: number };
 
-  await run('yt-dlp', [
-    ...auth,
+  await voerYtdlpUit([
     '-f',
     'bestaudio/best',
     '-x',

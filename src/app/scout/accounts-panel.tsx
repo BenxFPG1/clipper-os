@@ -2,6 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
+import { roepApiAan } from '@/app/api-aanroep';
 
 type Account = {
   id: string;
@@ -23,14 +24,13 @@ export function AccountsPanel({ accounts }: { accounts: Account[] }) {
     e.preventDefault();
     setBusy(true);
     setMelding(null);
-    const res = await fetch('/api/tracked-accounts', {
+    const { ok, fout } = await roepApiAan('/api/tracked-accounts', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ handle, platform, our_own: false }),
+      body: { handle, platform, our_own: false },
     });
     setBusy(false);
-    if (!res.ok) {
-      setMelding((await res.json()).error ?? 'Toevoegen mislukt');
+    if (!ok) {
+      setMelding(fout ?? 'Toevoegen mislukt');
       return;
     }
     setHandle('');
@@ -39,21 +39,30 @@ export function AccountsPanel({ accounts }: { accounts: Account[] }) {
 
   async function remove(id: string) {
     setBusy(true);
-    await fetch(`/api/tracked-accounts?id=${id}`, { method: 'DELETE' });
+    setMelding(null);
+    const { ok, fout } = await roepApiAan(`/api/tracked-accounts?id=${id}`, { method: 'DELETE' });
     setBusy(false);
+    if (!ok) {
+      setMelding(fout ?? 'Verwijderen mislukt');
+      return;
+    }
     router.refresh();
   }
 
   async function runScout() {
     setBusy(true);
     setMelding('Scout draait…');
-    const res = await fetch('/api/cron/scout');
-    const json = await res.json();
+    // Niet /api/cron/scout: die eist het Bearer-token van de cron, dat de
+    // browser niet heeft. Deze route werkt op de ingelogde sessie.
+    const { ok, json, fout } = await roepApiAan<{ accountsBekeken: number; outliers: number; kandidaten: number }>(
+      '/api/scout/run',
+      { method: 'POST' },
+    );
     setBusy(false);
     setMelding(
-      res.ok
+      ok
         ? `Klaar: ${json.accountsBekeken} accounts, ${json.outliers} uitschieters, ${json.kandidaten} nieuwe kandidaat-regels.`
-        : (json.error ?? 'Scout mislukt'),
+        : (fout ?? 'Scout mislukt'),
     );
     router.refresh();
   }

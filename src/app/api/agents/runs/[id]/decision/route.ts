@@ -4,7 +4,10 @@ import { applyRetroProposal, rejectRetroProposal } from '@/lib/agents/retro';
 /** Antonie keurt een vault-voorstel goed of af (sectie 3, principe 4). */
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   const body = (await req.json()) as { decision: 'approve' | 'reject'; decided_by?: string };
-  const decidedBy = body.decided_by ?? 'antonie';
+  // Wie besluit staat in de sessie (de middleware zet x-user-email op de
+  // request), niet in de body: anders kan elke aanroep zich als een ander
+  // voordoen. De body-waarde blijft alleen als terugval voor oude clients.
+  const decidedBy = req.headers.get('x-user-email') ?? body.decided_by ?? 'onbekend';
 
   try {
     if (body.decision === 'approve') {

@@ -156,8 +156,37 @@ function mergeShortSegments(segments: TranscriptSegment[], targetSeconds = 8): T
 }
 
 export function runYtdlp(args: string[]): Promise<string> {
+  return voerYtdlpUit(['--no-warnings', ...args]);
+}
+
+/** De fout die yt-dlp geeft als de browser-cookiedatabase er niet is of op slot zit. */
+const COOKIEDB_FOUT = /could not find .*cookies? database|could not copy .*cookie|cookies database/i;
+
+/**
+ * Eén yt-dlp-aanroep met de cookie-instellingen uit .env, en één terugval:
+ * faalt hij omdat de browser-cookiedatabase niet gevonden of gelezen kan
+ * worden (andere machine, browser dicht, profiel verplaatst), dan nog één keer
+ * zónder cookies. YouTube laat veel verzoeken ook zonder cookies door, en een
+ * duidelijke melding is beter dan een run die op een pad naar een Chrome-map
+ * stukloopt die hier niet bestaat.
+ */
+export function voerYtdlpUit(args: string[], opties: { log?: (m: string) => void } = {}): Promise<string> {
+  const log = opties.log ?? ((m: string) => console.warn(`[yt-dlp] ${m}`));
+  const auth = ytdlpAuthArgs();
+  return ytdlpEenmaal([...auth, ...args]).catch((e: Error) => {
+    const metBrowserCookies = auth[0] === '--cookies-from-browser';
+    if (!metBrowserCookies || !COOKIEDB_FOUT.test(e.message)) throw e;
+    log(
+      `browsercookies (${auth[1]}) niet te lezen — nog één keer zonder cookies. ` +
+        `Zet YTDLP_COOKIES_FROM_BROWSER uit of wijs YTDLP_COOKIES_FILE naar een geëxporteerd cookiebestand als dit blijft gebeuren.`,
+    );
+    return ytdlpEenmaal(args);
+  });
+}
+
+function ytdlpEenmaal(args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
-    const child = spawn(resolveBinary('yt-dlp'), [...ytdlpAuthArgs(), '--no-warnings', ...args]);
+    const child = spawn(resolveBinary('yt-dlp'), args);
     let stdout = '';
     let stderr = '';
     child.stdout.on('data', (d) => (stdout += d));
@@ -167,6 +196,7 @@ export function runYtdlp(args: string[]): Promise<string> {
     );
     child.on('close', (code) => {
       if (code === 0) return resolve(stdout);
+      if (COOKIEDB_FOUT.test(stderr)) return reject(new Error(`yt-dlp exit ${code}: ${stderr.trim().slice(-300)}`));
       if (/Sign in to confirm|bot|cookies/i.test(stderr)) return reject(new YoutubeBlockedError(stderr.trim().slice(-300)));
       reject(new Error(`yt-dlp exit ${code}: ${stderr.trim().slice(-300)}`));
     });

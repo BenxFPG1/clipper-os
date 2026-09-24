@@ -6,9 +6,10 @@ import { join } from 'node:path';
 import { resolveBinary } from '../ingest/binaries';
 import { controleerEindmontage } from './knipcontrole';
 import { controleerScript } from './scriptcontrole';
-import { woordOnder } from './poort';
+import { TEASE_MAX_DUUR, woordOnder } from './poort';
 import { uitsnedeVan } from './kadercontrole';
 import { basisZoom } from './index';
+import { instelling } from './instellingen';
 import type { Shot } from './index';
 
 /** Breedte/hoogte van een normale bron. */
@@ -41,19 +42,38 @@ import type { BronWoord } from './woorden';
 
 export type KeuringRegel = {
   naam: string;
-  goed: boolean;
+  /**
+   * true = getoetst en goed, false = getoetst en fout, null = niet te toetsen
+   * (geen brontranscriptie, python zonder OpenCV, whisper faalde). Dat laatste
+   * was eerst ook `true` — en op een runner zonder werkende python stond het
+   * hele rapport dan groen zonder één echte meting. Een keuring die niet kon
+   * meten is geen goedkeuring.
+   */
+  goed: boolean | null;
   detail: string;
 };
 
+export type KeuringStatus = 'goed' | 'review_nodig' | 'niet_getoetst';
+
 export type Keuringsrapport = {
+  /** Alleen true als élke regel echt getoetst én goed is. */
   goed: boolean;
+  /** Wat de worker en het dashboard tonen: goed, review nodig, of niets gemeten. */
+  status: KeuringStatus;
   regels: KeuringRegel[];
 };
+
+/** De status uit de regels: één echte fout is "review nodig", geen enkele meting is "niet getoetst". */
+export function keuringStatus(regels: KeuringRegel[]): KeuringStatus {
+  if (regels.some((r) => r.goed === false)) return 'review_nodig';
+  if (regels.every((r) => r.goed === null)) return 'niet_getoetst';
+  return 'goed';
+}
 
 /** Regel 1: geen enkele knip mag binnen een woord vallen. */
 export function keurKnippen(segmenten: Shot[], bronWoorden: BronWoord[] | null): KeuringRegel {
   if (!bronWoorden || bronWoorden.length === 0) {
-    return { naam: 'knippen op woordgrenzen', goed: true, detail: 'geen brontranscriptie; niet te toetsen' };
+    return { naam: 'knippen op woordgrenzen', goed: null, detail: 'geen brontranscriptie; niet te toetsen' };
   }
 
   const fouten: string[] = [];
@@ -97,6 +117,11 @@ export function keurOverlap(segmenten: Shot[]): KeuringRegel {
       const overlap =
         Math.min(segmenten[i].end, segmenten[j].end) - Math.max(segmenten[i].start, segmenten[j].start);
       if (overlap > 0.15) {
+        // Dezelfde uitzondering als de poort: een korte cold open deelt
+        // bewust materiaal met de payoff.
+        const tease = (segmenten[i].tease || segmenten[j].tease) &&
+          Math.min(segmenten[i].end - segmenten[i].start, segmenten[j].end - segmenten[j].start) <= TEASE_MAX_DUUR;
+        if (tease) continue;
         fouten.push(`shot ${segmenten[i].volgorde} en ${segmenten[j].volgorde} delen ${overlap.toFixed(1)}s`);
       }
     }
@@ -135,7 +160,7 @@ export async function keurGezicht(
 ): Promise<KeuringRegel> {
   const segmenten = opties.segmenten ?? [];
   if (!opties.bronPad || segmenten.length === 0) {
-    return { naam: 'spreker gecentreerd', goed: true, detail: 'geen bron of segmenten; niet te toetsen' };
+    return { naam: 'spreker gecentreerd', goed: null, detail: 'geen bron of segmenten; niet te toetsen' };
   }
   const py = opties.python ?? { cmd: 'python3', voor: [] };
 
@@ -146,7 +171,7 @@ export async function keurGezicht(
     for (let t = seg.start + 0.15; t < seg.end - 0.1; t += 1.5) punten.push({ seg, t });
   }
   if (punten.length === 0) {
-    return { naam: 'spreker gecentreerd', goed: true, detail: 'te kort om te toetsen' };
+    return { naam: 'spreker gecentreerd', goed: null, detail: 'te kort om te toetsen' };
   }
 
   const res = spawnSync(
@@ -156,18 +181,31 @@ export async function keurGezicht(
   );
   let metingen: ({ x: number; breedte: number; top: number; hoogte: number } | null)[] = [];
   try {
-    metingen = JSON.parse(res.stdout.trim() || '[]');
+    // OpenCV schrijft soms zelf naar stdout; pak de laatste regel die JSON is.
+    const regel = (res.stdout ?? '')
+      .split('\n')
+      .map((r) => r.trim())
+      .reverse()
+      .find((r) => r.startsWith('['));
+    metingen = JSON.parse(regel || '[]');
   } catch {
-    return { naam: 'spreker gecentreerd', goed: true, detail: 'meting mislukt; niet te toetsen' };
+    return { naam: 'spreker gecentreerd', goed: null, detail: 'meting mislukt; niet te toetsen' };
   }
   if (metingen.length !== punten.length) {
-    return { naam: 'spreker gecentreerd', goed: true, detail: 'meting onvolledig; niet te toetsen' };
+    return {
+      naam: 'spreker gecentreerd',
+      goed: null,
+      detail: `meting onvolledig (${metingen.length}/${punten.length}); niet te toetsen — draait OpenCV op deze machine?`,
+    };
   }
 
-  const UIT_MIDDEN_MAX = 0.14;
-  const BUITEN_MAX = 0.15;
+  const UIT_MIDDEN_MAX = instelling('KEURING_UIT_MIDDEN_MAX');
+  const BUITEN_MAX = instelling('KEURING_BUITEN_MAX');
+  const ANDERE_PERSOON = instelling('KEURING_ANDERE_PERSOON');
   const fouten: string[] = [];
   let getoetst = 0;
+  let genegeerd = 0;
+  let zonderGezicht = 0;
 
   // Per shot het middelpunt van de spreker bepalen, zodat een meting die de
   // gesprekspartner pakte niet als "hoofd buiten beeld" wordt geteld — dat
@@ -182,10 +220,19 @@ export async function keurGezicht(
   }
 
   for (const [i, m] of metingen.entries()) {
-    if (!m) continue;
+    if (!m) {
+      zonderGezicht++;
+      continue;
+    }
     const { seg: sg0 } = punten[i];
     const mediaan = medianen.get(sg0.volgorde);
-    if (mediaan !== undefined && Math.abs(m.x - mediaan) > 0.28) continue; // andere persoon
+    if (mediaan !== undefined && Math.abs(m.x - mediaan) > ANDERE_PERSOON) {
+      // Vermoedelijk de gesprekspartner. Niet stil overslaan: als dit vaak
+      // gebeurt volgt de detectie de verkeerde persoon, en dan is een groen
+      // oordeel over de rest niets waard.
+      genegeerd++;
+      continue;
+    }
     getoetst++;
     const { seg, t } = punten[i];
     const paneelBreed = seg.paneel ? seg.paneel[1] - seg.paneel[0] : 1;
@@ -220,13 +267,35 @@ export async function keurGezicht(
   }
 
   void montagePad;
+
+  const gemeten = getoetst + genegeerd;
+  if (gemeten === 0) {
+    return {
+      naam: 'spreker gecentreerd',
+      goed: null,
+      detail: `geen gezicht gevonden op ${zonderGezicht} meetmomenten; niet te toetsen`,
+    };
+  }
+  const aandeelGenegeerd = genegeerd / gemeten;
+  const teVeelGenegeerd = aandeelGenegeerd > instelling('KEURING_MAX_GENEGEERD');
+  const telling =
+    `${getoetst} momenten getoetst` +
+    (genegeerd ? `, ${genegeerd} genegeerd als andere persoon (${Math.round(aandeelGenegeerd * 100)}%)` : '') +
+    (zonderGezicht ? `, ${zonderGezicht} zonder gezicht` : '');
+
+  if (teVeelGenegeerd) {
+    fouten.unshift(
+      `${Math.round(aandeelGenegeerd * 100)}% van de metingen wijkt af van de shot-mediaan — de detectie volgt waarschijnlijk de verkeerde persoon`,
+    );
+  }
+
   return {
     naam: 'spreker gecentreerd',
     goed: fouten.length === 0,
     detail:
       fouten.length === 0
-        ? `${getoetst} momenten getoetst, spreker overal binnen ${Math.round(UIT_MIDDEN_MAX * 100)}% van het midden`
-        : fouten.slice(0, 6).join('; ') + (fouten.length > 6 ? ` (+${fouten.length - 6})` : ''),
+        ? `${telling}, spreker overal binnen ${Math.round(UIT_MIDDEN_MAX * 100)}% van het midden`
+        : `${telling}; ` + fouten.slice(0, 6).join('; ') + (fouten.length > 6 ? ` (+${fouten.length - 6})` : ''),
   };
 }
 
@@ -237,7 +306,7 @@ export async function keurScript(
 ): Promise<KeuringRegel[]> {
   const script = await controleerScript(montagePad, segmenten as never);
   if (!script) {
-    return [{ naam: 'script gevolgd', goed: true, detail: 'niet te transcriberen; niet te toetsen' }];
+    return [{ naam: 'script gevolgd', goed: null, detail: 'niet te transcriberen; niet te toetsen' }];
   }
 
   const ontbreekt = (script.perShot ?? []).filter((ps) => !ps.gevonden);
@@ -343,7 +412,7 @@ export async function keurMontage(
     ...(await keurScript(montagePad, segmenten)),
     await keurNaden(montagePad, segmenten, bronWoorden),
   ];
-  return { goed: regels.every((r) => r.goed), regels };
+  return { goed: regels.every((r) => r.goed === true), status: keuringStatus(regels), regels };
 }
 
 async function duurVan(pad: string): Promise<number | null> {

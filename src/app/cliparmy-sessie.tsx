@@ -2,6 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
+import { roepApiAan } from '@/app/api-aanroep';
 
 /**
  * ClipArmy automatisch laten ophalen zodat de cloud zelf nieuwe campagnes
@@ -32,15 +33,13 @@ export function ClipArmySessie({
   async function otp(actie: 'start' | 'verify') {
     setBusy(true);
     setMelding(null);
-    const res = await fetch('/api/platform-sessie/otp', {
+    const { ok, fout } = await roepApiAan('/api/platform-sessie/otp', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ actie, email: email.trim(), code }),
+      body: { actie, email: email.trim(), code },
     });
-    const uit = (await res.json()) as { error?: string };
     setBusy(false);
-    if (!res.ok) {
-      setMelding(uit.error ?? 'Mislukt');
+    if (!ok) {
+      setMelding(fout ?? 'Mislukt');
       return;
     }
     if (actie === 'start') {
@@ -57,15 +56,13 @@ export function ClipArmySessie({
   async function bewaarCurl(waarde: string) {
     setBusy(true);
     setMelding(null);
-    const res = await fetch('/api/platform-sessie', {
+    const { ok, json: uit, fout } = await roepApiAan<{ verzoek?: string }>('/api/platform-sessie', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ platform: 'cliparmy', curl: waarde }),
+      body: { platform: 'cliparmy', curl: waarde },
     });
-    const uit = (await res.json()) as { error?: string; verzoek?: string };
     setBusy(false);
-    if (!res.ok) {
-      setMelding(uit.error ?? 'Opslaan mislukt');
+    if (!ok) {
+      setMelding(fout ?? 'Opslaan mislukt');
       return;
     }
     setMelding(waarde ? `Bewaard (${uit.verzoek}). Koppel nu hierboven met de e-mailcode.` : 'Sessie gewist.');

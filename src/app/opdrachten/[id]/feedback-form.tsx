@@ -2,6 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
+import { roepApiAan } from '@/app/api-aanroep';
 
 /**
  * Feedback op deze scriptversie. Gaat mee in elke volgende generatie voor deze
@@ -25,15 +26,13 @@ export function FeedbackForm({
     e.preventDefault();
     setBusy(true);
     setMelding(null);
-    const res = await fetch(`/api/briefs/${briefId}/feedback`, {
+    const { ok, fout } = await roepApiAan(`/api/briefs/${briefId}/feedback`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ scriptId, feedback: tekst }),
+      body: { scriptId, feedback: tekst },
     });
-    const json = await res.json();
     setBusy(false);
-    if (!res.ok) {
-      setMelding(json.error ?? 'Opslaan mislukt');
+    if (!ok) {
+      setMelding(fout ?? 'Opslaan mislukt');
       return;
     }
     setMelding('Bewaard. Dit gaat mee in de volgende scriptversie.');

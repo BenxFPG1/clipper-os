@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/supabase';
 import { detectPlatform } from '@/lib/tracking/provider';
 
+/** Zelfde lijsten als de check-constraints op clips (schema.sql). */
+const CLIP_STATUSSEN = ['planned', 'edited', 'posted', 'rejected'] as const;
+const PLATFORMS = ['tiktok', 'reels', 'shorts'] as const;
+
 /**
  * Werkt één clip bij: status, post-URL, platform. Zodra er een post-URL binnenkomt
  * zetten we de clip op 'posted' met een posted_at, want dat is het startpunt voor
@@ -14,6 +18,21 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     platform?: 'tiktok' | 'reels' | 'shorts';
     posted_at?: string;
   };
+
+  // Zelf controleren in plaats van de check-constraint van de database het
+  // te laten doen: die gaf een kale 500 die de UI niet kon vertalen.
+  if (body.status !== undefined && !CLIP_STATUSSEN.includes(body.status)) {
+    return NextResponse.json(
+      { error: `Ongeldige status "${body.status}"; kies uit ${CLIP_STATUSSEN.join(', ')}.` },
+      { status: 400 },
+    );
+  }
+  if (body.platform !== undefined && !PLATFORMS.includes(body.platform)) {
+    return NextResponse.json(
+      { error: `Ongeldig platform "${body.platform}"; kies uit ${PLATFORMS.join(', ')}.` },
+      { status: 400 },
+    );
+  }
 
   const update: Record<string, unknown> = {};
   if (body.status) update.status = body.status;

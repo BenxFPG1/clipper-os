@@ -2,8 +2,14 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { createCanvas, GlobalFonts } from '@napi-rs/canvas';
+import { instelling } from './instellingen';
 
-export type Huisstijl = { accent?: string | null; font?: string | null };
+export type Huisstijl = {
+  accent?: string | null;
+  font?: string | null;
+  /** Woordelijke ondertitels inbranden; standaard aan, per campagne uit te zetten. */
+  ondertitels?: boolean | null;
+};
 
 /**
  * Merk-fonts (OFL-licentie, meegeleverd in assets/fonts). Eén keer registreren;
@@ -112,7 +118,7 @@ export function veiligeTekst(tekst: string): string {
   return uit.replace(/\s{2,}/g, ' ').trim();
 }
 
-function fontVoor(stijl?: Huisstijl | null): { familie: string; gewicht: string } {
+export function fontVoor(stijl?: Huisstijl | null): { familie: string; gewicht: string } {
   laadFonts();
   const keuze = FONTS[stijl?.font ?? 'archivo'] ?? FONTS.archivo;
   return { familie: keuze.familie, gewicht: keuze.gewicht };
@@ -165,13 +171,17 @@ export async function maakTekstkaarten(
 }
 
 /**
- * Welke tekst hoort op de kaart? Nieuwe plannen zeggen het expliciet via
- * beeld_effect; oudere plannen noemen de tijdsprong alleen in de edit-notitie,
- * dus daar vissen we de aangehaalde regel uit.
+ * Welke tekst hoort op de kaart? De edit-agent zet hem als eigen veld
+ * (`tekstkaart`) op het shot — dat is de enige betrouwbare bron. Het parsen
+ * van een aanhaling uit de edit-notitie is een terugval voor oudere plannen:
+ * die regex pakte de éérste aanhaling in de notitie, en dat was zomaar een
+ * transcriptcitaat van de planner of een apostrof in "z'n", niet de kaart.
  */
 function kaartTekst(shot: PlanShot): string | null {
+  if (shot.tekstkaart) return shot.tekstkaart;
+
   const notitie = shot.edit_notitie ?? '';
-  const aangehaald = notitie.match(/["'“„]([^"'”“]{3,40})["'”]/);
+  const aangehaald = notitie.match(/["“„]([^"”“]{3,60})["”]/);
 
   if (shot.beeld_effect === 'tekstkaart') {
     return aangehaald?.[1] ?? standaardRegel(notitie);
@@ -224,7 +234,7 @@ function kaartkleuren(stijl?: Huisstijl | null): { vlak: string; tekst: string; 
   return { vlak: accent, tekst: tekstOp(accent), rand: tekstOp(accent) === '#FFFFFF' ? null : 'rgba(0,0,0,0.25)' };
 }
 
-async function tekenKaart(ruweTekst: string, pad: string, stijl?: Huisstijl | null): Promise<void> {
+export async function tekenKaart(ruweTekst: string, pad: string, stijl?: Huisstijl | null): Promise<void> {
   const tekst = veiligeTekst(ruweTekst);
   const accent = stijl?.accent ?? undefined;
   const font = fontVoor(stijl);
@@ -266,6 +276,16 @@ async function tekenKaart(ruweTekst: string, pad: string, stijl?: Huisstijl | nu
   ctx.fillText(tekst, B / 2, y + balkH / 2 + 2);
 
   await writeFile(pad, canvas.toBuffer('image/png'));
+}
+
+/**
+ * Hoe lang de hookkaart in beeld blijft: lang genoeg om te lezen. Een vaste
+ * 2,6 s was voor een hook van twaalf woorden te kort en voor drie woorden te
+ * lang; de leestijd per woord is de maat.
+ */
+export function hookDuur(tekst: string): number {
+  const woorden = tekst.split(/\s+/).filter(Boolean).length;
+  return Math.max(instelling('HOOK_MIN_DUUR'), woorden * instelling('HOOK_SECONDEN_PER_WOORD'));
 }
 
 /**

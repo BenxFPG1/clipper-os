@@ -2,6 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
+import { roepApiAan } from '@/app/api-aanroep';
 
 export function GeneratePlanButton({
   videoId,
@@ -22,19 +23,17 @@ export function GeneratePlanButton({
     setBusy(true);
     setError(null);
 
-    const res = await fetch(`/api/videos/${videoId}/plan`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ opnieuw_analyseren: !reuse }),
-    });
-    const json = await res.json();
+    const { ok, json, fout } = await roepApiAan<{ inWachtrij?: boolean; melding?: string }>(
+      `/api/videos/${videoId}/plan`,
+      { method: 'POST', body: { opnieuw_analyseren: !reuse } },
+    );
 
     setBusy(false);
-    if (!res.ok) {
-      setError(json.error ?? 'Genereren mislukt');
+    if (!ok) {
+      setError(fout ?? 'Genereren mislukt');
       return;
     }
-    if (json.inWachtrij) setMelding(json.melding);
+    if (json.inWachtrij) setMelding(json.melding ?? null);
     router.refresh();
   }
 

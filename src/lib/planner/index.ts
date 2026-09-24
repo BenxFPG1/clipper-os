@@ -19,9 +19,11 @@ import {
   PROMPT_VERSION_CHARACTER_MAP,
   PROMPT_VERSION_PLAN,
   SchetsPlan,
+  VerhaaldokterDiff,
   characterMapSchema,
-  clipPlanSchema,
+  examenPlanSchema,
   schetsPlanSchema,
+  verhaaldokterDiffSchema,
 } from './schema';
 
 export type PlannerInput = {
@@ -74,7 +76,7 @@ export async function generateClipPlan(
   input: PlannerInput & { characterMap: CharacterMap },
 ): Promise<ClipPlan> {
   // De zelflerende laag komt achter de vaste kaders aan.
-  const bijgeleerd = await geleerdeKennis();
+  const bijgeleerd = await geleerdeKennis('planner');
 
   const schets: SchetsPlan = await structuredCall({
     system: schetsSystem(PLAN_MAX_CLIPS) + bijgeleerd,
@@ -97,9 +99,19 @@ export async function generateClipPlan(
   });
 
   // Toernooi-examen: snoeit de schets naar de sterkste kandidaten en werkt
-  // precies díe volledig uit (hooks, effecten, captions, varianten). Geen
-  // try/catch — de schets alleen is niet publiceerbaar (mist die rijkdom),
-  // dus een mislukking hier is een échte mislukking, geen degradatie.
+  // precies díe volledig uit (hooks, captions, varianten). Geen try/catch —
+  // de schets alleen is niet publiceerbaar (mist die rijkdom), dus een
+  // mislukking hier is een échte mislukking, geen degradatie.
+  //
+  // Mét het brontranscript rond de shots van elke kandidaat: de examinator
+  // moet instappunten kiezen, dode seconden schrappen en zinnen heel houden,
+  // en dat kon hij tot nu toe alleen op de schets — zonder de tekst zelf was
+  // elke shotcorrectie giswerk. Niet de hele video (die zat al in de schets);
+  // alleen de vensters rond de shots.
+  const transcriptPerKandidaat = schets.clips
+    .map((clip, i) => `--- kandidaat ${i + 1}: ${clip.titel_intern} ---\n${transcriptRondShots(clip.shots, input.transcript)}`)
+    .join('\n\n');
+
   const examined: ClipPlan = await structuredCall({
     system: planExamenSystem(PLAN_MAX_CLIPS) + bijgeleerd,
     user: `Video: ${input.title}
@@ -115,10 +127,13 @@ ${renderVaultForPrompt(input.vault)}
 ${JSON.stringify(input.characterMap)}
 
 === SCHETS (de brede kandidatenset; snoei eerst, werk daarna alleen de overlevers uit) ===
-${JSON.stringify(schets)}`,
-    schema: clipPlanSchema,
+${JSON.stringify(schets)}
+
+=== BRONTRANSCRIPT ROND DE SHOTS PER KANDIDAAT (formaat [start-end] tekst; hier moeten fragmenten en instappunten letterlijk in staan) ===
+${transcriptPerKandidaat}`,
+    schema: examenPlanSchema,
     toolName: 'lever_clip_plan',
-    toolDescription: 'Lever het volledige, gesnoeide en uitgewerkte clip-plan.',
+    toolDescription: 'Lever het gesnoeide en uitgewerkte clip-plan.',
     maxTokens: 64000,
     effort: PLAN_EXAMEN_EFFORT,
     operation: 'clip_plan_examen',
@@ -129,32 +144,40 @@ ${JSON.stringify(schets)}`,
   // keurig ingevulde sjablonen. Krijgt een mechanisch signalenrapport en, per
   // clip, het echte transcript rond de shots — zodat een omslag geverifieerd
   // wordt tegen de bron, niet tegen wat het plan zelf beweert.
+  //
+  // Hij krijgt alleen wat hij mag aanraken (titel, verhaallijn, score,
+  // transcript) en levert alleen dat terug; de samenvoeging gebeurt hier.
+  // Shots, hooks en captions kán hij zo niet meer per ongeluk herschrijven,
+  // en de call is een fractie van de vorige (die het hele plan heen én terug
+  // stuurde).
   let doctored = examined;
   try {
     const signalenRapport = rapportVoorPrompt(keurVerhaaldokter(examined));
-    const transcriptPerClip = examined.clips
-      .map((clip, i) => `--- clip ${i + 1}: ${clip.titel_intern} ---\n${transcriptRondClip(clip, input.transcript)}`)
-      .join('\n\n');
+    const perClip = examined.clips.map((clip, i) => ({
+      clip: i + 1,
+      titel: clip.titel_intern,
+      score: clip.score,
+      verhaallijn: clip.verhaallijn,
+      transcript: transcriptRondShots(clip.shots, input.transcript),
+    }));
 
-    doctored = await structuredCall({
+    const diff: VerhaaldokterDiff = await structuredCall({
       system: VERHAALDOKTER_SYSTEM + bijgeleerd,
       user: `Video: ${input.title}
 
 === CHARACTER MAP (met "reveals" — herinterpretaties die de payoff kan gebruiken) ===
 ${JSON.stringify(input.characterMap)}
 
-=== BRONTRANSCRIPT ROND DE SHOTS VAN ELKE CLIP (ter verificatie van citaten en omslagen) ===
-${transcriptPerClip}
-
-=== PLAN (na het toernooi; keur alleen "verhaallijn", "score" en welke clips overblijven) ===
-${JSON.stringify(examined)}${signalenRapport}`,
-      schema: clipPlanSchema,
-      toolName: 'lever_clip_plan',
-      toolDescription: 'Lever het volledige plan met de verhaaldokter-correcties.',
-      maxTokens: 64000,
+=== CLIPS (na het toernooi; per clip de verhaallijn, de score en het brontranscript rond de shots) ===
+${JSON.stringify(perClip, null, 1)}${signalenRapport}`,
+      schema: verhaaldokterDiffSchema,
+      toolName: 'lever_verhaaldokter_oordeel',
+      toolDescription: 'Lever per clip het oordeel van de verhaaldokter: verwijderen, score en eventueel de herschreven verhaallijn.',
+      maxTokens: 16000,
       effort: PLAN_VERHAALDOKTER_EFFORT,
       operation: 'clip_plan_verhaaldokter',
     });
+    doctored = pasVerhaaldokterToe(examined, diff);
   } catch (err) {
     console.warn('[planner] verhaaldokter-pass mislukt, geëxamineerd plan behouden:', (err as Error).message);
   }
@@ -163,14 +186,42 @@ ${JSON.stringify(examined)}${signalenRapport}`,
 }
 
 /**
- * Het stuk brontranscript rond de shots van één clip, met een kleine marge —
- * niet het min/max-tijdvenster van de hele clip (die kan tientallen minuten
- * beslaan bij een cold open of callback), maar de vensters rond elk shot
- * apart. Dat geeft de verhaaldokter precies genoeg context om een citaat of
- * een omslag te verifiëren, zonder de hele video opnieuw mee te sturen.
+ * Voegt het oordeel van de verhaaldokter samen met het geëxamineerde plan.
+ * Alleen verhaallijn, score en de clipselectie veranderen; al het andere
+ * blijft byte voor byte staan. Wil hij álles verwijderen, dan blijft het plan
+ * zoals het was — een leeg plan is nooit de bedoeling van een verfijningspas.
  */
-function transcriptRondClip(clip: Clip, transcript: TranscriptSegment[], margeSeconden = 20): string {
-  const vensters = clip.shots.map((s) => ({ van: Math.max(0, s.start - margeSeconden), tot: s.end + margeSeconden }));
+export function pasVerhaaldokterToe(plan: ClipPlan, diff: VerhaaldokterDiff): ClipPlan {
+  const perClip = new Map(diff.clips.map((d) => [d.clip, d]));
+  const clips = plan.clips
+    .map((clip, i) => {
+      const d = perClip.get(i + 1);
+      if (!d) return clip;
+      if (d.verwijderen) return null;
+      return { ...clip, score: d.score, verhaallijn: d.verhaallijn ?? clip.verhaallijn };
+    })
+    .filter((c): c is Clip => c !== null);
+  if (clips.length === 0) {
+    console.warn('[planner] verhaaldokter wilde elke clip verwijderen; plan ongewijzigd gelaten');
+    return plan;
+  }
+  return { clips };
+}
+
+/**
+ * Het stuk brontranscript rond een set shots, met een kleine marge — niet
+ * het min/max-tijdvenster van de hele clip (die kan tientallen minuten
+ * beslaan bij een cold open of callback), maar de vensters rond elk shot
+ * apart. Dat geeft de examinator en de verhaaldokter precies genoeg context
+ * om een citaat, instappunt of omslag te verifiëren, zonder de hele video
+ * opnieuw mee te sturen.
+ */
+export function transcriptRondShots(
+  shots: { start: number; end: number }[],
+  transcript: TranscriptSegment[],
+  margeSeconden = 20,
+): string {
+  const vensters = shots.map((s) => ({ van: Math.max(0, s.start - margeSeconden), tot: s.end + margeSeconden }));
   const relevant = transcript.filter((seg) => vensters.some((v) => seg.start_seconds < v.tot && seg.end_seconds > v.van));
   return relevant.length > 0 ? renderTranscript(relevant) : '(geen brontranscript gevonden rond deze shots)';
 }

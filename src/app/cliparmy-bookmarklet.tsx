@@ -31,7 +31,10 @@ export function ClipArmyBookmarklet() {
       </summary>
       <div className="mt-3 space-y-3 text-sm">
         <ol className="list-inside list-decimal space-y-1 text-neutral-400">
-          <li>Vul hieronder je Clipper OS-wachtwoord in (blijft in de bladwijzer, gaat nergens anders heen).</li>
+          <li>
+            Vul hieronder de bookmarklet-sleutel in (CLIPPER_BOOKMARKLET_KEY in de omgeving van de site; blijft in
+            de bladwijzer, gaat nergens anders heen).
+          </li>
           <li>Sleep de knop naar je bladwijzerbalk.</li>
           <li>
             Sta je op een campagnepagina van cliparmy.nl, klik de bladwijzer: de campagne wordt geïmporteerd,
@@ -42,7 +45,7 @@ export function ClipArmyBookmarklet() {
           type="password"
           value={sleutel}
           onChange={(e) => setSleutel(e.target.value)}
-          placeholder="Clipper OS-wachtwoord"
+          placeholder="bookmarklet-sleutel"
           className="w-64 rounded border border-neutral-700 bg-neutral-900 px-3 py-1.5"
         />
         {sleutel && (

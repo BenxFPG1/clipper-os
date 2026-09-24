@@ -37,7 +37,7 @@ export default async function CampagnePage({ params }: { params: { id: string } 
   const [videosRes, briefsRes] = await Promise.all([
     supabase
       .from('videos')
-      .select('id, title, duration_seconds, created_at, archived_at, character_map, soort, clip_plans(id)')
+      .select('id, title, duration_seconds, created_at, archived_at, character_map, soort, fps, clip_plans(id)')
       .eq('campaign_id', params.id)
       .order('created_at', { ascending: false }),
     supabase
@@ -111,6 +111,10 @@ export default async function CampagnePage({ params }: { params: { id: string } 
           {videos.map((v) => {
             const heeftPlan = (v.clip_plans as { id: string }[] | null)?.length ?? 0;
             const heeftMap = Boolean(v.character_map);
+            // Zonder gemeten framerate weigert /api/videos/[id]/project de
+            // download (409 JSON); via een <a download> werd dat een bestand
+            // "project" met een foutmelding erin. Dan liever geen link.
+            const fpsBekend = typeof v.fps === 'number' && v.fps > 0;
             return (
               <li key={v.id} className="flex items-start justify-between gap-3 rounded border border-neutral-800 px-4 py-3">
                 <div>
@@ -125,7 +129,7 @@ export default async function CampagnePage({ params }: { params: { id: string } 
                 <div className="flex shrink-0 items-center gap-2 text-xs">
                   <Stap af={heeftMap} label="characters" />
                   <Stap af={heeftPlan > 0} label={heeftPlan > 1 ? `plan (${heeftPlan}×)` : 'plan'} />
-                  {heeftPlan > 0 && (
+                  {heeftPlan > 0 && fpsBekend && (
                     <a
                       href={`/api/videos/${v.id}/project`}
                       className="rounded border border-neutral-700 px-2 py-0.5 hover:bg-neutral-900"
@@ -133,6 +137,14 @@ export default async function CampagnePage({ params }: { params: { id: string } 
                     >
                       project ↓
                     </a>
+                  )}
+                  {heeftPlan > 0 && !fpsBekend && (
+                    <span
+                      className="rounded border border-neutral-800 px-2 py-0.5 text-neutral-600"
+                      title="Framerate nog niet gemeten: render eerst één clip, dan werkt de projectdownload"
+                    >
+                      project (na eerste render)
+                    </span>
                   )}
                 </div>
               </li>

@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import { roepApiAan } from '@/app/api-aanroep';
 
 type Find = {
   id: string;
@@ -191,15 +192,12 @@ function OutlierKaart({ find, open, onToggle }: { find: Find; open: boolean; onT
   async function zoekBron() {
     setBusy(true);
     setMelding(null);
-    const res = await fetch('/api/outliers/match-source', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ findId: find.id }),
-    });
-    const json = await res.json();
+    const { ok, json, fout } = await roepApiAan<{
+      resultaten?: { match: NonNullable<Find['decoded']>['bron_match'] }[];
+    }>('/api/outliers/match-source', { method: 'POST', body: { findId: find.id } });
     setBusy(false);
-    if (!res.ok) {
-      setMelding(json.error ?? 'Zoeken mislukt');
+    if (!ok) {
+      setMelding(fout ?? 'Zoeken mislukt');
       return;
     }
     const gevonden = json.resultaten?.[0]?.match;
@@ -211,15 +209,13 @@ function OutlierKaart({ find, open, onToggle }: { find: Find; open: boolean; onT
   async function maakOpdracht() {
     setBusy(true);
     setMelding(null);
-    const res = await fetch('/api/briefs/from-outlier', {
+    const { ok, json, fout } = await roepApiAan<{ briefId: string }>('/api/briefs/from-outlier', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ findId: find.id }),
+      body: { findId: find.id },
     });
-    const json = await res.json();
     setBusy(false);
-    if (!res.ok) {
-      setMelding(json.error ?? 'Aanmaken mislukt');
+    if (!ok) {
+      setMelding(fout ?? 'Aanmaken mislukt');
       return;
     }
     window.location.href = `/opdrachten/${json.briefId}`;

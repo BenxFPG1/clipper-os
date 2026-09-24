@@ -5,6 +5,7 @@ import { db } from '../supabase';
 import { pakFrames } from '../roughcut/frames';
 import { EDITCRAFT } from '../vault/editcraft';
 import { STORYCRAFT } from '../vault/storycraft';
+import { bewaarKennis } from '../vault/kennis';
 
 const analyseSchema = z.object({
   hook_visueel: z.string().describe('Wat er in de eerste seconden in beeld gebeurt en waarom dat vasthoudt.'),
@@ -47,10 +48,12 @@ export async function bekijkUitschieter(findId: string) {
     .single();
   if (error || !find?.post_url) throw new Error('Vondst niet gevonden of zonder URL.');
 
-  const { map, frames, duur } = await pakFrames(find.post_url as string, { maxFrames: 10 });
+  const { map, frames, duur, fout } = await pakFrames(find.post_url as string, { maxFrames: 10 });
   if (frames.length === 0) {
     await rm(map, { recursive: true, force: true });
-    throw new Error('Geen frames kunnen pakken.');
+    // De echte oorzaak (ffmpeg-fout, codec, ontbrekende duur) hoort in de
+    // melding; "geen frames" alleen was in de praktijk niet te debuggen.
+    throw new Error(`Geen frames kunnen pakken: ${fout ?? 'onbekende oorzaak'}`);
   }
 
   try {
@@ -73,11 +76,14 @@ ${find.decoded ? `Eerdere tekstanalyse: ${JSON.stringify(find.decoded).slice(0, 
     });
 
     // De les gaat de kennisvault in en werkt daarmee direct door in de plan-,
-    // script- en edit-agent.
-    await supabase.from('vault_kennis').insert({
+    // script- en edit-agent. Alleen de overdraagbare les zelf: de
+    // beschrijving van hook/kader/ritme is bewijs en blijft in scout_finds
+    // (decoded.visueel), niet in de prompt van de planner. bewaarKennis
+    // dedupt op titel en inhoud.
+    const bewaard = await bewaarKennis({
       categorie: analyse.categorie,
       titel: `Gezien bij @${find.handle}: ${analyse.overdraagbare_les.slice(0, 60)}`,
-      inhoud: `${analyse.overdraagbare_les}\n\nHook in beeld: ${analyse.hook_visueel}\nKader en tekst: ${analyse.kader_en_tekst}\nRitme: ${analyse.ritme}\nNiet overdraagbaar: ${analyse.niet_overdraagbaar}`,
+      inhoud: analyse.overdraagbare_les,
       bron: `Visuele analyse van ${find.post_url}`,
     });
 
@@ -86,7 +92,7 @@ ${find.decoded ? `Eerdere tekstanalyse: ${JSON.stringify(find.decoded).slice(0, 
       .update({ decoded: { ...(find.decoded as object | null), visueel: analyse } })
       .eq('id', findId);
 
-    return { analyse, frames: frames.length };
+    return { analyse, frames: frames.length, bewaard: bewaard.bewaard };
   } finally {
     await rm(map, { recursive: true, force: true });
   }
@@ -115,9 +121,9 @@ export async function bekijkTopVondsten(aantal = 3) {
   for (const f of teDoen) {
     try {
       const r = await bekijkUitschieter(f.id as string);
-      gedaan.push(`@${f.handle}: ${r.analyse.overdraagbare_les.slice(0, 80)}`);
+      gedaan.push(`@${f.handle}${r.bewaard ? '' : ' (les al bekend)'}: ${r.analyse.overdraagbare_les.slice(0, 80)}`);
     } catch (e) {
-      fouten.push(`@${f.handle}: ${(e as Error).message.slice(0, 100)}`);
+      fouten.push(`@${f.handle}: ${(e as Error).message.slice(0, 160)}`);
     }
   }
   return { gedaan, fouten };

@@ -1,3 +1,5 @@
+import { instelling } from './instellingen';
+
 export const KADERS = ['vullend', 'blur', 'staand', 'origineel'] as const;
 export type Kader = (typeof KADERS)[number];
 
@@ -80,11 +82,36 @@ export function focusNaarX(focus?: string | null, gemeten?: number | null): numb
  * niet in: die verschuiven alle tijdcodes daarna, en dan kloppen de sfx,
  * kaarten en muziekstiltes niet meer.
  *
- * Zoom-ingrepen (punch_in, snelle_zoom) worden al door de kaderketen zelf
- * afgehandeld via de zoomfactor.
+ * Zoom-ingrepen (punch_in, snelle_zoom) zijn echte beweging: een zoompan die
+ * in een fractie van een seconde inzoomt en dan vasthoudt. Eerder waren het
+ * vaste schaalfactoren — een "snelle zoom" zag er dan uit als een kaderwissel
+ * op de knip, nooit als zoom. De zoompan werkt op het al gekadreerde
+ * 1080x1920-beeld en zoomt op het midden, waar het gezicht na de
+ * kadercontrole staat.
  */
-export function effectKeten(effect?: string | null, duur = 0): string | null {
+export const BEELD_EFFECTEN_BEKEND = ['punch_in', 'snelle_zoom', 'shake', 'freeze_frame', 'flits_wit', 'zwart_frame', 'tekstkaart'] as const;
+
+export function effectKeten(
+  effect?: string | null,
+  duur = 0,
+  opties: { fps?: string | number; staand?: boolean } = {},
+): string | null {
   if (!effect || effect === 'geen') return null;
+
+  if ((effect === 'punch_in' || effect === 'snelle_zoom') && opties.staand !== false) {
+    const schaal = effect === 'punch_in' ? instelling('PUNCH_IN_SCHAAL') : instelling('SNELLE_ZOOM_SCHAAL');
+    const aanloop = effect === 'punch_in' ? instelling('PUNCH_IN_DUUR') : instelling('SNELLE_ZOOM_DUUR');
+    const fps = Number(opties.fps ?? 30) || 30;
+    const extra = (schaal - 1).toFixed(3);
+    const frames = Math.max(1, aanloop * fps).toFixed(2);
+    // zoompan kent geen t, wel het invoerframenummer `in`; met d=1 en dezelfde
+    // fps als de stroom is in/fps de tijd binnen het shot.
+    return (
+      `zoompan=z='1+${extra}*min(1,in/${frames})'` +
+      `:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'` +
+      `:d=1:s=1080x1920:fps=${fps}`
+    );
+  }
 
   if (effect === 'flits_wit') {
     // Twee frames wit aan het begin van het shot: dekt een harde tijdsprong af.

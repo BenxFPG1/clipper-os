@@ -2,6 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
+import { roepApiAan } from '@/app/api-aanroep';
 
 export function AddVideoForm({ campaigns }: { campaigns: { id: string; name: string }[] }) {
   const router = useRouter();
@@ -12,30 +13,33 @@ export function AddVideoForm({ campaigns }: { campaigns: { id: string; name: str
   const [forceTranscribe, setForceTranscribe] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [melding, setMelding] = useState<string | null>(null);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
     setError(null);
+    setMelding(null);
 
-    const res = await fetch('/api/videos', {
+    const { ok, json, fout } = await roepApiAan<{ inWachtrij?: boolean; melding?: string }>('/api/videos', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
+      body: {
         campaign_id: campaignId,
         title: title || undefined,
         source_url: sourceUrl || undefined,
         transcript_text: transcript || undefined,
         force_transcribe: forceTranscribe,
-      }),
+      },
     });
 
-    const json = await res.json();
     setBusy(false);
-    if (!res.ok) {
-      setError(json.error ?? 'Toevoegen mislukt');
+    if (!ok) {
+      setError(fout ?? 'Toevoegen mislukt');
       return;
     }
+    // Op de live site wordt het transcript in de cloud gemaakt; de video
+    // staat er dan pas over een paar minuten.
+    if (json.inWachtrij) setMelding(json.melding ?? 'Transcript wordt in de cloud gemaakt.');
     setSourceUrl('');
     setTranscript('');
     setTitle('');
@@ -110,6 +114,7 @@ export function AddVideoForm({ campaigns }: { campaigns: { id: string; name: str
       </label>
 
       {error && <p className="text-sm text-red-400">{error}</p>}
+      {melding && <p className="text-sm text-neutral-400">{melding}</p>}
 
       <button
         type="submit"

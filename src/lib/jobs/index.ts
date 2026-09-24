@@ -1,7 +1,8 @@
 import { db } from '../supabase';
 import { optionalEnv } from '../env';
 
-export type AiJobSoort = 'clip_plan' | 'scripts' | 'concepten';
+/** Zelfde lijst als de check-constraint ai_jobs_soort_check in schema.sql. */
+export type AiJobSoort = 'clip_plan' | 'scripts' | 'concepten' | 'broll_ingest' | 'broll_plan' | 'video_transcript';
 
 /**
  * Denkwerk (clip-plannen, scripts, concepten) kan niet op de live site: die

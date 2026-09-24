@@ -2,6 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
+import { roepApiAan } from './api-aanroep';
 
 /**
  * Campagne-import: plak de tekst van een campagnepagina (ClipArmy, Whop) en
@@ -21,16 +22,15 @@ export function ImportCampaignForm() {
     setBusy(true);
     setMelding(null);
 
-    const res = await fetch('/api/campaigns/import', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ tekst }),
-    });
-    const json = await res.json();
+    const { ok, json, fout } = await roepApiAan<{
+      campaign: { id: string; name: string };
+      onduidelijk?: string[];
+      bronKanalen?: string[];
+    }>('/api/campaigns/import', { method: 'POST', body: { tekst } });
     setBusy(false);
 
-    if (!res.ok) {
-      setMelding(json.error ?? 'Import mislukt');
+    if (!ok) {
+      setMelding(fout ?? 'Import mislukt');
       return;
     }
 

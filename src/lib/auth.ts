@@ -1,6 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
 import { NextRequest } from 'next/server';
-import { randomUUID } from 'crypto';
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -16,7 +15,9 @@ export interface UserPayload {
 
 // Maak een nieuwe sessie aan
 export async function createSession(userId: string): Promise<string> {
-  const sessionId = randomUUID();
+  // Web Crypto in plaats van node:crypto: dit bestand wordt ook door de
+  // middleware (Edge Runtime) geladen, en die kent de Node-module niet.
+  const sessionId = globalThis.crypto.randomUUID();
   
   await supabase
     .from('sessions')
@@ -29,9 +30,34 @@ export async function createSession(userId: string): Promise<string> {
   return sessionId;
 }
 
+/**
+ * Korte cache op sessie → gebruiker. De middleware draait op elk verzoek,
+ * ook op de prefetches van <Link>; zonder cache is dat per navigatie een
+ * extra rondje naar Supabase. Dertig seconden is kort genoeg dat een
+ * admin-wijziging niet lang blijft hangen; bij uitloggen verdwijnt de cookie,
+ * dus die sessie-id komt hier sowieso niet meer langs. (De middleware draait
+ * op de edge in een eigen module-instantie: deze cache is per instantie.)
+ */
+const SESSIE_CACHE_MS = 30_000;
+const sessieCache = new Map<string, { user: UserPayload | null; tot: number }>();
+
 // Haal gebruiker op via session ID
 export async function getUserFromSession(sessionId: string): Promise<UserPayload | null> {
   if (!sessionId) return null;
+
+  const gecached = sessieCache.get(sessionId);
+  if (gecached && gecached.tot > Date.now()) return gecached.user;
+
+  const user = await laadUserVanSessie(sessionId);
+  sessieCache.set(sessionId, { user, tot: Date.now() + SESSIE_CACHE_MS });
+  // Niet eindeloos laten groeien: een verlopen entry ruimt zichzelf op.
+  if (sessieCache.size > 500) {
+    for (const [id, entry] of sessieCache) if (entry.tot <= Date.now()) sessieCache.delete(id);
+  }
+  return user;
+}
+
+async function laadUserVanSessie(sessionId: string): Promise<UserPayload | null> {
 
   const { data, error } = await supabase
     .from('sessions')
@@ -96,6 +122,7 @@ export async function getUserFromRequest(request: Request): Promise<UserPayload 
 
 // Verwijder sessie (uitloggen)
 export async function deleteSession(sessionId: string): Promise<void> {
+  sessieCache.delete(sessionId);
   await supabase
     .from('sessions')
     .delete()

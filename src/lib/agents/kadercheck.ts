@@ -17,6 +17,11 @@ const checkSchema = z.object({
         .min(0)
         .max(1)
         .describe('Hoe groot de ingreep moet zijn: 0,2 is een tikje, 1 is maximaal.'),
+      beeldtype: z
+        .enum(['persoon', 'graphic', 'gemengd'])
+        .describe(
+          'persoon: een sprekend hoofd. graphic: een titel, grafiek, tabel of schermopname zonder mens. gemengd: allebei in beeld.',
+        ),
     }),
   ),
 });
@@ -33,7 +38,11 @@ Je oordeelt alleen over wat er in beeld staat, niet over de inhoud. Fout is:
 - de persoon staat zo klein dat je zijn gezicht niet leest
 - het hoofd staat zo groot dat het beeld benauwd wordt
 
-Goed is: één persoon herkenbaar in beeld, hoofd compleet, ogen op ongeveer een derde van boven, en genoeg ruimte aan de kant waar hij naartoe kijkt.
+Goed is: één persoon herkenbaar in beeld, hoofd compleet en rond het midden van het kader (iets hoofdruimte erboven — níet de ogen op een derde: op een telefoon leest dat als "hij hangt bovenin"), en genoeg ruimte aan de kant waar hij naartoe kijkt.
+
+Ondertitels en tekstkaarten in beeld zijn bedoeld: tel ze niet als fout en negeer ze bij je oordeel over de kadrering.
+
+Zeg per shot ook wat voor beeld het is ("beeldtype"): een sprekend hoofd ("persoon"), een titel/grafiek/tabel/schermopname zonder mens ("graphic"), of allebei ("gemengd"). Bij een graphic gaat het niet om een gezicht maar om of de tekst leesbaar en heel is — de montage kadreert die dan passend in plaats van erop in te zoomen.
 
 Wees streng maar niet perfectionistisch: twijfel je, dan is het goed. Elke correctie kost een extra ronde.
 

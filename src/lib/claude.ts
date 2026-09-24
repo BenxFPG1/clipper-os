@@ -321,16 +321,34 @@ function runClaudeCliOnce(
     ...(magLezen ? ['--allowed-tools', 'Read'] : []),
   ];
 
+  // Een hangende CLI-aanroep (gezien: anderhalf uur op één scout-decodering,
+  // 7 seconden CPU) blokkeerde de hele run zonder foutmelding. Na deze grens
+  // wordt het proces afgeschoten en telt het als voorbijgaande fout, zodat
+  // de retry-laag hierboven het nog eens kan proberen.
+  const timeoutMs = Number(process.env.CLAUDE_CLI_TIMEOUT_MIN ?? '30') * 60_000;
+
   return new Promise((resolve, reject) => {
     const child = spawn('claude', args, { env });
     let stdout = '';
     let stderr = '';
+    let afgebroken = false;
+    const wekker = setTimeout(() => {
+      afgebroken = true;
+      child.kill('SIGKILL');
+    }, timeoutMs);
     child.stdout.on('data', (d) => (stdout += d));
     child.stderr.on('data', (d) => (stderr += d));
-    child.on('error', () =>
-      reject(new Error('Claude Code CLI niet gevonden. Installeer hem of zet CLAUDE_BACKEND=api.')),
-    );
+    child.on('error', () => {
+      clearTimeout(wekker);
+      reject(new Error('Claude Code CLI niet gevonden. Installeer hem of zet CLAUDE_BACKEND=api.'));
+    });
     child.on('close', (code) => {
+      clearTimeout(wekker);
+      if (afgebroken) {
+        return reject(
+          new Error(`claude CLI stalled: geen antwoord binnen ${timeoutMs / 60_000} minuten, proces afgebroken`),
+        );
+      }
       try {
         // Ook bij exitcode 1 zet de CLI zijn foutmelding als JSON op stdout;
         // die is veel leesbaarder dan een kale exitcode.

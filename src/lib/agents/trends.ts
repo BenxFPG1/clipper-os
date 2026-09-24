@@ -3,6 +3,7 @@ import { structuredCall } from '../claude';
 import { AGENT_EFFORT } from '../env';
 import { db } from '../supabase';
 import { loadVault, renderVaultForPrompt } from '../vault';
+import { bewaarKennis } from '../vault/kennis';
 
 /**
  * De trends-agent: de "wat werkt er nú"-laag bovenop alles wat de scout
@@ -10,31 +11,32 @@ import { loadVault, renderVaultForPrompt } from '../vault';
  *
  * De scout decodeert losse vondsten, maar niemand keek ooit over het geheel
  * heen: honderdvijftig gedecodeerde posts bleven honderdvijftig losse rijen.
- * Deze agent doet twee keer per dag — telkens net na een scout-run, zodra er
- * echt verse gedecodeerde vondsten zijn — wat een menselijke strateeg hooguit
- * wekelijks zou doen: alles van de afgelopen periode naast elkaar leggen en
- * de patronen benoemen. Vaker draaien dan de scout nieuwe data aanlevert zou
- * dezelfde run tegen dezelfde data herhalen; dat scheelt niets in kosten (een
- * run kost ~€0,45 schaduwprijs, verwaarloosbaar naast een plan-call) maar
- * levert ook niets op.
+ * Deze agent doet — zodra er genoeg verse gedecodeerde vondsten zijn — wat
+ * een menselijke strateeg hooguit wekelijks zou doen: alles van de afgelopen
+ * periode naast elkaar leggen en de patronen benoemen.
  *
  * 1. Mechanisch (geen model, geen mening): hook- en structuur-rankings over
  *    alle gedecodeerde vondsten, per thema en platform, met views-per-dag als
- *    eerlijke maat. Dit zijn harde tellingen die de planner letterlijk mee
- *    kan krijgen.
- * 2. Eén Claude-call voor het verhaal: wat betekenen deze rankings, wat
- *    veranderde er t.o.v. het vorige rapport (de diff is waar het leren zit),
- *    welke zoektermen missen we, en hooguit twee lessen die concreet genoeg
- *    zijn voor de vault.
+ *    eerlijke maat, plus de diff met de vorige rankings. Dit zijn harde
+ *    tellingen die de planner letterlijk meekrijgt (renderVaultForPrompt).
+ * 2. Eén Claude-call voor het verhaal: wat betekenen deze rankings en de
+ *    verschuivingen, welke zoektermen missen we, en hooguit twee lessen die
+ *    concreet genoeg zijn voor de vault.
  *
- * Wat in vault_kennis landt gaat automatisch mee in élke plan-, script- en
- * b-roll-call (geleerdeKennis) — het rapport is dus geen dashboard om naar te
- * kijken maar brandstof die direct doorwerkt in wat de tool maakt.
+ * Wat in vault_kennis landt gaat automatisch mee in élke plan- en script-call
+ * (geleerdeKennis) — het rapport is dus geen dashboard om naar te kijken
+ * maar brandstof die direct doorwerkt in wat de tool maakt.
  */
 
 export const TREND_PERIODE_DAGEN = Number(process.env.TREND_PERIODE_DAGEN ?? 30);
 /** Onder dit aantal gedecodeerde vondsten zegt een ranking niets. */
 export const MIN_VONDSTEN = 15;
+/**
+ * Pas een nieuw rapport als er zoveel nieuwe gedecodeerde vondsten zijn sinds
+ * het vorige: twee keer per dag hetzelfde venster herkauwen levert dezelfde
+ * rankings en een derde variant van dezelfde les op.
+ */
+export const MIN_NIEUWE_VONDSTEN = 5;
 /** Plafond op actieve zoektermen: elke term kost per run zoekcredits op drie platforms. */
 export const MAX_ZOEKTERMEN = 14;
 
@@ -136,13 +138,79 @@ export function aggregeerVondsten(finds: TrendVondst[], periodeDagen = TREND_PER
   };
 }
 
+export type TrendVerschil = {
+  sleutel: string;
+  soort: 'hook' | 'structuur';
+  positieOud: number | null;
+  positieNieuw: number | null;
+  aantalOud: number;
+  aantalNieuw: number;
+  accountsOud: number;
+  accountsNieuw: number;
+  status: 'nieuw' | 'verdwenen' | 'stijgt' | 'zakt' | 'gelijk';
+};
+
+/**
+ * Mechanische diff tussen twee rankings. Dit is wat het model vroeger uit
+ * twee stukken proza moest raden; nu krijgt hij een tabel en hoeft hij alleen
+ * te duiden. Puur en testbaar.
+ */
+export function vergelijkRankings(oud: TrendRankings | null, nieuw: TrendRankings): TrendVerschil[] {
+  const uit: TrendVerschil[] = [];
+  for (const soort of ['hook', 'structuur'] as const) {
+    const lijstOud = oud ? (soort === 'hook' ? oud.hooks : oud.structuren) : [];
+    const lijstNieuw = soort === 'hook' ? nieuw.hooks : nieuw.structuren;
+    const oudMap = new Map(lijstOud.map((r, i) => [r.sleutel, { r, i }]));
+    const nieuwMap = new Map(lijstNieuw.map((r, i) => [r.sleutel, { r, i }]));
+
+    for (const sleutel of new Set([...oudMap.keys(), ...nieuwMap.keys()])) {
+      const o = oudMap.get(sleutel);
+      const n = nieuwMap.get(sleutel);
+      let status: TrendVerschil['status'];
+      if (!o) status = 'nieuw';
+      else if (!n) status = 'verdwenen';
+      else if (n.i < o.i || n.r.accounts > o.r.accounts) status = 'stijgt';
+      else if (n.i > o.i || n.r.accounts < o.r.accounts) status = 'zakt';
+      else status = 'gelijk';
+      uit.push({
+        sleutel,
+        soort,
+        positieOud: o ? o.i + 1 : null,
+        positieNieuw: n ? n.i + 1 : null,
+        aantalOud: o?.r.aantal ?? 0,
+        aantalNieuw: n?.r.aantal ?? 0,
+        accountsOud: o?.r.accounts ?? 0,
+        accountsNieuw: n?.r.accounts ?? 0,
+        status,
+      });
+    }
+  }
+  // Wat beweegt eerst; wat gelijk bleef onderaan.
+  const rang: Record<TrendVerschil['status'], number> = { nieuw: 0, stijgt: 1, zakt: 2, verdwenen: 3, gelijk: 4 };
+  return uit.sort((a, b) => rang[a.status] - rang[b.status] || b.accountsNieuw - a.accountsNieuw);
+}
+
+function renderDiff(verschillen: TrendVerschil[]): string {
+  const bewegend = verschillen.filter((v) => v.status !== 'gelijk');
+  if (bewegend.length === 0) return 'Geen verschuivingen t.o.v. het vorige rapport.';
+  return [
+    'soort | sleutel | status | positie oud→nieuw | posts oud→nieuw | accounts oud→nieuw',
+    ...bewegend
+      .slice(0, 30)
+      .map(
+        (v) =>
+          `${v.soort} | ${v.sleutel} | ${v.status} | ${v.positieOud ?? '—'}→${v.positieNieuw ?? '—'} | ${v.aantalOud}→${v.aantalNieuw} | ${v.accountsOud}→${v.accountsNieuw}`,
+      ),
+  ].join('\n');
+}
+
 const rapportSchema = z.object({
   rapport: z
     .string()
     .describe('Leesbaar rapport in het Nederlands: wat werkt er nu, per thema waar relevant. Concreet, geen managementtaal.'),
   veranderingen: z
     .string()
-    .describe('Wat is er veranderd t.o.v. het vorige rapport — de diff is waar het leren zit. Leeg als er geen vorig rapport is.'),
+    .describe('Duiding van de diff-tabel: wat stijgt, wat zakt, wat is nieuw, en wat dat betekent voor wat we maken. Leeg als er geen vorig rapport is.'),
   nieuwe_zoektermen: z
     .array(
       z.object({
@@ -159,46 +227,70 @@ const rapportSchema = z.object({
     .describe('Hooguit twee lessen die een concrete beslissing veranderen. Leeg is een geldige uitkomst.'),
 });
 
-const SYSTEM = `Je bent de trends-agent van een clipping-tool. Je krijgt harde tellingen over wat er de afgelopen periode op de platforms werkte (hook- en structuur-rankings uit gedecodeerde uitschieters), onze vault, en het vorige trendrapport.
+const SYSTEM = `Je bent de trends-agent van een clipping-tool. Je krijgt harde tellingen over wat er de afgelopen periode op de platforms werkte (hook- en structuur-rankings uit gedecodeerde uitschieters), een mechanisch berekende diff-tabel t.o.v. de vorige rankings, onze vault, en het vorige trendrapport.
 
 Regels:
-1. Het rapport gaat over wat de DATA zegt, niet wat je over social media weet. Elke bewering moet terug te voeren zijn op de rankings of de voorbeelden.
-2. De diff met het vorige rapport is het belangrijkste onderdeel: wat stijgt, wat zakt, wat is nieuw. Zonder vorig rapport beschrijf je alleen het nu.
-3. Let op "overdraagbaar": een patroon dat wij met ons bronmateriaal (lange Nederlandse video's knippen) niet kúnnen, hoort niet in de aanbevelingen.
-4. Nieuwe zoektermen alleen bij een echte blinde vlek — Nederlandstalig waar dat past bij onze niche.
-5. Een vault-les moet een concrete beslissing veranderen ("open financiële clips met het bedrag in beeld vóór de vraag" wel; "speel in op trends" niet). Wat al in de vault of eerdere lessen staat, stel je niet opnieuw voor. Liever nul lessen dan een vage.`;
+1. Het rapport gaat over wat de DATA zegt, niet wat je over social media weet. Elke bewering moet terug te voeren zijn op de rankings, de diff-tabel of de voorbeelden.
+2. De diff-tabel is het belangrijkste onderdeel: duid wat stijgt, zakt, nieuw is of verdwijnt — en let op de "accounts"-kolom, want een patroon dat bij meer verschillende accounts terugkomt is sterker bewijs dan meer posts van één account. Zonder vorig rapport beschrijf je alleen het nu.
+3. Sleutels die met "nieuw:" beginnen zijn patronen die nog geen vault-slug hebben; komt zo'n sleutel bij meerdere accounts terug, benoem dat dan expliciet als mogelijk nieuw archetype.
+4. Let op "overdraagbaar": een patroon dat wij met ons bronmateriaal (lange Nederlandse video's knippen) niet kúnnen, hoort niet in de aanbevelingen.
+5. Nieuwe zoektermen alleen bij een echte blinde vlek — Nederlandstalig waar dat past bij onze niche.
+6. Een vault-les moet een concrete beslissing veranderen ("open financiële clips met het bedrag in beeld vóór de vraag" wel; "speel in op trends" niet). Wat al in de vault of eerdere lessen staat, stel je niet opnieuw voor. Liever nul lessen dan een vage.`;
 
-export async function runTrendsAgent(): Promise<{
+export type TrendsResultaat = {
   vondsten: number;
   hooks: number;
   structuren: number;
   zoektermen: number;
   lessen: number;
   rapport: string;
-}> {
+  /** Waarom er (nog) geen rapport gemaakt is; null als de run gewoon liep. */
+  overgeslagen: string | null;
+};
+
+export async function runTrendsAgent(): Promise<TrendsResultaat> {
   const supabase = db();
   const sinds = new Date(Date.now() - TREND_PERIODE_DAGEN * 24 * 3600 * 1000).toISOString();
 
   const { data: finds, error } = await supabase
     .from('scout_finds')
-    .select('post_url, handle, platform, theme, views_per_dag, decoded')
+    .select('post_url, handle, platform, theme, views_per_dag, decoded, created_at')
     .gte('created_at', sinds)
     .not('decoded', 'is', null);
   if (error) throw error;
 
-  const rankings = aggregeerVondsten((finds ?? []) as TrendVondst[]);
-  if (rankings.vondsten < MIN_VONDSTEN) {
-    throw new Error(
-      `Te weinig gedecodeerde vondsten (${rankings.vondsten} < ${MIN_VONDSTEN}) voor een rapport dat iets zegt.`,
-    );
-  }
-
   const { data: vorige } = await supabase
     .from('trend_rapporten')
-    .select('rapport, created_at')
+    .select('rapport, rankings, created_at')
     .order('created_at', { ascending: false })
     .limit(1)
     .maybeSingle();
+
+  const rankings = aggregeerVondsten((finds ?? []) as TrendVondst[]);
+  const stil = (reden: string): TrendsResultaat => ({
+    vondsten: rankings.vondsten,
+    hooks: rankings.hooks.length,
+    structuren: rankings.structuren.length,
+    zoektermen: 0,
+    lessen: 0,
+    rapport: '',
+    overgeslagen: reden,
+  });
+
+  // Te weinig data of te weinig nieuws: stil succes, geen exit 1. Een rapport
+  // dat niets zegt is erger dan geen rapport.
+  if (rankings.vondsten < MIN_VONDSTEN) {
+    return stil(`te weinig gedecodeerde vondsten (${rankings.vondsten} < ${MIN_VONDSTEN})`);
+  }
+  if (vorige?.created_at) {
+    const nieuwSinds = (finds ?? []).filter((f) => (f.created_at as string) > (vorige.created_at as string)).length;
+    if (nieuwSinds < MIN_NIEUWE_VONDSTEN) {
+      return stil(`${nieuwSinds} nieuwe vondst(en) sinds het vorige rapport (< ${MIN_NIEUWE_VONDSTEN})`);
+    }
+  }
+
+  const vorigeRankings = (vorige?.rankings as TrendRankings | null) ?? null;
+  const verschillen = vergelijkRankings(vorigeRankings, rankings);
 
   const vault = await loadVault();
   const resultaat = await structuredCall({
@@ -213,22 +305,26 @@ ${JSON.stringify(rankings.hooks.slice(0, 12), null, 1)}
 STRUCTUREN:
 ${JSON.stringify(rankings.structuren.slice(0, 12), null, 1)}
 
-=== VORIG RAPPORT (${vorige ? new Date(vorige.created_at as string).toLocaleDateString('nl-NL') : 'geen'}) ===
+=== DIFF T.O.V. VORIGE RANKINGS (${vorige ? new Date(vorige.created_at as string).toLocaleDateString('nl-NL') : 'geen vorig rapport'}) ===
+${vorigeRankings ? renderDiff(verschillen) : '—'}
+
+=== VORIG RAPPORT ===
 ${(vorige?.rapport as string | undefined) ?? '—'}`,
     schema: rapportSchema,
     toolName: 'lever_trendrapport',
-    toolDescription: 'Lever het trendrapport, de diff, eventuele zoektermen en vault-lessen.',
+    toolDescription: 'Lever het trendrapport, de duiding van de diff, eventuele zoektermen en vault-lessen.',
     maxTokens: 12000,
     effort: AGENT_EFFORT,
     operation: 'trends_agent',
   });
 
-  await supabase.from('trend_rapporten').insert({
+  const { error: rapportFout } = await supabase.from('trend_rapporten').insert({
     periode_dagen: TREND_PERIODE_DAGEN,
     rankings,
     rapport: resultaat.rapport,
     veranderingen: resultaat.veranderingen || null,
   });
+  if (rapportFout) throw new Error(`trend_rapporten insert mislukt: ${rapportFout.message}`);
 
   // Zoektermen aanvullen, met plafond: elke actieve term kost per scout-run
   // zoekcredits op meerdere platforms, dus de lijst mag niet stil volgroeien.
@@ -250,25 +346,27 @@ ${(vorige?.rapport as string | undefined) ?? '—'}`,
   }
 
   // Lessen naar de vault — daarmee werken ze direct door in elke plan/script-
-  // call. Dedup op titel zodat een herhaald inzicht niet elke week opnieuw landt.
+  // call. bewaarKennis dedupt op titel én inhoud, zodat een herhaald inzicht
+  // in andere woorden niet opnieuw landt.
   let lessen = 0;
-  const { data: bestaand } = await supabase.from('vault_kennis').select('titel');
-  const bekend = new Set((bestaand ?? []).map((k) => (k.titel as string).toLowerCase()));
   for (const les of resultaat.vault_lessen) {
-    const titel = `Trend: ${les.titel}`;
-    if (bekend.has(titel.toLowerCase())) continue;
-    const { error: insErr } = await supabase.from('vault_kennis').insert({
+    const r = await bewaarKennis({
       categorie: 'onderzoek',
-      titel,
+      titel: `Trend: ${les.titel}`,
       inhoud: les.inhoud,
       bron: `Trendrapport ${new Date().toLocaleDateString('nl-NL')} (${rankings.vondsten} vondsten, ${TREND_PERIODE_DAGEN}d)`,
     });
-    if (!insErr) lessen++;
+    if (r.bewaard) lessen++;
   }
 
   await supabase.from('agent_runs').insert({
     agent: 'trends',
-    input_summary: { vondsten: rankings.vondsten, hooks: rankings.hooks.length, structuren: rankings.structuren.length },
+    input_summary: {
+      vondsten: rankings.vondsten,
+      hooks: rankings.hooks.length,
+      structuren: rankings.structuren.length,
+      verschuivingen: verschillen.filter((v) => v.status !== 'gelijk').length,
+    },
     proposal: resultaat,
     status: 'auto',
     decided_by: 'auto',
@@ -281,5 +379,6 @@ ${(vorige?.rapport as string | undefined) ?? '—'}`,
     zoektermen,
     lessen,
     rapport: resultaat.rapport,
+    overgeslagen: null,
   };
 }
