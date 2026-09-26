@@ -1,4 +1,5 @@
 import { rm } from 'node:fs/promises';
+import { join } from 'node:path';
 import { z } from 'zod';
 import { structuredCall } from '../claude';
 import { db } from '../supabase';
@@ -6,6 +7,7 @@ import { pakFrames } from '../roughcut/frames';
 import { EDITCRAFT } from '../vault/editcraft';
 import { STORYCRAFT } from '../vault/storycraft';
 import { bewaarKennis } from '../vault/kennis';
+import { isMeting, meetEnBewaarVondst, vingerafdrukSamenvatting } from '../analyse/vondsten';
 
 const analyseSchema = z.object({
   hook_visueel: z.string().describe('Wat er in de eerste seconden in beeld gebeurt en waarom dat vasthoudt.'),
@@ -43,7 +45,7 @@ export async function bekijkUitschieter(findId: string) {
 
   const { data: find, error } = await supabase
     .from('scout_finds')
-    .select('id, post_url, handle, platform, caption, outlier_score, decoded')
+    .select('id, post_url, handle, platform, caption, outlier_score, decoded, vingerafdruk')
     .eq('id', findId)
     .single();
   if (error || !find?.post_url) throw new Error('Vondst niet gevonden of zonder URL.');
@@ -57,6 +59,23 @@ export async function bekijkUitschieter(findId: string) {
   }
 
   try {
+    // Ritme en tekst-in-beeld zijn gemeten als de vingerafdruk er is; dan
+    // hoeft het model ze niet uit tien stilstaande frames te raden. Is hij er
+    // nog niet, dan meten we hem nu op dezelfde download — dat scheelt de
+    // vingerafdruk-job een tweede download van precies deze topvondst.
+    let vinger: unknown = isMeting(find.vingerafdruk) ? find.vingerafdruk : null;
+    if (!vinger) {
+      try {
+        vinger = await meetEnBewaarVondst(
+          { id: find.id as string, post_url: find.post_url as string },
+          { bestand: join(map, 'bron.mp4') },
+        );
+      } catch (e) {
+        console.warn(`[kijken] vingerafdruk van @${find.handle} mislukt: ${(e as Error).message.slice(0, 160)}`);
+      }
+    }
+    const gemeten = vingerafdrukSamenvatting(vinger);
+
     const analyse = await structuredCall({
       system: `${KIJK_SYSTEM}\n\n${STORYCRAFT}\n\n${EDITCRAFT}`,
       user: `Bekijk deze clip van @${find.handle} op ${find.platform}${
@@ -65,7 +84,9 @@ export async function bekijkUitschieter(findId: string) {
 
 Duur: ${duur ? `${Math.round(duur)} seconden` : 'onbekend'}
 Caption: ${find.caption ?? '—'}
-${find.decoded ? `Eerdere tekstanalyse: ${JSON.stringify(find.decoded).slice(0, 800)}` : ''}`,
+${find.decoded ? `Eerdere tekstanalyse: ${JSON.stringify(find.decoded).slice(0, 800)}` : ''}${
+        gemeten ? `\n\nGEMETEN (ffmpeg, geen schatting — gebruik dit voor 'ritme' in plaats van het uit de frames af te leiden):\n${gemeten}` : ''
+      }`,
       schema: analyseSchema,
       toolName: 'lever_visuele_analyse',
       toolDescription: 'Lever de visuele analyse van deze clip.',
@@ -109,6 +130,8 @@ export async function bekijkTopVondsten(aantal = 3) {
     .from('scout_finds')
     .select('id, handle, outlier_score, decoded, post_url')
     .not('post_url', 'is', null)
+    // Basislijnposts zijn gewone posts ter vergelijking, geen vondsten om van te leren.
+    .eq('is_basislijn', false)
     .order('outlier_score', { ascending: false, nullsFirst: false })
     .limit(25);
 

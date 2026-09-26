@@ -23,6 +23,10 @@ import { effectKeten } from '../src/lib/roughcut/kader';
 import { bouwAss, groepeerRegels, heeftAssFilter, maakOndertitels, woordenOpTijdlijn } from '../src/lib/roughcut/ondertitels';
 import { tekenHookKaart, hookDuur } from '../src/lib/roughcut/tekstkaarten';
 import type { BronWoord } from '../src/lib/roughcut/woorden';
+import { keurRetentie, pasRetentieToe } from '../src/lib/roughcut/retentie';
+import { poort } from '../src/lib/roughcut/poort';
+import { keurKnippen } from '../src/lib/roughcut/keuring';
+import { STANDAARD_DOELEN } from '../src/lib/vault/normen';
 
 let gefaald = 0;
 let gedaan = 0;
@@ -166,6 +170,63 @@ async function main() {
         toets('variant heeft geluid gekopieerd', p.streams.includes('audio'));
       } catch (e) {
         toets('brandOverlays slaagt', false, (e as Error).message.slice(-300));
+      }
+    }
+    // 4. Retentie-render: dezelfde bron, één lang shot met twee lange pauzes.
+    //    De retentie-editor knipt de pauzes weg en zet kaderwissels; daarna
+    //    naadbump en poort zoals in de worker, en dan de echte ffmpeg-keten.
+    //    Toetst dat de delen (strakke grenzen, afwisselende zoom, re-hook-
+    //    kaart) ook echt renderen en de lengte klopt.
+    console.log('retentie-render');
+    {
+      const rw: BronWoord[] = [];
+      let t = 0.3;
+      for (let i = 0; i < 24; i++) {
+        rw.push({ w: i % 5 === 0 ? 'eigenlijk' : `woord${i}`, s: Math.round(t * 1000) / 1000, e: Math.round((t + 0.3) * 1000) / 1000 });
+        t += 0.4 + (i === 6 ? 0.9 : i === 15 ? 0.7 : 0);
+      }
+      const lang: Shot = {
+        volgorde: 1, start: 0.2, end: Math.min(11.8, rw[rw.length - 1].e + 0.15), functie: 'setup',
+        focusX: 0.5, focusW: 0.12, ankerStart: 0.3, ankerEind: rw[rw.length - 1].e, spanning: 4,
+      };
+      const retentie = pasRetentieToe([lang], {
+        bronWoorden: rw,
+        doelen: STANDAARD_DOELEN,
+        kaarten: [{ start: 0, end: 1.2 }],
+        ondertitels: true,
+        hookTot: 1.2,
+      });
+      const delen = retentie.segmenten;
+      toets('retentie knipt twee pauzes', retentie.ingrepen.filter((g) => g.soort === 'pauze').length === 2, retentie.logregel);
+      toets('retentie maakt delen met kaderwissels', delen.length >= 3, `${delen.length} delen`);
+      pasNaadZoomToe(delen);
+      const na = poort(delen.map((d) => ({ ...d })), rw);
+      toets('poort laat de retentiedelen staan', na.segmenten.length === delen.length && !na.ingrepen.some((g) => g.regel === 'halfFragment' || g.regel === 'overlap' || g.regel === 'ongeldig'), JSON.stringify(na.ingrepen));
+      toets('keuring: geen knip in een woord', keurKnippen(na.segmenten, rw).goed === true, keurKnippen(na.segmenten, rw).detail);
+      const regel = keurRetentie(retentie.na, STANDAARD_DOELEN);
+      toets('keuringsregel retentie geeft een uitslag', regel.naam === 'retentie' && regel.goed !== null, regel.detail);
+      const rehookPad = join(map, 'rehook.png');
+      await tekenHookKaart('wacht op het bedrag', rehookPad, { accent: '#ff8800', font: 'archivo' });
+      const verwacht = na.segmenten.reduce((som, d) => som + (d.end - d.start), 0);
+      const uitPad = join(map, 'retentie.mp4');
+      try {
+        await maakRuweMontage({
+          sourceUrl: 'lokaal://test',
+          shots: na.segmenten,
+          alGesegmenteerd: true,
+          outputPad: uitPad,
+          werkmap,
+          kader: 'vullend',
+          overlays: [{ pad: rehookPad, start: 3, end: 5 }],
+          ruisvloerDb: -60,
+          maxBytes: 50 * 1024 * 1024,
+        });
+        const p = probe(uitPad);
+        toets(`retentie-render duurt de som van de delen (${verwacht.toFixed(2)}s)`, Math.abs(p.duur - verwacht) < 0.3, `${p.duur}s`);
+        toets('retentie-render heeft beeld en geluid', p.streams.includes('video') && p.streams.includes('audio'));
+        toets('retentie-render is korter dan het ongeknipte shot', p.duur < lang.end - lang.start - 1, `${p.duur}s vs ${(lang.end - lang.start).toFixed(2)}s`);
+      } catch (e) {
+        toets('retentie-render slaagt', false, (e as Error).message.slice(-600));
       }
     }
   } finally {

@@ -256,7 +256,8 @@ export async function runTrendsAgent(): Promise<TrendsResultaat> {
     .from('scout_finds')
     .select('post_url, handle, platform, theme, views_per_dag, decoded, created_at')
     .gte('created_at', sinds)
-    .not('decoded', 'is', null);
+    .not('decoded', 'is', null)
+    .eq('is_basislijn', false);
   if (error) throw error;
 
   const { data: vorige } = await supabase

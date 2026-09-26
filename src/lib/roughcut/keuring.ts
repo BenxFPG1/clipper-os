@@ -402,7 +402,16 @@ export async function keurMontage(
   montagePad: string,
   segmenten: Shot[],
   bronWoorden: BronWoord[] | null,
-  opties: { python?: { cmd: string; voor: string[] }; bronPad?: string } = {},
+  opties: {
+    python?: { cmd: string; voor: string[] };
+    bronPad?: string;
+    /**
+     * De retentieregel (retentie.ts → keurRetentie), gemeten op dezelfde
+     * definitieve segmenten. Van buiten meegegeven omdat hij de doelen van de
+     * campagne nodig heeft; ontbreekt hij, dan telt hij niet mee.
+     */
+    retentie?: KeuringRegel;
+  } = {},
 ): Promise<Keuringsrapport> {
   const regels: KeuringRegel[] = [
     keurKnippen(segmenten, bronWoorden),
@@ -411,6 +420,7 @@ export async function keurMontage(
     await keurGezicht(montagePad, { ...opties, segmenten }),
     ...(await keurScript(montagePad, segmenten)),
     await keurNaden(montagePad, segmenten, bronWoorden),
+    ...(opties.retentie ? [opties.retentie] : []),
   ];
   return { goed: regels.every((r) => r.goed === true), status: keuringStatus(regels), regels };
 }

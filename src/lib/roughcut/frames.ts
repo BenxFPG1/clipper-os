@@ -40,20 +40,7 @@ export async function pakFrames(
   const map = opties.werkmap ?? (await mkdtemp(join(tmpdir(), 'clipper-frames-')));
   const video = opties.bronBestand ?? join(map, 'bron.mp4');
 
-  if (!opties.bronBestand) {
-    await run(resolveBinary('yt-dlp'), [
-      ...ytdlpAuthArgs(),
-      '--no-warnings',
-      '--extractor-args', 'youtube:player_client=default,tv',
-      // h264 (avc1) eerst: VP9/AV1-streams gaven ffmpeg-fouten bij het
-      // frame-pakken op de runner, en die werden stil weggeslikt — de kijk-
-      // passen meldden dan "geen frames" zonder oorzaak.
-      '-f', 'bv*[vcodec^=avc1][height<=1080]+ba/b[vcodec^=avc1][height<=1080]/bv*[height<=1080]+ba/b',
-      '--merge-output-format', 'mp4',
-      '-o', video,
-      bronUrl,
-    ]);
-  }
+  if (!opties.bronBestand) await downloadVideo(bronUrl, video);
 
   const duur = await probeDuur(video);
 
@@ -127,6 +114,32 @@ export async function pakFrames(
 }
 
 /**
+ * Downloadt een post naar `doelPad` in een formaat dat ffmpeg overal kan
+ * decoderen. Gedeeld door de kijk-passen en de vingerafdruk-job, zodat er één
+ * plek is waar de formaatkeuze klopt.
+ *
+ * Waarom het formaatfilter zo is: yt-dlp noemt de h264-streams van YouTube
+ * 'avc1…', maar die van TikTok gewoon 'h264'. Het oude filter keek alleen naar
+ * avc1, viel op TikTok dus altijd door naar "beste video" — en dat is daar
+ * bytevc1 (HEVC) in 1080p. Precies die bestanden gaven op de CI-runner "geen
+ * frames" bij élke kijken- en editleraar_visueel-run. Nu eerst h264 in welke
+ * spelling dan ook; HEVC alleen als er niets anders is.
+ */
+export async function downloadVideo(bronUrl: string, doelPad: string): Promise<void> {
+  const h264 = "[vcodec~='^(avc1|h264)']";
+  await run(resolveBinary('yt-dlp'), [
+    ...ytdlpAuthArgs(),
+    '--no-warnings',
+    '--no-playlist',
+    '--extractor-args', 'youtube:player_client=default,tv',
+    '-f', `bv*${h264}[height<=1080]+ba/b${h264}[height<=1080]/b${h264}/bv*[height<=1080]+ba/b`,
+    '--merge-output-format', 'mp4',
+    '-o', doelPad,
+    bronUrl,
+  ]);
+}
+
+/**
  * Zoekt de momenten waarop het beeld wezenlijk verandert. De drempel is laag
  * gezet (0,06): bij talking-head-materiaal, waar alleen de kadrering en de
  * spreker wisselen, vindt 0,25 vrijwel niets terwijl er wel degelijk geknipt
@@ -157,7 +170,7 @@ async function zoekScenewissels(pad: string): Promise<number[]> {
   }
 }
 
-async function probeDuur(pad: string): Promise<number | null> {
+export async function probeDuur(pad: string): Promise<number | null> {
   try {
     const uit = await run(resolveBinary('ffprobe'), [
       '-v', 'error',

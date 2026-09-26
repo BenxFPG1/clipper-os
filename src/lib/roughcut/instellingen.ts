@@ -79,6 +79,44 @@ const STANDAARD = {
   ONDERTITEL_MAX_WOORDEN: 4,
   ONDERTITEL_MAX_TEKENS: 22,
   ONDERTITEL_BREEK_PAUZE: 0.6,
+
+  /**
+   * Retentie-editor (retentie.ts). De doelen zelf (max pauze, max tijd zonder
+   * beeldwissel, eerste wissel) komen uit editDoelen() — gemeten bij anderen;
+   * dit zijn alleen de knoppen van het gereedschap dat ze uitvoert.
+   */
+  /** Resolutie van de risicocurve (s). */
+  RETENTIE_STAP: 0.5,
+  /** De eerste seconden wegen zwaarder: daar valt de swipe-beslissing. */
+  RETENTIE_EERSTE_SECONDEN: 3,
+  RETENTIE_EERSTE_GEWICHT: 1.5,
+  /** Hoeveel stilte er na een pauze-jumpcut blijft staan (s, beide kanten samen). */
+  RETENTIE_PAUZE_REST: 0.16,
+  /** Een deel korter dan dit ontstaat niet door een retentieknip (s); de poort gooit < 0,6 weg. */
+  RETENTIE_MIN_DEEL: 0.8,
+  /** In een payoff-shot is een pauze tot deze lengte spanning, geen dode lucht (s). */
+  RETENTIE_PAYOFF_PAUZE_MAX: 1.2,
+  /** …maar alleen in de eerste seconden van dat shot, rond de onthulling zelf; daarna is een pauze gewoon een pauze. */
+  RETENTIE_PAYOFF_VENSTER: 3,
+  /** Zoekvenster vóór de deadline waarin een kaderwissel op een woordgrens mag vallen (s). */
+  RETENTIE_WISSEL_VENSTER: 1.5,
+  /** Vanaf deze afstand tot de payoff telt "wachten op de payoff" volledig als risico (s). */
+  RETENTIE_PAYOFF_HORIZON: 12,
+  /** Een re-hookkaart alleen als hook en payoff minstens zo ver uit elkaar liggen (s). */
+  RETENTIE_REHOOK_MIN_AANLOOP: 8,
+  RETENTIE_REHOOK_DUUR: 2,
+  /** …en alleen in een venster met minstens dit gemiddelde risico (0..1); anders is er geen gat te dichten. */
+  RETENTIE_REHOOK_MIN_RISICO: 0.25,
+  /** Gewichten van de risicocomponenten (som hoeft niet 1 te zijn; de curve wordt op 1 geklemd). */
+  RETENTIE_W_PAUZE: 0.3,
+  RETENTIE_W_BEELD: 0.25,
+  RETENTIE_W_TEKST: 0.15,
+  RETENTIE_W_LEEG: 0.15,
+  RETENTIE_W_PAYOFF: 0.15,
+  /** Keuring: een gat mag zoveel keer het doel zijn voordat het "review nodig" wordt. */
+  RETENTIE_KEURING_MARGE: 1.25,
+  /** Keuring: zoveel pauzes boven het doel mogen blijven staan (niet te knippen zonder een te kort deel). */
+  RETENTIE_KEURING_MAX_PAUZES: 1,
 } as const;
 
 export type InstellingNaam = keyof typeof STANDAARD;

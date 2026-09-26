@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { roepApiAan } from '@/app/api-aanroep';
+import { RenderFeedback, type Beoordeling, type Gepost } from './render-feedback';
 
 type Download = {
   naam: string;
@@ -11,6 +12,9 @@ type Download = {
   hook_tekst?: string | null;
   keuring_status?: 'goed' | 'review_nodig' | 'niet_getoetst' | null;
   keuring_fouten?: string[];
+  /** Leerlus: jouw oordeel en of hij gepost is (met de laatste cijfers). */
+  beoordeling?: Beoordeling;
+  gepost?: Gepost;
 };
 
 const KEURING_TEKST: Record<NonNullable<Download['keuring_status']>, { label: string; klasse: string }> = {
@@ -91,6 +95,9 @@ export function RenderPanel({ videoId, aantalClips }: { videoId: string; aantalC
           De fragmenten uit het plan achter elkaar gezet, verticaal, klaar om in CapCut af te maken. Het monteren
           gebeurt in de cloud; je krijgt hier een downloadlink.
         </p>
+        <p className="mt-1 text-sm text-neutral-500">
+          Beoordeel elk bestand (goed / matig / weg) en plak de link zodra hij online staat: daar leert de tool van.
+        </p>
       </div>
 
       <div className="flex flex-wrap items-end gap-2">
@@ -161,7 +168,7 @@ export function RenderPanel({ videoId, aantalClips }: { videoId: string; aantalC
               {job.fout && <p className="mt-1 text-xs text-red-400">{job.fout}</p>}
 
               {job.downloads.length > 0 && (
-                <ul className="mt-2 space-y-1">
+                <ul className="mt-2 space-y-3">
                   {job.downloads.map((d) => (
                     <li key={d.naam}>
                       {d.url ? (
@@ -192,6 +199,12 @@ export function RenderPanel({ videoId, aantalClips }: { videoId: string; aantalC
                           ))}
                         </ul>
                       )}
+                      <RenderFeedback
+                        jobId={job.id}
+                        bestandNaam={d.naam}
+                        beoordeling={d.beoordeling ?? null}
+                        gepost={d.gepost ?? null}
+                      />
                     </li>
                   ))}
                 </ul>

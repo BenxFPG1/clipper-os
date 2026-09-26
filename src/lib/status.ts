@@ -1,4 +1,5 @@
 import { db } from './supabase';
+import { editDoelen, STANDAARD_DOELEN, type EditDoelen } from './vault/normen';
 
 export type StapStatus = {
   /** Wat er in deze stap nog te doen is. */
@@ -275,4 +276,82 @@ function naamVoor(
   if (soort === 'scripts') return briefs.find((b) => b.id === doelId)?.titel ?? 'opdracht';
   // concepten, broll_* en video_transcript hangen aan een campagne.
   return campagnes.find((c) => c.id === doelId)?.name ?? 'campagne';
+}
+
+/* ------------------------------------------------------------ leerlus */
+
+export type LeerlusStatus = {
+  /** Gerenderde bestanden in klare renders. */
+  renders: number;
+  beoordeeld: number;
+  perOordeel: { goed: number; matig: number; weg: number };
+  evalCases: number;
+  /** Clips die aan een render gekoppeld zijn en gepost. */
+  gepost: number;
+  /** Geposte clips met minstens één meting in de afgelopen 7 dagen. */
+  gemetenDezeWeek: number;
+  openRetroVoorstellen: number;
+  laatsteSmaakRun: string | null;
+  lessen: { titel: string; categorie: string; bron: string | null; created_at: string }[];
+  doelen: EditDoelen;
+};
+
+/**
+ * Is er echt geleerd? Eén blik op de leerlus: hoeveel renders er zijn, hoeveel
+ * daarvan een oordeel kregen, gepost en gemeten zijn, wat er openstaat in de
+ * inbox, wat er laatst geleerd is en waar de edit-doelen op steunen. Een
+ * ontbrekende tabel (migratie nog niet gedraaid) geeft nullen, geen crash.
+ */
+export async function laadLeerlus(): Promise<LeerlusStatus> {
+  const supabase = db();
+  const weekGeleden = new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString();
+
+  const [renderJobs, oordelen, gepost, metingen, retro, smaak, lessen, doelen] = await Promise.all([
+    supabase.from('render_jobs').select('bestanden').eq('status', 'klaar').limit(1000),
+    supabase.from('render_beoordelingen').select('oordeel, eval_case'),
+    supabase
+      .from('clips')
+      .select('id', { count: 'exact', head: true })
+      .not('render_job_id', 'is', null)
+      .eq('status', 'posted'),
+    supabase.from('metrics_snapshots').select('clip_id').gte('captured_at', weekGeleden).limit(5000),
+    supabase
+      .from('agent_runs')
+      .select('id', { count: 'exact', head: true })
+      .eq('agent', 'retro')
+      .eq('status', 'pending'),
+    supabase
+      .from('agent_runs')
+      .select('created_at')
+      .eq('agent', 'smaak')
+      .order('created_at', { ascending: false })
+      .limit(1),
+    supabase
+      .from('vault_kennis')
+      .select('titel, categorie, bron, created_at')
+      .eq('actief', true)
+      .order('created_at', { ascending: false })
+      .limit(5),
+    editDoelen().catch(() => STANDAARD_DOELEN),
+  ]);
+
+  const perOordeel = { goed: 0, matig: 0, weg: 0 };
+  let evalCases = 0;
+  for (const o of oordelen.data ?? []) {
+    if (o.oordeel in perOordeel) perOordeel[o.oordeel as keyof typeof perOordeel]++;
+    if (o.eval_case) evalCases++;
+  }
+
+  return {
+    renders: (renderJobs.data ?? []).reduce((n, j) => n + ((j.bestanden as unknown[] | null)?.length ?? 0), 0),
+    beoordeeld: oordelen.data?.length ?? 0,
+    perOordeel,
+    evalCases,
+    gepost: gepost.count ?? 0,
+    gemetenDezeWeek: new Set((metingen.data ?? []).map((m) => m.clip_id as string)).size,
+    openRetroVoorstellen: retro.count ?? 0,
+    laatsteSmaakRun: (smaak.data?.[0]?.created_at as string | undefined) ?? null,
+    lessen: (lessen.data ?? []) as LeerlusStatus['lessen'],
+    doelen,
+  };
 }

@@ -35,7 +35,7 @@ export async function POST(req: NextRequest) {
 
   // Eén vondst, of alles wat nog geen bronmatch heeft.
   // TikTok en Shorts hebben allebei een transcriptbron; Reels niet.
-  let query = supabase.from('scout_finds').select('*').in('platform', ['tiktok', 'shorts']);
+  let query = supabase.from('scout_finds').select('*').in('platform', ['tiktok', 'shorts']).eq('is_basislijn', false);
   if (body.findId) query = query.eq('id', body.findId);
   else query = query.limit(15);
 

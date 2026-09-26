@@ -59,6 +59,7 @@ export async function bouwStijlgids(campaignId: string): Promise<BrollStijlgids>
     .from('scout_finds')
     .select('platform, theme, outlier_score, caption, decoded')
     .not('decoded', 'is', null)
+    .eq('is_basislijn', false)
     .order('outlier_score', { ascending: false, nullsFirst: false })
     .limit(15);
   if (campagne?.theme) findsQuery = findsQuery.eq('theme', campagne.theme);

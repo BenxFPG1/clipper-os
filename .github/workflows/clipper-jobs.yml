@@ -18,13 +18,16 @@ on:
     - cron: '30 10 * * 0'        # editleraar_visueel: zondag, toffe effecten spotten in topvondsten
     - cron: '0 6,15 * * *'       # trends: 2x per dag, net na elke scout-run (~7:30/16:30 NL) — slaat zichzelf over zonder genoeg nieuwe vondsten
     - cron: '0 12 * * 0'         # consolideer: zondag ~14:00 NL, bijna-duplicaten in vault_kennis samenvoegen
+    - cron: '40 3 * * *'         # render_vingerafdruk: dagelijks ~5:40 NL, eigen renders meetbaar maken (max 10 per run)
+    - cron: '10 4 * * *'         # smaak: dagelijks ~6:10 NL, lessen uit eigen oordelen + cijfers (slaat over bij < 5 nieuwe)
+    - cron: '45 16 * * *'        # vingerafdruk: dagelijks ~18:45 NL, na de middag-scout: top- en basislijnposts meten + edit-normen herberekenen
   workflow_dispatch:
     inputs:
       job:
         description: 'Welke taak'
         required: true
         type: choice
-        options: [tracking, scout, retro, kennis, kanaal, cliparmy, kijken, editleraar, editleraar_visueel, trends, consolideer, diag]
+        options: [tracking, scout, retro, kennis, kanaal, cliparmy, kijken, editleraar, editleraar_visueel, trends, consolideer, smaak, render_vingerafdruk, vingerafdruk, diag]
 
 concurrency:
   group: clipper-jobs
@@ -60,6 +63,12 @@ jobs:
             echo "job=trends" >> "$GITHUB_OUTPUT"
           elif [ "${{ github.event.schedule }}" = "0 12 * * 0" ]; then
             echo "job=consolideer" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event.schedule }}" = "40 3 * * *" ]; then
+            echo "job=render_vingerafdruk" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event.schedule }}" = "10 4 * * *" ]; then
+            echo "job=smaak" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event.schedule }}" = "45 16 * * *" ]; then
+            echo "job=vingerafdruk" >> "$GITHUB_OUTPUT"
           else
             echo "job=tracking" >> "$GITHUB_OUTPUT"
           fi
@@ -97,6 +106,14 @@ jobs:
 
       - name: Dependencies
         run: npm ci
+
+      # Spreektempo in de vingerafdruk: gratis lokaal transcriberen. Zonder
+      # dit (en zonder Groq-key) blijft woordenPerS leeg — de rest van de
+      # meting werkt gewoon. Model 'base' via WHISPER_LOKAAL_MODEL hieronder:
+      # voor woorden tellen genoeg, en een fractie van de tijd van 'small'.
+      - name: faster-whisper (vingerafdruk)
+        if: ${{ steps.kies.outputs.job == 'vingerafdruk' }}
+        run: pip3 install --quiet faster-whisper
 
       # Ook nodig voor cliparmy: een binnengehaalde campagne wordt door de
       # import-agent gelezen.
@@ -137,4 +154,10 @@ jobs:
           CLIPARMY_EMAIL: ${{ secrets.CLIPARMY_EMAIL }}
           CLIPARMY_WACHTWOORD: ${{ secrets.CLIPARMY_WACHTWOORD }}
           COST_ALERT_EUR: '20'
+          WHISPER_LOKAAL_MODEL: base
+          # Voor render_vingerafdruk: de eigen renders staan in R2.
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
         run: npx tsx scripts/job.ts ${{ steps.kies.outputs.job }}

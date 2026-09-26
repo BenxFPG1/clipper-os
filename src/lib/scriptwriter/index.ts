@@ -181,7 +181,8 @@ export async function generateScript(
   let findsQuery = db()
     .from('scout_finds')
     .select('handle, platform, theme, post_url, outlier_score, caption, decoded')
-    .not('decoded', 'is', null);
+    .not('decoded', 'is', null)
+    .eq('is_basislijn', false);
   if (brief.theme) findsQuery = findsQuery.eq('theme', brief.theme);
   const { data: finds } = await findsQuery
     .order('outlier_score', { ascending: false, nullsFirst: false })

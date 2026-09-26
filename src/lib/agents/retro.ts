@@ -4,6 +4,7 @@ import { AGENT_EFFORT } from '../env';
 import { db, one } from '../supabase';
 import { ALL, loadVault, loadWeights, renderVaultForPrompt, upsertWeight } from '../vault';
 import { median } from '../tracking/performance';
+import { clipNummerUitNaam, planInfo, planVoorRender, type RenderJobRij } from '../tracking/leerlus';
 
 /** Minimum aantal waarnemingen per kant (eigen of extern) om mee te tellen. */
 export const MIN_N_PER_GROUP = 5;
@@ -31,6 +32,16 @@ export const MIN_ACCOUNTS_VOOR_ACTIVATIE = 3;
  * minstens drie posts, of drie posts van drie accounts.
  */
 export const MIN_EVIDENCE_SCORE_ZONDER_BEWIJS = 9;
+/**
+ * Eigen oordelen (goed/matig/weg over renders) zijn een zwakker signaal dan
+ * views: het is smaak, geen publiek. Ze tellen niet mee voor de drempel en
+ * sturen de gecombineerde score hooguit een fractie bij — genoeg om bij twee
+ * gelijke slugs de doorslag te geven, nooit genoeg om eigen of externe
+ * cijfers om te draaien.
+ */
+export const SMAAK_GEWICHT = 0.15;
+/** Pas vanaf zoveel oordelen over een slug telt het smaaksignaal mee. */
+export const MIN_SMAAK_N = 3;
 
 const proposalSchema = z.object({
   wijzigingen: z.array(
@@ -69,8 +80,13 @@ export type GroupStats = {
   eigen_mediaan: number | null;
   extern_n: number;
   extern_mediaan: number | null;
-  /** Gecombineerde score: 50% eigen, 50% extern (zie EIGEN_GEWICHT). */
+  /** Gecombineerde score: 50% eigen, 50% extern (zie EIGEN_GEWICHT), licht bijgestuurd door smaak (SMAAK_GEWICHT). */
   gecombineerde_score: number | null;
+  /** Aantal eigen oordelen over renders met deze slug (alleen op platform/thema 'all'). */
+  smaak_n: number;
+  /** Gemiddeld oordeel: goed = +1, matig = 0, weg = −1. Null onder MIN_SMAAK_N. */
+  smaak_score: number | null;
+  smaak_redenen: string[];
   huidig_gewicht: number;
   clip_ids: string[];
   post_urls: string[];
@@ -93,7 +109,11 @@ const RETRO_SYSTEM = `Je bent de Retro-agent van een clipping-tool. Je krijgt pr
 Belangrijk: de cijfers komen uit twee bronnen die even zwaar wegen.
 - eigen_mediaan: hoe onze eigen geposte clips presteerden (outlier-score t.o.v. onze mediaan).
 - extern_mediaan: hoe dezelfde structuur/hook presteerde bij andere accounts die de scout vond. Let op: de scout bewaart alleen posts die al uitschieters waren, dus extern_mediaan ligt per definitie boven 1. Vergelijk slugs daarom ONDERLING (welke scoort hoger dan de andere, met meer waarnemingen), niet tegen de grens van 1.
-De gecombineerde_score is het gewogen gemiddelde van beide.
+De gecombineerde_score is het gewogen gemiddelde van beide, licht bijgestuurd (hooguit ±${Math.round(SMAAK_GEWICHT * 100)}%) door ons eigen oordeel over de renders.
+
+Twee extra, zwakkere signalen:
+- smaak_score (−1 = alles 'weg', +1 = alles 'goed'): hoe de makers zelf renders met deze structuur/hook beoordeelden, met hun redenen. Dat is smaak, geen publiek. Gebruik het alleen als tie-breaker of als bevestiging van een richting die de cijfers al geven; nooit als enige grond, en nooit tegen eigen én externe cijfers in. Zeg in de reden als smaak meewoog.
+- hookvarianten: dezelfde montage met een andere hook, allemaal gepost. Hét zuiverste bewijs voor hooks, maar met weinig waarnemingen: benoem het, en laat één paar geen gewicht omdraaien dat door veel externe data gedragen wordt.
 
 Harde regels:
 - Stel alleen een wijziging voor als eigen_n >= ${MIN_N_PER_GROUP} of extern_n >= ${MIN_N_PER_GROUP}. Je krijgt alleen die groepen.
@@ -115,6 +135,7 @@ Harde regels:
  */
 export async function collectRetroStats(): Promise<GroupStats[]> {
   const supabase = db();
+  const smaak = await collectSmaakSignaal().catch(() => new Map<string, SmaakBucket>());
   const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString();
   const externSinds = new Date(Date.now() - EXTERN_VENSTER_DAGEN * 24 * 3600 * 1000).toISOString();
 
@@ -128,6 +149,7 @@ export async function collectRetroStats(): Promise<GroupStats[]> {
       .from('scout_finds')
       .select('post_url, platform, theme, outlier_score, decoded')
       .not('decoded', 'is', null)
+      .eq('is_basislijn', false)
       .gte('created_at', externSinds),
     loadWeights(),
   ]);
@@ -214,9 +236,18 @@ export async function collectRetroStats(): Promise<GroupStats[]> {
     }
   }
 
+  // Het smaaksignaal hangt alleen aan het algemene niveau: oordelen zijn per
+  // render, niet per platform, en per thema zijn het er te weinig.
+  for (const k of smaak.keys()) {
+    const [entity, slug] = k.split('|') as ['structure' | 'hook', string];
+    bucket(entity, slug, ALL, ALL);
+  }
+
   return [...buckets.values()].map((b) => {
     const eigenMediaan = median(b.eigen);
     const externMediaan = median(b.extern);
+    const sb = b.platform === ALL && b.theme === ALL ? smaak.get(`${b.entity}|${b.slug}`) : undefined;
+    const smaakScore = sb && sb.n >= MIN_SMAAK_N ? Math.round((sb.som / sb.n) * 100) / 100 : null;
     return {
       entity: b.entity,
       slug: b.slug,
@@ -226,7 +257,10 @@ export async function collectRetroStats(): Promise<GroupStats[]> {
       eigen_mediaan: eigenMediaan,
       extern_n: b.extern.length,
       extern_mediaan: externMediaan,
-      gecombineerde_score: combineer(eigenMediaan, externMediaan),
+      gecombineerde_score: bijsturenMetSmaak(combineer(eigenMediaan, externMediaan), smaakScore),
+      smaak_n: sb?.n ?? 0,
+      smaak_score: smaakScore,
+      smaak_redenen: (sb?.redenen ?? []).slice(0, 5),
       huidig_gewicht: weights.resolve(b.entity, b.slug, b.platform, b.theme).weight,
       clip_ids: [...new Set(b.clipIds)],
       post_urls: [...new Set(b.postUrls)],
@@ -240,6 +274,105 @@ export function combineer(eigen: number | null, extern: number | null): number |
   if (eigen === null) return extern;
   if (extern === null) return eigen;
   return EIGEN_GEWICHT * eigen + (1 - EIGEN_GEWICHT) * extern;
+}
+
+/**
+ * Smaak stuurt alleen bij waar er al een score is uit eigen of externe views:
+ * ±SMAAK_GEWICHT relatief (goed overal = ×1.15, weg overal = ×0.85). Zonder
+ * cijfers blijft de score leeg — een oordeel alleen verschuift geen gewicht.
+ */
+export function bijsturenMetSmaak(score: number | null, smaakScore: number | null): number | null {
+  if (score === null || smaakScore === null) return score;
+  return Math.round(score * (1 + SMAAK_GEWICHT * smaakScore) * 1000) / 1000;
+}
+
+type SmaakBucket = { n: number; som: number; redenen: string[] };
+
+/**
+ * Eigen oordelen over renders, teruggevoerd op structuur en hook via het
+ * clip-plan waarmee de render gemaakt is. Een hookvariant telt voor zijn
+ * eigen hook; de structuur is voor alle varianten dezelfde.
+ */
+export async function collectSmaakSignaal(): Promise<Map<string, SmaakBucket>> {
+  const supabase = db();
+  const uit = new Map<string, SmaakBucket>();
+  const { data: oordelen, error } = await supabase
+    .from('render_beoordelingen')
+    .select('render_job_id, bestand_naam, clip_index, hook_variant, oordeel, reden');
+  if (error || !oordelen?.length) return uit;
+
+  const jobIds = [...new Set(oordelen.map((o) => o.render_job_id as string))];
+  const { data: jobs } = await supabase
+    .from('render_jobs')
+    .select('id, video_id, clip_index, titel, status, bestanden, created_at, gestart_at, klaar_at')
+    .in('id', jobIds);
+  const plannen = new Map<string, Awaited<ReturnType<typeof planVoorRender>>>();
+  for (const job of (jobs ?? []) as RenderJobRij[]) plannen.set(job.id, await planVoorRender(job).catch(() => null));
+
+  const WAARDE = { goed: 1, matig: 0, weg: -1 } as const;
+  for (const o of oordelen) {
+    const plan = plannen.get(o.render_job_id as string);
+    if (!plan) continue;
+    const nummer = (o.clip_index as number | null) ?? clipNummerUitNaam(o.bestand_naam as string);
+    const info = planInfo(plan.plan, nummer, (o.hook_variant as number | null) ?? 1);
+    const waarde = WAARDE[o.oordeel as keyof typeof WAARDE] ?? 0;
+    for (const [entity, slug] of [
+      ['structure', info.structure_type],
+      ['hook', info.hook_type],
+    ] as const) {
+      if (!slug) continue;
+      const k = `${entity}|${slug}`;
+      const sb = uit.get(k) ?? { n: 0, som: 0, redenen: [] };
+      sb.n++;
+      sb.som += waarde;
+      if (o.reden) sb.redenen.push(`${o.oordeel}: ${String(o.reden).slice(0, 120)}`);
+      uit.set(k, sb);
+    }
+  }
+  return uit;
+}
+
+export type HookVariantVergelijking = {
+  render_job_id: string;
+  clip: number | null;
+  varianten: {
+    hook_variant: number;
+    hook_type: string | null;
+    hook_text: string | null;
+    platform: string | null;
+    views_24h: number | null;
+    views_7d: number | null;
+  }[];
+};
+
+/**
+ * Hookvarianten van dezelfde render die allebei gepost zijn: dezelfde montage,
+ * alleen een andere hook. Zuiverder A/B-bewijs voor hooks bestaat hier niet.
+ */
+export async function collectHookVariantVergelijking(): Promise<HookVariantVergelijking[]> {
+  const { data, error } = await db()
+    .from('clips')
+    .select('render_job_id, render_bestand, hook_variant, hook_type, hook_text, platform, clip_performance(views_24h, views_7d)')
+    .not('render_job_id', 'is', null)
+    .eq('status', 'posted');
+  if (error) return [];
+  const groepen = new Map<string, HookVariantVergelijking>();
+  for (const c of data ?? []) {
+    const clip = clipNummerUitNaam((c.render_bestand as string | null) ?? '');
+    const k = `${c.render_job_id}|${clip}`;
+    const g = groepen.get(k) ?? { render_job_id: c.render_job_id as string, clip, varianten: [] };
+    const perf = one<{ views_24h: number | null; views_7d: number | null }>(c.clip_performance);
+    g.varianten.push({
+      hook_variant: (c.hook_variant as number | null) ?? 1,
+      hook_type: (c.hook_type as string | null) ?? null,
+      hook_text: (c.hook_text as string | null) ?? null,
+      platform: (c.platform as string | null) ?? null,
+      views_24h: perf?.views_24h ?? null,
+      views_7d: perf?.views_7d ?? null,
+    });
+    groepen.set(k, g);
+  }
+  return [...groepen.values()].filter((g) => new Set(g.varianten.map((v) => v.hook_variant)).size >= 2);
 }
 
 /**
@@ -282,6 +415,8 @@ export async function runRetroAgent(): Promise<{ agentRunId: string; proposal: R
   const eligible = stats.filter((s) => s.eigen_n >= MIN_N_PER_GROUP || s.extern_n >= MIN_N_PER_GROUP);
   const kandidaten = await collectHeuristiekKandidaten();
   const toetsbaar = kandidaten.filter((k) => k.toetsbaar);
+  const hookVarianten = await collectHookVariantVergelijking().catch(() => []);
+  const smaakGroepen = stats.filter((s) => s.smaak_score !== null);
   const eigenDataOntbreekt = !stats.some((s) => s.eigen_n >= MIN_N_PER_GROUP);
 
   let proposal: RetroProposal;
@@ -319,6 +454,27 @@ ${laatsteWijzigingen || '— (nog geen)'}
 
 === GROEPEN DIE DE DREMPEL HALEN (${eligible.length}) ===
 ${eigenDataOntbreekt ? `Let op: geen enkele groep heeft eigen_n >= ${MIN_N_PER_GROUP}. Alles hieronder steunt uitsluitend op externe vondsten.\n` : ''}${JSON.stringify(eligible, null, 1)}
+
+=== EIGEN SMAAK (zwak signaal; ${smaakGroepen.length} slugs met >= ${MIN_SMAAK_N} oordelen) ===
+${
+  smaakGroepen.length
+    ? JSON.stringify(
+        smaakGroepen.map((g) => ({
+          entity: g.entity,
+          slug: g.slug,
+          smaak_n: g.smaak_n,
+          smaak_score: g.smaak_score,
+          redenen: g.smaak_redenen,
+          heeft_cijfers: g.eigen_n >= MIN_N_PER_GROUP || g.extern_n >= MIN_N_PER_GROUP,
+        })),
+        null,
+        1,
+      )
+    : '— (nog te weinig oordelen)'
+}
+
+=== HOOKVARIANTEN VAN DEZELFDE RENDER, ALLEMAAL GEPOST (${hookVarianten.length}) ===
+${hookVarianten.length ? JSON.stringify(hookVarianten, null, 1) : '— (nog geen geposte varianten naast elkaar)'}
 
 === KANDIDAAT-HEURISTIEKEN VAN DE SCOUT (${kandidaten.length}, waarvan ${toetsbaar.length} toetsbaar) ===
 ${JSON.stringify(
@@ -363,6 +519,8 @@ ${JSON.stringify(
         eigen_data_ontbreekt: eigenDataOntbreekt,
         kandidaat_heuristieken: kandidaten.length,
         toetsbaar: toetsbaar.length,
+        smaak_groepen: smaakGroepen.length,
+        hookvarianten: hookVarianten,
         stats,
         heuristieken: kandidaten,
       },

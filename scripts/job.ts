@@ -144,8 +144,53 @@ async function main() {
       for (const f of r.fouten.slice(0, 5)) console.log(`  fout: ${f.slice(0, 160)}`);
       break;
     }
+    case 'smaak': {
+      // Leerlus: eigen oordelen + eigen cijfers naast externe normen → lessen.
+      const { runSmaakAgent } = await import('../src/lib/agents/smaak');
+      const r = await metRetry(() => runSmaakAgent());
+      if (r.overgeslagen) {
+        console.log(`${stamp} smaak: overgeslagen — ${r.overgeslagen}`);
+        break;
+      }
+      console.log(
+        `${stamp} smaak: ${r.lessen.filter((l) => l.bewaard).length}/${r.lessen.length} les(sen) bewaard uit ${r.nieuweBeoordelingen} nieuwe beoordeling(en) — ${r.samenvatting.slice(0, 160)} (run ${r.agentRunId})`,
+      );
+      for (const l of r.lessen) console.log(`  ${l.bewaard ? '+' : '='} [${l.categorie}] ${l.titel} — ${l.bron}`);
+      for (const a of r.afgevallen) console.log(`  - afgevallen: ${a}`);
+      break;
+    }
+    case 'render_vingerafdruk': {
+      // Eigen renders meetbaar maken, zodat oordelen en cijfers aan montagekenmerken te koppelen zijn.
+      const { runRenderVingerafdruk } = await import('../src/lib/agents/smaak');
+      const r = await metRetry(() => runRenderVingerafdruk());
+      console.log(
+        `${stamp} render_vingerafdruk: ${r.gedaan} gemeten, ${r.mislukt} mislukt, ${r.open} nog open` +
+          (r.overgeslagen ? ` — ${r.overgeslagen}` : ''),
+      );
+      break;
+    }
+    case 'vingerafdruk': {
+      // Leren van anderen: top-vondsten en basislijnposts meten, daarna de
+      // edit-normen herberekenen (VINGERAFDRUK_BATCH, standaard 15 per groep).
+      const { runVingerafdrukJob, vingerafdrukSamenvatting } = await import('../src/lib/analyse/vondsten');
+      const r = await metRetry(() => runVingerafdrukJob());
+      console.log(
+        `${stamp} vingerafdruk: ${r.gemeten.top} top + ${r.gemeten.basis} basislijn gemeten, ${r.fouten.length} mislukt` +
+          (r.gestoptOpTijd ? ' (gestopt op tijdsbudget)' : '') +
+          ` (run ${r.agentRunId})`,
+      );
+      for (const f of r.fouten.slice(0, 5)) console.log(`  fout @${f.handle}: ${f.fout.slice(0, 200)}`);
+      const voorbeeld = vingerafdrukSamenvatting(r.voorbeeld);
+      if (voorbeeld) console.log(`  voorbeeld: ${voorbeeld.replace(/\n/g, ' | ')}`);
+      if (r.normFout) console.log(`  FOUT normen: ${r.normFout.slice(0, 200)}`);
+      for (const n of r.normen?.rijen ?? []) {
+        console.log(`  normen ${n.platform}/${n.theme}: ${n.normen} norm(en), bron ${n.bron} (top ${n.n_top}, basis ${n.n_basis}, eigen ${n.n_eigen})`);
+      }
+      for (const w of r.normen?.waarschuwingen ?? []) console.log(`  let op: ${w}`);
+      break;
+    }
     default:
-      console.error('Gebruik: npx tsx scripts/job.ts <tracking|scout|retro|kanaal|kennis|cliparmy|kijken|editleraar|editleraar_visueel|trends|consolideer>');
+      console.error('Gebruik: npx tsx scripts/job.ts <tracking|scout|retro|kanaal|kennis|cliparmy|kijken|editleraar|editleraar_visueel|trends|consolideer|smaak|render_vingerafdruk|vingerafdruk>');
       process.exit(1);
   }
 }

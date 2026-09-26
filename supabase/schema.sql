@@ -557,3 +557,67 @@ alter table agent_runs add constraint agent_runs_agent_check
 -- zodat de retro ze kan toetsen en activeren.
 alter table vault_heuristics add column if not exists theme text;
 alter table vault_heuristics add column if not exists evidence jsonb;
+
+
+-- ============================================================ leerlus + edit-normen (sep 2026)
+-- Smaak-feedback per gerenderd bestand: het oordeel van wie de clip bekijkt
+-- ("goed / matig / weg" + één zin waarom). Dit is naast views de tweede
+-- trainingsbron, en de enige die er al is vóór er gepost wordt.
+create table if not exists render_beoordelingen (
+  id uuid primary key default gen_random_uuid(),
+  render_job_id uuid not null references render_jobs(id) on delete cascade,
+  bestand_naam text not null,
+  video_id uuid references videos(id) on delete cascade,
+  clip_index int,
+  hook_variant int,
+  oordeel text not null check (oordeel in ('goed', 'matig', 'weg')),
+  reden text,
+  -- Optioneel: deze render hoort bij de eval-set (vaste referentieclips
+  -- waartegen je een wijziging kúnt toetsen; niets blokkeert erop).
+  eval_case boolean not null default false,
+  beoordeeld_door text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (render_job_id, bestand_naam)
+);
+
+-- Een geposte clip weet uit welke render (en welke hookvariant) hij komt,
+-- zodat views terug te voeren zijn op montagekeuzes.
+alter table clips add column if not exists render_job_id uuid references render_jobs(id) on delete set null;
+alter table clips add column if not exists render_bestand text;
+alter table clips add column if not exists hook_variant int;
+
+-- Edit-vingerafdruk: meetbare montagekenmerken (knippen, tempo, tekst in
+-- beeld, eerste seconden) van externe clips. Basislijn-vondsten zijn gewone
+-- posts van hetzelfde account: zonder die vergelijking weet je niet wat een
+-- uitschieter anders doet dan het account normaal doet.
+alter table scout_finds add column if not exists vingerafdruk jsonb;
+alter table scout_finds add column if not exists is_basislijn boolean not null default false;
+
+-- Geaggregeerde normen per platform/thema: wat top-clips meetbaar anders doen
+-- dan de basislijn (extern) en dan onze eigen 'weg'-renders (eigen).
+create table if not exists edit_normen (
+  id uuid primary key default gen_random_uuid(),
+  platform text not null default 'all',
+  theme text not null default 'all',
+  normen jsonb not null,
+  doelen jsonb not null,
+  n_top int not null default 0,
+  n_basis int not null default 0,
+  n_eigen int not null default 0,
+  created_at timestamptz not null default now()
+);
+create index if not exists edit_normen_recent on edit_normen (platform, theme, created_at desc);
+
+-- Optionele smaak-eval: uitslag per run, alleen als je hem zelf start.
+create table if not exists smaak_eval_runs (
+  id uuid primary key default gen_random_uuid(),
+  config jsonb not null default '{}'::jsonb,
+  uitslag jsonb not null,
+  score numeric,
+  created_at timestamptz not null default now()
+);
+
+alter table agent_runs drop constraint if exists agent_runs_agent_check;
+alter table agent_runs add constraint agent_runs_agent_check
+  check (agent in ('retro', 'scout', 'eval', 'kennis', 'trends', 'consolideer', 'vingerafdruk', 'smaak'));

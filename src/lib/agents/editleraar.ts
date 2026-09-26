@@ -1,4 +1,5 @@
 import { rm } from 'node:fs/promises';
+import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { z } from 'zod';
 import { structuredCall } from '../claude';
@@ -11,6 +12,7 @@ import { EFFECTEN } from '../vault/effecten';
 import { EDITCRAFT } from '../vault/editcraft';
 import { ONDERZOEK } from '../vault/onderzoek';
 import { bewaarKennis } from '../vault/kennis';
+import { isMeting, meetEnBewaarVondst, vingerafdrukSamenvatting } from '../analyse/vondsten';
 
 /**
  * De editleraar: traint de vault expliciet op editvakmanschap, met
@@ -315,8 +317,10 @@ export async function runEditleraarVisueel(aantal = 4): Promise<{ effecten: numb
 
   const { data } = await supabase
     .from('scout_finds')
-    .select('id, post_url, handle, platform, outlier_score, decoded')
+    .select('id, post_url, handle, platform, outlier_score, decoded, vingerafdruk')
     .not('post_url', 'is', null)
+    // Basislijnposts zijn gewone posts ter vergelijking, geen vondsten om van te leren.
+    .eq('is_basislijn', false)
     .order('outlier_score', { ascending: false, nullsFirst: false })
     .limit(30);
 
@@ -337,11 +341,28 @@ export async function runEditleraarVisueel(aantal = 4): Promise<{ effecten: numb
         throw new Error(`geen frames: ${frames.fout ?? 'onbekende oorzaak'}`);
       }
 
+      // Zelfde hergebruik als in kijken.ts: gemeten ritme meegeven, en de
+      // vingerafdruk meten op deze download als hij er nog niet is.
+      let vinger: unknown = isMeting(find.vingerafdruk) ? find.vingerafdruk : null;
+      if (!vinger) {
+        try {
+          vinger = await meetEnBewaarVondst(
+            { id: find.id as string, post_url: find.post_url as string },
+            { bestand: join(frames.map, 'bron.mp4') },
+          );
+        } catch (e) {
+          console.warn(`[editleraar] vingerafdruk van @${find.handle} mislukt: ${(e as Error).message.slice(0, 160)}`);
+        }
+      }
+      const gemeten = vingerafdrukSamenvatting(vinger);
+
       const oordeel = await structuredCall({
         system: `${VISUEEL_SYSTEM}\n\n${EFFECTEN}`,
         user: `Clip van @${find.handle} op ${find.platform}${
           find.outlier_score ? ` (${find.outlier_score}x de mediaan van dat account)` : ''
-        }. Duur: ${frames.duur ? `${Math.round(frames.duur)} seconden` : 'onbekend'}.`,
+        }. Duur: ${frames.duur ? `${Math.round(frames.duur)} seconden` : 'onbekend'}.${
+          gemeten ? `\n\nGEMETEN (ffmpeg): ${gemeten}\nDe wisseltijdstippen: ${isMeting(vinger) ? vinger.wissels.slice(0, 30).join(', ') : '—'} s — kijk vooral rond die momenten naar overgangen.` : ''
+        }`,
         schema: visueelSchema,
         toolName: 'lever_effectanalyse',
         toolDescription: 'Lever de gevonden effecten in deze clip.',

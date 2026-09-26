@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { optionalEnv } from '@/lib/env';
 import { db } from '@/lib/supabase';
 import { r2SignedUrl } from '@/lib/r2';
+import { feedbackVoorRenders, startRenderCloudRun } from '@/lib/tracking/leerlus';
 
 /** Downloadlinks blijven een uur geldig; lang genoeg om te downloaden, kort genoeg om niet te lekken. */
 const LINK_GELDIG_SECONDEN = 3600;
@@ -19,6 +19,11 @@ export async function GET(req: NextRequest) {
 
   const { data, error } = await query;
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+  // Oordeel en post-status per bestand, voor de leerlus in het paneel.
+  const feedback = await feedbackVoorRenders((data ?? []).filter((j) => j.status === 'klaar').map((j) => j.id as string)).catch(
+    () => new Map(),
+  );
 
   const jobs = await Promise.all(
     (data ?? []).map(async (job) => {
@@ -46,6 +51,8 @@ export async function GET(req: NextRequest) {
             hook_tekst: b.hook_tekst ?? null,
             keuring_status: b.keuring?.status ?? (b.keuring ? (b.keuring.goed === false ? 'review_nodig' : 'goed') : null),
             keuring_fouten: regels.filter((r) => r.goed === false).map((r) => `${r.naam}: ${r.detail}`),
+            beoordeling: feedback.get(`${job.id}|${b.naam}`)?.beoordeling ?? null,
+            gepost: feedback.get(`${job.id}|${b.naam}`)?.gepost ?? null,
           };
         }),
       );
@@ -101,34 +108,6 @@ export async function POST(req: NextRequest) {
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  const directGestart = await startCloudRun();
+  const directGestart = await startRenderCloudRun();
   return NextResponse.json({ job: data, direct_gestart: directGestart });
-}
-
-/**
- * Geeft de cloud-workflow meteen een zetje in plaats van te wachten op de
- * kwartiercheck. Best-effort: faalt dit (token verlopen, GitHub plat), dan
- * pakt de geplande run de opdracht alsnog op — de wachtrij is de waarheid,
- * dit is alleen de versneller.
- */
-async function startCloudRun(): Promise<boolean> {
-  const token = optionalEnv('GH_DISPATCH_TOKEN');
-  if (!token) return false;
-
-  try {
-    const repo = optionalEnv('GH_REPO', 'BenxFPG1/clipper-os');
-    const res = await fetch(`https://api.github.com/repos/${repo}/actions/workflows/roughcut.yml/dispatches`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: 'application/vnd.github+json',
-        'X-GitHub-Api-Version': '2022-11-28',
-      },
-      body: JSON.stringify({ ref: 'master' }),
-      signal: AbortSignal.timeout(10_000),
-    });
-    return res.status === 204;
-  } catch {
-    return false;
-  }
 }

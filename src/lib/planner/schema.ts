@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 export const SCHEMA_VERSION = '1.0';
 export const PROMPT_VERSION_CHARACTER_MAP = 'charmap-3.1';
-export const PROMPT_VERSION_PLAN = 'plan-6.1';
+export const PROMPT_VERSION_PLAN = 'plan-6.2';
 
 // ------------------------------------------------------- stap 1: character map
 export const sleutelmomentSchema = z.object({
@@ -91,6 +91,18 @@ export const shotSchema = z.object({
   spanning: z.number().min(1).max(10).optional(),
 });
 
+/**
+ * Het scroll-stop-oordeel van het examen: stopt de duim bij deze opening, op
+ * basis van de meetdata (instap, hookbeeld, eerste drie seconden)? Telt mee
+ * in de score — een clip die niemand laat stoppen heeft geen verhaal nodig om
+ * te falen. `pasScrollStopToe` dwingt dat ook in code af.
+ */
+export const scrollStopSchema = z.object({
+  oordeel: z.enum(['stopt', 'twijfel', 'scrollt_door']),
+  waarom: z.string().describe('Welke meetdata (instap, hookbeeld, eerste 3 s) dit oordeel draagt.'),
+});
+export type ScrollStop = z.infer<typeof scrollStopSchema>;
+
 export const clipSchema = z.object({
   titel_intern: z.string(),
   structure_type: z.string(),
@@ -167,6 +179,8 @@ export const clipSchema = z.object({
   waarom_dit_werkt: z.string(),
   muziek: z.string().optional(),
   kader: z.enum(['staand', 'vullend', 'blur', 'origineel']).optional(),
+  /** Optioneel: oudere plannen hebben het niet; het examen vult het altijd (zie examenClipSchema). */
+  scroll_stop: scrollStopSchema.optional(),
 });
 
 export const clipPlanSchema = z.object({
@@ -188,7 +202,8 @@ export type ClipPlan = z.infer<typeof clipPlanSchema>;
 export const examenShotSchema = shotSchema.omit({ sfx: true, beeld_effect: true, effect_waarom: true, focus: true });
 export const examenClipSchema = clipSchema
   .omit({ muziek: true, kader: true })
-  .extend({ shots: z.array(examenShotSchema).min(1) });
+  // scroll_stop is hier verplicht: optioneel liet het model het weg.
+  .extend({ shots: z.array(examenShotSchema).min(1), scroll_stop: scrollStopSchema });
 export const examenPlanSchema = z.object({
   clips: z.array(examenClipSchema).min(1),
 });

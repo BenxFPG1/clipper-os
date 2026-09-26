@@ -157,11 +157,14 @@ export function poort(
     for (const seg of uit) {
       const vorig = [...bronWoorden].reverse().find((w) => w.e <= seg.start + 0.02);
       const gatVoor = vorig ? Math.max(0, seg.start - vorig.e) : 1;
-      seg.start = Math.max(0, seg.start - Math.min(ADEM_VOOR, gatVoor / 2));
+      // Een strakke kant (retentieknip) heeft zijn rest-stilte al: ademruimte
+      // erbij zou de weggeknipte pauze per poortronde laten teruggroeien, en
+      // bij een kaderwissel in doorlopende spraak het buursegment overlappen.
+      if (!seg.strakBegin) seg.start = Math.max(0, seg.start - Math.min(ADEM_VOOR, gatVoor / 2));
 
       const volgend = bronWoorden.find((w) => w.s >= seg.end - 0.02);
       const gatNa = volgend ? Math.max(0, volgend.s - seg.end) : 1;
-      seg.end += Math.min(ADEM_NA, gatNa / 2);
+      if (!seg.strakEind) seg.end += Math.min(ADEM_NA, gatNa / 2);
 
       // Praat de spreker aan deze kant door, dan ís er geen stilte om mee te
       // nemen. Toch mag een woord niet abrupt stoppen — dat is precies het
@@ -173,8 +176,8 @@ export function poort(
       // knip nooit binnen een woord valt: de poort schoof hem meteen weer
       // terug, eindeloos heen en weer. De grens blijft dus op het woord staan;
       // wat de abruptheid verzacht is de langere fade, en die kost geen inhoud.
-      if (gatVoor < 0.12) seg.zachtBegin = true;
-      if (gatNa < 0.12) seg.zachtEind = true;
+      if (gatVoor < 0.12 && !seg.strakBegin) seg.zachtBegin = true;
+      if (gatNa < 0.12 && !seg.strakEind) seg.zachtEind = true;
     }
   }
 

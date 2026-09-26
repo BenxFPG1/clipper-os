@@ -48,6 +48,16 @@ export const MIN_ACCOUNT_MEDIAAN = Number(process.env.MIN_ACCOUNT_MEDIAAN ?? 500
  */
 export const MAX_VOLG_MEDIAAN = Number(process.env.MAX_VOLG_MEDIAAN ?? 5_000_000);
 
+/**
+ * Basislijn voor de edit-vingerafdruk: per gevolgd account ook een paar
+ * gewone posts (rond de eigen mediaan, zelfde periode) bewaren. Zonder die
+ * vergelijking weet je alleen wat uitschieters doen, niet wat ze ánders doen
+ * dan hetzelfde account op een gewone dag — en dat verschil is de les
+ * (src/lib/vault/normen.ts). Geen Claude-decodering: ze worden alleen gemeten.
+ */
+export const BASISLIJN_PER_ACCOUNT = 2;
+export const MAX_BASISLIJN_PER_RUN = 40;
+
 /** Een kandidaat-heuristiek moet over minstens zoveel verschillende accounts terugkomen. */
 export const MIN_ACCOUNTS_PER_HEURISTIEK = 2;
 /**
@@ -198,6 +208,7 @@ export async function runScoutAgent(options?: { limitPerAccount?: number }): Pro
   }
 
   const outliers: Outlier[] = [];
+  const basislijn: Outlier[] = [];
   const fouten: { bron: string; error: string }[] = [];
 
   // Reels loopt uitsluitend via de betaalde provider. Zodra die 402 geeft
@@ -283,6 +294,21 @@ export async function runScoutAgent(options?: { limitPerAccount?: number }): Pro
 
       const meting = meetAccount(posts);
       if (!meting) continue;
+
+      for (const post of kiesBasislijn(meting.recent, meting.mediaan)) {
+        const vpd = viewsPerDag(post);
+        basislijn.push({
+          ...post,
+          handle: handleUitUrl(post.post_url, post.handle ?? account.handle),
+          platform,
+          outlier_score: round2(post.views! / meting.mediaan),
+          views_per_dag: vpd !== null ? Math.round(vpd) : null,
+          theme: (account.theme as string | null) ?? null,
+          gevonden_via: `basislijn:@${account.handle}`,
+          accountId: account.id,
+          bron: 'account',
+        });
+      }
 
       for (const post of meting.recent) {
         if (post.views === null || !post.post_url) continue;
@@ -458,6 +484,8 @@ export async function runScoutAgent(options?: { limitPerAccount?: number }): Pro
       .from('scout_finds')
       .select('tracked_account_id, handle, platform, post_url, posted_at, views, likes, comments, outlier_score, views_per_dag, gevonden_via, theme, caption, transcript')
       .is('decoded', null)
+      // Basislijn-rijen worden bewust niet gedecodeerd (alleen gemeten).
+      .eq('is_basislijn', false)
       .order('created_at', { ascending: false })
       .limit(15);
     for (const rij of achterstallig ?? []) {
@@ -550,6 +578,9 @@ export async function runScoutAgent(options?: { limitPerAccount?: number }): Pro
       gevonden_via: outlier.gevonden_via,
       theme: outlier.theme,
       caption: outlier.caption,
+      // Een post die eerder als gewone basislijnpost bewaard is en nu
+      // uitschiet, is vanaf nu een vondst.
+      is_basislijn: false,
     };
     if (outlier.transcript) rij.transcript = { tekst: outlier.transcript };
     if (analyse) {
@@ -563,6 +594,8 @@ export async function runScoutAgent(options?: { limitPerAccount?: number }): Pro
     }
   }
 
+  const basislijnBewaard = await bewaarBasislijn(basislijn, new Set(teDecoderen.map((o) => o.post_url)), fouten);
+
   const nieuweAccounts = await volgOntdekteAccounts(teDecoderen, provider, fouten, reelsGeblokkeerd !== null);
   const kandidaten = await schrijfKandidaten(decoded, teDecoderen);
 
@@ -574,6 +607,7 @@ export async function runScoutAgent(options?: { limitPerAccount?: number }): Pro
       accounts_bekeken: accountsBekeken,
       zoektermen: queries.length,
       posts_bekeken: outliers.length,
+      basislijn_bewaard: basislijnBewaard,
       gedecodeerd: decoded.posts.length,
       met_transcript: transcriptAanwezig.size,
       reels_geblokkeerd: reelsGeblokkeerd,
@@ -609,6 +643,60 @@ export async function runScoutAgent(options?: { limitPerAccount?: number }): Pro
     reelsGeblokkeerd,
     status,
   };
+}
+
+/**
+ * Gewone posts van een account: dicht bij de eigen mediaan (factor 0,5–2,
+ * dus ver onder de uitschieterdrempel), met URL en views. Dichtst bij de
+ * mediaan eerst — dat is "hoe dit account normaal presteert". Puur.
+ */
+export function kiesBasislijn(recent: AccountPost[], mediaan: number, aantal = BASISLIJN_PER_ACCOUNT): AccountPost[] {
+  if (!mediaan || mediaan <= 0) return [];
+  return recent
+    .filter((p) => p.post_url && p.views !== null && p.views > 0)
+    .filter((p) => p.views! / mediaan >= 0.5 && p.views! / mediaan < 2)
+    .sort((a, b) => Math.abs(Math.log(a.views! / mediaan)) - Math.abs(Math.log(b.views! / mediaan)))
+    .slice(0, aantal);
+}
+
+/**
+ * Bewaart basislijnposts zonder bestaande rijen aan te raken: een post die al
+ * als vondst in de tabel staat blijft een vondst (ignoreDuplicates), en wat
+ * deze run als uitschieter binnenkwam gaat sowieso voor.
+ */
+async function bewaarBasislijn(
+  basislijn: Outlier[],
+  alsVondst: Set<string>,
+  fouten: { bron: string; error: string }[],
+): Promise<number> {
+  const rijen = dedupeByUrl(basislijn)
+    .filter((b) => !alsVondst.has(b.post_url))
+    .slice(0, MAX_BASISLIJN_PER_RUN)
+    .map((b) => ({
+      tracked_account_id: b.accountId,
+      handle: b.handle ?? 'onbekend',
+      platform: b.platform,
+      post_url: b.post_url,
+      posted_at: b.posted_at,
+      views: b.views,
+      likes: b.likes,
+      comments: b.comments,
+      // De verhouding tot de accountmediaan (~1) bewaren we wél: dat maakt
+      // zichtbaar dat dit echt een gewone post is.
+      outlier_score: b.outlier_score,
+      views_per_dag: b.views_per_dag,
+      gevonden_via: b.gevonden_via,
+      theme: b.theme,
+      caption: b.caption,
+      is_basislijn: true,
+    }));
+  if (rijen.length === 0) return 0;
+  const { error } = await db().from('scout_finds').upsert(rijen, { onConflict: 'post_url', ignoreDuplicates: true });
+  if (error) {
+    fouten.push({ bron: 'opslaan:basislijn', error: error.message });
+    return 0;
+  }
+  return rijen.length;
 }
 
 /**

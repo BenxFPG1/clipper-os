@@ -40,6 +40,7 @@ export async function POST(req: NextRequest) {
       .from('scout_finds')
       .select('caption, handle, platform, outlier_score')
       .eq('theme', slug)
+      .eq('is_basislijn', false)
       .order('outlier_score', { ascending: false, nullsFirst: false })
       .limit(25),
   ]);

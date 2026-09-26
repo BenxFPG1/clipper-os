@@ -1,8 +1,9 @@
 import Link from 'next/link';
 import { db, one } from '@/lib/supabase';
-import { laadWerkStatus, type StapStatus } from '@/lib/status';
+import { laadLeerlus, laadWerkStatus, type StapStatus } from '@/lib/status';
 import { datumTijd } from '@/lib/format';
 import { NuBezig } from './nu-bezig';
+import { LeerlusBlok } from './leerlus-blok';
 
 export const dynamic = 'force-dynamic';
 
@@ -66,9 +67,10 @@ import { ClipArmyBookmarklet } from './cliparmy-bookmarklet';
 import { ClipArmySessie } from './cliparmy-sessie';
 
 export default async function DashboardPage() {
-  const [{ campaigns, perStatus, totalViews, topClip, videosPer, briefsPer, sessie }, werk] = await Promise.all([
+  const [{ campaigns, perStatus, totalViews, topClip, videosPer, briefsPer, sessie }, werk, leerlus] = await Promise.all([
     loadDashboard(),
     laadWerkStatus(),
+    laadLeerlus(),
   ]);
   const perCampagneStatus = new Map(werk.perCampagne.map((c) => [c.id, c]));
 
@@ -97,6 +99,8 @@ export default async function DashboardPage() {
         <h2 className="mb-3 text-lg font-medium">Nu bezig</h2>
         <NuBezig taken={werk.lopend} />
       </section>
+
+      <LeerlusBlok status={leerlus} />
 
       <section className="rounded border border-neutral-800 p-4">
         <h2 className="text-sm uppercase tracking-wide text-neutral-500">Claude-verbruik vandaag</h2>

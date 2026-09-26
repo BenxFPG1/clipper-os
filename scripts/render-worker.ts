@@ -52,6 +52,15 @@ import { controleerScript } from '../src/lib/roughcut/scriptcontrole';
 import { haalBronWoorden, vindFragment } from '../src/lib/roughcut/woorden';
 import { poort, verzetGrens } from '../src/lib/roughcut/poort';
 import { keurMontage, type Keuringsrapport } from '../src/lib/roughcut/keuring';
+import {
+  keurRetentie,
+  meetRetentie,
+  pasRetentieToe,
+  samenvatVoorEditAgent,
+  type Kaart,
+  type RetentieResultaat,
+} from '../src/lib/roughcut/retentie';
+import { editDoelen, type NormContext } from '../src/lib/vault/normen';
 import { resolveBinary } from '../src/lib/ingest/binaries';
 import { pythonMetOpenCV } from '../src/lib/python';
 import { pakFrames } from '../src/lib/roughcut/frames';
@@ -227,6 +236,27 @@ async function verwerk(job: Job) {
   // spraakpauze-knippen en de gezichtsfocus die de rest wel krijgt.
   const bronPad = await zorgVoorBron(video.source_url, bronmap, (m) => console.log(`  ${m}`));
 
+  // De brontranscriptie is de enige waarheid voor knipgrenzen. Eenmalig per
+  // video, daarna uit de cache. Al vóór de edit-agent: die krijgt per clip
+  // de retentiecurve mee, en die is op woordtijden gemeten.
+  const bronWoorden = await haalBronWoorden(job.video_id, bronPad, {
+    log: (m) => console.log(`  ${m}`),
+  });
+
+  // De retentiedoelen van deze campagne: wat top-clips van anderen meetbaar
+  // doen (editDoelen), per platform en thema. Eén keer per opdracht.
+  const normContext = await campagneContext(supabase, job.video_id);
+  const doelen = await editDoelen(normContext).catch(() => null);
+  if (doelen) {
+    console.log(
+      `  retentiedoelen: eerste wissel ≤ ${doelen.eersteKnipMaxS} s, beeld ≤ ${doelen.maxSecondenZonderVisueleVerandering} s, ` +
+        `pauze ≤ ${doelen.maxPauzeS} s, tekst ≤ ${doelen.maxSecondenZonderTekst} s (${doelen.bron}, n=${doelen.n}` +
+        `${normContext.platform || normContext.theme ? `, ${normContext.platform ?? 'all'}/${normContext.theme ?? 'all'}` : ''})`,
+    );
+  } else {
+    console.log('  retentiedoelen niet te laden; retentie-editor staat uit');
+  }
+
   // De edit-agent bepaalt hoe er gemonteerd wordt: kader, focus, ingrepen,
   // kaarten en muziek per shot. Eén call voor alle clips, bewaard bij het
   // plan — een herrender kost dus niets extra.
@@ -241,8 +271,30 @@ async function verwerk(job: Job) {
     try {
       console.log('  gezichtsmeting voor de edit-agent…');
       const meetdata = await meetPlanShots(bronPad, clips);
+      // Per clip een voorlopige risicocurve op de planshots: de agent moet
+      // weten wáár de kijker afhaakt om zijn ingrepen daar te leggen.
+      const retentie: Record<number, string> = {};
+      if (doelen && bronWoorden) {
+        clips.forEach((c, i) => {
+          const hook = c.hook?.tekst_overlay;
+          const shots = [...c.shots].sort((a, b) => a.volgorde - b.volgorde).map((sh) => ({ ...sh }));
+          retentie[i + 1] = samenvatVoorEditAgent(
+            meetRetentie(shots, {
+              bronWoorden,
+              doelen,
+              kaarten: hook ? [{ start: 0, end: hookDuur(hook) }] : [],
+              ondertitels: true,
+            }),
+          );
+        });
+      }
       console.log('  edit-agent ontwerpt de montage…');
-      editPlan = await runEditAgent(job.video_id, { meetdata, onVoortgang: (m) => console.log(`  ${m}`) });
+      editPlan = await runEditAgent(job.video_id, {
+        meetdata,
+        retentie,
+        normContext,
+        onVoortgang: (m) => console.log(`  ${m}`),
+      });
       console.log(`  montagebeslissingen voor ${editPlan.clips.length} clip(s)`);
     } catch (e) {
       console.log(`  edit-agent niet beschikbaar (${(e as Error).message.slice(0, 80)}); standaardregels`);
@@ -265,12 +317,6 @@ async function verwerk(job: Job) {
 
   // Zit er muziek of ruis onder de spraak? Alleen dan is ruisonderdrukking
   // gerechtvaardigd; op schone bron maakt hij de stem juist slechter.
-  // De brontranscriptie is de enige waarheid voor knipgrenzen. Eenmalig per
-  // video, daarna uit de cache.
-  const bronWoorden = await haalBronWoorden(job.video_id, bronPad, {
-    log: (m) => console.log(`  ${m}`),
-  });
-
   let ruisvloer: number | null = null;
   try {
     ruisvloer = await meetRuisvloer(bronPad, stiltes ?? []);
@@ -654,6 +700,20 @@ async function verwerk(job: Job) {
     // anders staat dezelfde kaart er twee keer. De hookkaart zelf zit hier
     // níet bij: die wordt ná alle controles per variant over de montage
     // gebrand (brandOverlays), zodat drie hooks één render kosten.
+    // Uitvalrisico's uit de retentie-simulatie van het plan die als kaart
+    // gezet worden: op de genoemde seconde, als de fix als regel te lezen is.
+    // Eén functie voor de overlays én voor de retentiemeting, zodat die
+    // dezelfde kaarten ziet als de render.
+    const uitvalKaarten = (totaal: number) =>
+      (clip.uitval_risicos ?? [])
+        .map((risico, i) => ({ i, tekst: kaartRegelUit(risico.fix), seconde: risico.seconde }))
+        .filter((k): k is { i: number; tekst: string; seconde: number } =>
+          Boolean(k.tekst) && k.seconde >= hookTot + 1 && k.seconde <= totaal - 1.5,
+        );
+    // Gevuld door de retentie-editor verderop; de re-hookkaart gaat mee in de overlays.
+    let retentie: RetentieResultaat | null = null;
+    let retentieKaarten: Kaart[] = [];
+
     const bouwOverlays = async (): Promise<BurnOverlay[]> => {
       const kaartSegmenten = segmenten.map((sgm) =>
         sgm.subKnip ? { ...sgm, edit_notitie: '', beeld_effect: undefined, tekstkaart: null } : sgm,
@@ -670,12 +730,17 @@ async function verwerk(job: Job) {
       }
       // Uitvalrisico's uit de retentie-simulatie: op de genoemde seconde een
       // korte re-hook-kaart met de fix, als die als regel tekst te lezen is.
-      for (const [i, risico] of (clip.uitval_risicos ?? []).entries()) {
-        const tekst = kaartRegelUit(risico.fix);
-        if (!tekst || risico.seconde < hookTot + 1 || risico.seconde > totaal - 1.5) continue;
+      for (const { i, tekst, seconde } of uitvalKaarten(totaal)) {
         const pad = join(kaartMap, `c${nummer}-rehook-${i}.png`);
         await tekenKaart(tekst, pad, stijl);
-        overlays.push({ pad, start: risico.seconde, end: Math.min(totaal, risico.seconde + 2.0) });
+        overlays.push({ pad, start: seconde, end: Math.min(totaal, seconde + 2.0) });
+      }
+      // De re-hook van de retentie-editor: in het zwaarste risicogat vóór de
+      // payoff, niet op een vaste seconde.
+      if (retentie?.rehook?.tekst && retentie.rehook.start < totaal - 1) {
+        const pad = join(kaartMap, `c${nummer}-retentie-rehook.png`);
+        await tekenKaart(retentie.rehook.tekst, pad, stijl);
+        overlays.push({ pad, start: retentie.rehook.start, end: Math.min(totaal, retentie.rehook.end) });
       }
 
       // Twee kaarten tegelijk in beeld is één te veel: de hook ís de belofte
@@ -694,6 +759,49 @@ async function verwerk(job: Job) {
       }
       return overlays.filter((o) => o.end - o.start >= 0.5);
     };
+
+    // RETENTIE. Per halve seconde voorspellen waar de kijker afhaakt en daar
+    // ingrijpen: pauzes boven het doel weg als jump-cut op woordgrenzen,
+    // kaderwissels waar het beeld te lang stilstaat, de eerste wissel binnen
+    // eersteKnipMaxS, en een re-hook in het zwaarste gat vóór de payoff. Vóór
+    // de kadercontrole en de poort, zodat die alles wat hier verandert gewoon
+    // weer toetsen (de nieuwe delen krijgen hun eigen kader- en zoomcontrole).
+    if (doelen) {
+      const totaal = segmenten.reduce((t, sg) => t + (sg.end - sg.start), 0);
+      const vast: Kaart[] = [
+        ...(hookTot > 0 ? [{ start: 0, end: hookTot }] : []),
+        ...(clip.context_kaart ? [{ start: hookTot + 0.3, end: Math.min(totaal, hookTot + 2.5), tekst: clip.context_kaart }] : []),
+        ...uitvalKaarten(totaal).map((k) => ({ start: k.seconde, end: Math.min(totaal, k.seconde + 2), tekst: k.tekst })),
+      ];
+      retentieKaarten = vast;
+      // Kandidaten voor de re-hook: eerst die van de edit-agent (die kent de
+      // curve), dan uitvalrisico-regels die nog nergens als kaart staan.
+      const geplaatst = new Set(vast.map((k) => k.tekst).filter(Boolean));
+      const rehookRegels = [
+        (editClip as { rehook?: string | null } | null)?.rehook ?? null,
+        ...(clip.uitval_risicos ?? []).map((r) => kaartRegelUit(r.fix)),
+      ].filter((r): r is string => Boolean(r) && !geplaatst.has(r as string));
+      try {
+        retentie = pasRetentieToe(segmenten, {
+          bronWoorden,
+          doelen,
+          kaarten: vast,
+          ondertitels: Boolean(bronWoorden) && stijl.ondertitels !== false,
+          hookTot,
+          rehookRegels,
+        });
+        segmenten.length = 0;
+        segmenten.push(...retentie.segmenten);
+        if (retentie.rehook) retentieKaarten = [...vast, retentie.rehook];
+        console.log(`     ${retentie.logregel}`);
+        for (const g of retentie.ingrepen.filter((x) => x.soort === 'overgeslagen').slice(0, 4)) {
+          console.log(`     retentie overgeslagen: ${g.wat}`);
+        }
+      } catch (e) {
+        retentie = null;
+        console.log(`     retentie overgeslagen (${(e as Error).message.slice(0, 80)})`);
+      }
+    }
 
     // Kadercontrole in twee fases, met een lus eromheen. Fase 1 rekent uit wat
     // er werkelijk in beeld valt en corrigeert wat aantoonbaar fout is. Fase 2
@@ -819,6 +927,17 @@ async function verwerk(job: Job) {
                     tease: sg.tease,
                     transcript_fragment: (sg as { transcript_fragment?: string }).transcript_fragment,
                   })),
+                  // Curve vóór en na, de doelen en elke ingreep: zo is per clip
+                  // na te gaan waar de retentie-editor ingreep en waarom.
+                  retentie: retentie
+                    ? {
+                        doelen: retentie.doelen,
+                        voor: retentie.voor,
+                        na: retentie.na,
+                        ingrepen: retentie.ingrepen,
+                        rehook: retentie.rehook,
+                      }
+                    : null,
                 },
               },
             },
@@ -1183,10 +1302,17 @@ async function verwerk(job: Job) {
     // wordt. Zelfde meting als de evaluatieset gebruikt, zodat "groen bij mij"
     // en "groen bij jou" hetzelfde betekenen.
     try {
+      // De retentieregel op de definitieve segmenten (ná poort en correcties),
+      // met de ondertitels zoals ze werkelijk in beeld staan.
+      const retentieEind = doelen
+        ? meetRetentie(segmenten, { bronWoorden, doelen, kaarten: retentieKaarten, ondertitels: Boolean(ondertitels) })
+        : null;
       const rapport = await keurMontage(montage.pad, segmenten, bronWoorden, {
         python: pythonMetOpenCV(),
         bronPad,
+        retentie: retentieEind && doelen ? keurRetentie(retentieEind, doelen, { ondertitels: Boolean(ondertitels) }) : undefined,
       });
+      if (retentieEind) await vulMontageplanAan(supabase, job.video_id, nummer, { retentie_eind: retentieEind });
       const kop =
         rapport.status === 'goed' ? 'GOED' : rapport.status === 'review_nodig' ? 'REVIEW NODIG' : 'NIET GETOETST (geen enkele regel meetbaar)';
       console.log(`     ── keuring: ${kop}`);
@@ -1302,6 +1428,52 @@ async function verwerk(job: Job) {
 
   if (bestanden.length === 0) throw new Error('Niets geüpload; alle clips waren te groot of mislukten.');
   return bestanden;
+}
+
+/**
+ * Platform en thema van de campagne achter deze video: daarop kiest
+ * editDoelen() de gemeten normen. Een campagne heeft (nog) geen eigen
+ * platformkolom; staat er een in de platformregels, dan telt die.
+ */
+async function campagneContext(supabase: ReturnType<typeof db>, videoId: string): Promise<NormContext> {
+  try {
+    const { data: v } = await supabase.from('videos').select('campaign_id').eq('id', videoId).single();
+    if (!v?.campaign_id) return {};
+    const { data: c } = await supabase.from('campaigns').select('theme, platform_rules').eq('id', v.campaign_id).single();
+    const regels = ((c as { platform_rules?: unknown } | null)?.platform_rules ?? {}) as { platform?: unknown; platforms?: unknown };
+    const ruw = typeof regels.platform === 'string' ? regels.platform : Array.isArray(regels.platforms) ? regels.platforms[0] : null;
+    const platform = typeof ruw === 'string' && ['tiktok', 'reels', 'shorts'].includes(ruw.toLowerCase()) ? ruw.toLowerCase() : null;
+    return { platform, theme: ((c as { theme?: string | null } | null)?.theme as string | null) ?? null };
+  } catch {
+    return {};
+  }
+}
+
+/** Velden bijschrijven bij één clip in het montageplan van het nieuwste plan; best-effort. */
+async function vulMontageplanAan(
+  supabase: ReturnType<typeof db>,
+  videoId: string,
+  nummer: number,
+  velden: Record<string, unknown>,
+): Promise<void> {
+  try {
+    const { data: rij } = await supabase
+      .from('clip_plans')
+      .select('id, montageplan')
+      .eq('video_id', videoId)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .single();
+    if (!rij) return;
+    const mp = (rij.montageplan as { clips?: Record<string, Record<string, unknown>> } | null) ?? {};
+    const clipPlan = mp.clips?.[String(nummer)] ?? {};
+    await supabase
+      .from('clip_plans')
+      .update({ montageplan: { ...mp, clips: { ...(mp.clips ?? {}), [String(nummer)]: { ...clipPlan, ...velden } } } })
+      .eq('id', rij.id);
+  } catch (e) {
+    console.log(`     montageplan niet bijgewerkt (${(e as Error).message.slice(0, 60)})`);
+  }
 }
 
 /**

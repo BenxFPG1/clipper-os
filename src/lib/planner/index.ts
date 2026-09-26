@@ -12,10 +12,21 @@ import {
   schetsSystem,
 } from './prompts';
 import { keurVerhaaldokter, rapportVoorPrompt } from './verhaaldokterpoort';
+import { editNormenVoorPrompt } from '../vault/normen';
+import {
+  MAX_BEELD_KANDIDATEN,
+  beoordeelHookBeelden,
+  meetSignalen,
+  signaalRegel,
+  signalenVoorPrompt,
+  watWerktBijAnderen,
+  type KandidaatSignalen,
+} from './signalen';
 import {
   CharacterMap,
   Clip,
   ClipPlan,
+  Energiemoment,
   PROMPT_VERSION_CHARACTER_MAP,
   PROMPT_VERSION_PLAN,
   SchetsPlan,
@@ -32,6 +43,14 @@ export type PlannerInput = {
   transcript: TranscriptSegment[];
   campaignRules: unknown;
   vault: VaultSnapshot;
+  /**
+   * Optioneel, voor de signalenlaag (signalen.ts): de energiemeting, de
+   * woordtijden uit de cache en een lokaal staande bronvideo. Ontbreekt iets,
+   * dan meet de laag wat hij wél kan; de planner zelf werkt zonder.
+   */
+  energie?: Energiemoment[];
+  bronWoorden?: { w: string; s: number; e: number }[] | null;
+  bronPad?: string | null;
 };
 
 /** Stap 1: begrijp de hele video als verhaal, niet als losse momenten. */
@@ -112,6 +131,13 @@ export async function generateClipPlan(
     .map((clip, i) => `--- kandidaat ${i + 1}: ${clip.titel_intern} ---\n${transcriptRondShots(clip.shots, input.transcript)}`)
     .join('\n\n');
 
+  // Fragmentkeuze op meer dan woorden: per kandidaat een meetpakket (instap,
+  // stilte vóór de onthulling, tempo, reacties, vraag→antwoord, dode woorden)
+  // en — alleen als de bron lokaal staat — een beeldoordeel op de hook.
+  const signalen = await verzamelSignalen(schets.clips, input);
+  const normenTekst = await editNormenVoorPrompt({ platform: input.vault.platform, theme: input.vault.theme }).catch(() => '');
+  const bijAnderen = watWerktBijAnderen(input.vault, normenTekst);
+
   const examined: ClipPlan = await structuredCall({
     system: planExamenSystem(PLAN_MAX_CLIPS) + bijgeleerd,
     user: `Video: ${input.title}
@@ -130,7 +156,12 @@ ${JSON.stringify(input.characterMap)}
 ${JSON.stringify(schets)}
 
 === BRONTRANSCRIPT ROND DE SHOTS PER KANDIDAAT (formaat [start-end] tekst; hier moeten fragmenten en instappunten letterlijk in staan) ===
-${transcriptPerKandidaat}`,
+${transcriptPerKandidaat}
+
+=== MEETDATA PER KANDIDAAT (mechanisch gemeten op bron en audio; kN = kandidaat N uit de schets — basis voor je scroll-stop-oordeel en je score) ===
+${signalenVoorPrompt(signalen) || '(geen meetdata beschikbaar)'}${
+      bijAnderen ? `\n\n=== WAT WERKT BIJ ANDEREN (gemeten op externe top-clips; context voor wat een opening moet doen) ===\n${bijAnderen}` : ''
+    }`,
     schema: examenPlanSchema,
     toolName: 'lever_clip_plan',
     toolDescription: 'Lever het gesnoeide en uitgewerkte clip-plan.',
@@ -150,14 +181,23 @@ ${transcriptPerKandidaat}`,
   // Shots, hooks en captions kán hij zo niet meer per ongeluk herschrijven,
   // en de call is een fractie van de vorige (die het hele plan heen én terug
   // stuurde).
+  const gecapt = pasScrollStopToe(examined);
+  if (gecapt > 0) console.log(`[planner] scroll-stop: score van ${gecapt} clip(s) begrensd`);
+
   let doctored = examined;
   try {
     const signalenRapport = rapportVoorPrompt(keurVerhaaldokter(examined));
+    // Opnieuw meten op de geëxamineerde shots (die kunnen verschoven zijn); het
+    // beeldoordeel reist mee op titel, want dat kost een call en verandert niet.
+    const beeldOpTitel = new Map(signalen.filter((s) => s.beeld).map((s) => [s.titel, s.beeld]));
+    const naExamen = meetSignalen(examined.clips, input.transcript, input.energie ?? [], input.bronWoorden);
     const perClip = examined.clips.map((clip, i) => ({
       clip: i + 1,
       titel: clip.titel_intern,
       score: clip.score,
+      scroll_stop: clip.scroll_stop ?? null,
       verhaallijn: clip.verhaallijn,
+      meetdata: signaalRegel({ ...naExamen[i], beeld: beeldOpTitel.get(clip.titel_intern) ?? null }),
       transcript: transcriptRondShots(clip.shots, input.transcript),
     }));
 
@@ -169,7 +209,9 @@ ${transcriptPerKandidaat}`,
 ${JSON.stringify(input.characterMap)}
 
 === CLIPS (na het toernooi; per clip de verhaallijn, de score en het brontranscript rond de shots) ===
-${JSON.stringify(perClip, null, 1)}${signalenRapport}`,
+${JSON.stringify(perClip, null, 1)}${signalenRapport}${
+        bijAnderen ? `\n\n=== WAT WERKT BIJ ANDEREN ===\n${bijAnderen}` : ''
+      }`,
       schema: verhaaldokterDiffSchema,
       toolName: 'lever_verhaaldokter_oordeel',
       toolDescription: 'Lever per clip het oordeel van de verhaaldokter: verwijderen, score en eventueel de herschreven verhaallijn.',
@@ -178,11 +220,61 @@ ${JSON.stringify(perClip, null, 1)}${signalenRapport}`,
       operation: 'clip_plan_verhaaldokter',
     });
     doctored = pasVerhaaldokterToe(examined, diff);
+    // De dokter mag de score herzien, maar niet boven wat de opening toelaat.
+    pasScrollStopToe(doctored);
   } catch (err) {
     console.warn('[planner] verhaaldokter-pass mislukt, geëxamineerd plan behouden:', (err as Error).message);
   }
 
   return repairPlan(doctored, input);
+}
+
+/**
+ * Het signalenpakket per schetskandidaat. Het beeldoordeel alleen voor de
+ * sterkste kandidaten (op schetsscore, hoogstens MAX_BEELD_KANDIDATEN) en
+ * alleen als de bron lokaal staat; alles hier is best-effort.
+ */
+async function verzamelSignalen(
+  clips: SchetsPlan['clips'],
+  input: PlannerInput,
+): Promise<KandidaatSignalen[]> {
+  let signalen: KandidaatSignalen[] = [];
+  try {
+    signalen = meetSignalen(clips, input.transcript, input.energie ?? [], input.bronWoorden);
+  } catch (e) {
+    console.warn('[planner] signalen niet gemeten:', (e as Error).message);
+    return [];
+  }
+  if (input.bronPad) {
+    const kandidaten = clips
+      .map((c, i) => ({ kandidaat: i + 1, score: c.score, hookStart: [...c.shots].sort((a, b) => a.volgorde - b.volgorde)[0]?.start ?? 0 }))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, MAX_BEELD_KANDIDATEN);
+    const beeld = await beoordeelHookBeelden(kandidaten, input.bronPad);
+    for (const s of signalen) s.beeld = beeld.get(s.kandidaat) ?? null;
+    if (beeld.size) console.log(`[planner] hookbeeld beoordeeld voor ${beeld.size} kandidaat/kandidaten`);
+  }
+  return signalen;
+}
+
+/**
+ * Het scroll-stop-oordeel telt mee in de score, en dat dwingen we hier af in
+ * plaats van het aan het model over te laten: een examinator die "scrollt
+ * door" schrijft en er toch een 8 bij zet, heeft zichzelf tegengesproken.
+ * Muteert het plan; levert het aantal begrensde clips.
+ */
+export function pasScrollStopToe(plan: ClipPlan): number {
+  const plafond = { stopt: 10, twijfel: 7, scrollt_door: 5 } as const;
+  let begrensd = 0;
+  for (const clip of plan.clips) {
+    const oordeel = clip.scroll_stop?.oordeel;
+    if (!oordeel || clip.score === undefined) continue;
+    if (clip.score > plafond[oordeel]) {
+      clip.score = plafond[oordeel];
+      begrensd++;
+    }
+  }
+  return begrensd;
 }
 
 /**

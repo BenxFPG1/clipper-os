@@ -54,6 +54,7 @@ export async function bedenkConcepten(campaignId: string, aantal = 8) {
     .from('scout_finds')
     .select('handle, platform, theme, caption, outlier_score, decoded')
     .not('decoded', 'is', null)
+    .eq('is_basislijn', false)
     .order('outlier_score', { ascending: false, nullsFirst: false })
     .limit(15);
 

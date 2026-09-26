@@ -95,6 +95,30 @@ npm run eval
 
 `npm run eval` geeft exit-code 1 zodra één case faalt — hang dit voor elke prompt- of vault-wijziging ertussen. Gecontroleerd wordt: valide JSON, tijdcodes binnen de videoduur en oplopend, minimum aantal clips, of de bekende gouden momenten gevonden zijn (gezichtsmasker ~16:36, AI/Gemini-reveal ~34:44) en of minstens één edit fragmenten combineert die meer dan 15 minuten uit elkaar liggen.
 
+## Leerlus: eigen smaak en eigen cijfers
+
+Onder elke render op de videopagina staan drie knoppen: **goed / matig / weg**, met bij matig en weg één zin waarom. Elke klik slaat meteen op (`render_beoordelingen`, één oordeel per bestand, overschrijfbaar). Staat een clip online, plak dan de link bij "Gepost": dat maakt of werkt de clip-rij bij (plan-rij van die clip, of een variant-rij voor hookvariant 2/3), met `render_job_id`, `render_bestand` en `hook_variant`, en vanaf dan meet de tracking hem vanzelf. De cijfers (24u/7d) verschijnen daarna bij het bestand.
+
+Wat ermee gebeurt:
+
+- `job.ts render_vingerafdruk` (dagelijks, max 10 per run): meet klare renders met de vingerafdruk-module en zet het resultaat bij het bestand in `render_jobs.bestanden[i].vingerafdruk`. Beoordeelde en geposte renders eerst.
+- `job.ts smaak` (dagelijks): de smaak-agent leest de oordelen met redenen, de vingerafdrukken, de cijfers van geposte renders en ter vergelijking de externe normen en trend-top-5, en zet hooguit 3 lessen in de vault (editcraft/storycraft). Alleen patronen die bij ≥3 renders terugkomen, en elke les zegt of hij op eigen smaak, eigen cijfers of ook op externe data steunt. Minder dan 5 nieuwe oordelen sinds de vorige run: stil overslaan.
+- De retro telt eigen oordelen mee als zwak signaal (hooguit ±15% op de gecombineerde score, nooit genoeg om cijfers om te draaien) en vergelijkt geposte hookvarianten van dezelfde render.
+- Het blok **Leerlus** op het dashboard laat zien of er echt geleerd wordt: renders, beoordeeld, gepost, gemeten deze week, open retro-voorstellen, de laatste lessen en waar de edit-doelen op steunen (`standaard` = nog niets geleerd).
+
+### Optionele smaak-eval
+
+Vink bij een render "in eval-set" aan om hem als vaste referentie te gebruiken. Niets blokkeert hierop en CI draait hem niet vanzelf.
+
+```bash
+npm run eval:smaak -- --droog       # wat zou er klaargezet worden
+npm run eval:smaak                  # zet per eval-case een nieuwe render klaar met de huidige code ("EVAL …")
+npm run eval:smaak -- --uitslag     # zodra die klaar zijn: vergelijk met de beoordeelde originelen
+npm run eval:smaak -- --alleen-meten  # niets renderen, vergelijk met de nieuwste bestaande render
+```
+
+De vergelijking toetst beide vingerafdrukken aan de edit-doelen en laat het lichte model per paar (frames van beide + de oorspronkelijke reden) zeggen of het beter, gelijk of slechter is. Uitslag en score (−1..+1) komen in `smaak_eval_runs` en als tabel in de terminal. De knop "Eval draaien" op het dashboard (alleen zichtbaar als er eval-cases zijn) doet de eerste stap.
+
 ## Architectuur
 
 Het model staat op **Claude Opus 5** (`CLAUDE_MODEL`). Dat model accepteert geen `temperature`, dus de consistentie uit sectie 3 komt niet uit een sampling-parameter maar uit de vastgelegde prompt-versie en vault-snapshot per plan, plus een vaste `effort` per call (`high` voor de character map en de retro, `xhigh` voor het plan zelf).

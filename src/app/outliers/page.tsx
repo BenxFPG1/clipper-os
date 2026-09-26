@@ -15,6 +15,7 @@ export default async function OutliersPage() {
     supabase
       .from('scout_finds')
       .select('*')
+      .eq('is_basislijn', false)
       .order('outlier_score', { ascending: false, nullsFirst: false })
       .limit(300),
     supabase.from('themes').select('slug, name').order('name'),

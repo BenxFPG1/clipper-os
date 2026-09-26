@@ -4,6 +4,8 @@ import { TranscriptSegment, transcriptDuration } from '../ingest/transcript';
 import { generateCharacterMap, generateClipPlan, PROMPT_VERSION } from './index';
 import { SCHEMA_VERSION, Energiemoment } from './schema';
 import { mijnEnergie, renderEnergie } from './energie';
+import { lokaleBron } from './signalen';
+import { bronWoordenUitCache } from '../roughcut/woorden';
 
 /**
  * Draait de volledige pipeline voor één video en slaat het resultaat op:
@@ -63,6 +65,12 @@ export async function runPlannerForVideo(
     await supabase.from('videos').update({ character_map: characterMap }).eq('id', videoId);
   }
 
+  // Voor de signalenlaag: woordtijden alleen uit de cache (de render-worker
+  // maakt ze; hier nooit opnieuw transcriberen), en de bron alleen als hij al
+  // lokaal staat — een planner in CI downloadt geen video voor twee frames.
+  const bronWoorden = await bronWoordenUitCache(videoId).catch(() => null);
+  const bronPad = lokaleBron(videoId, video.source_url ?? null);
+
   const plan = await generateClipPlan({
     title: video.title,
     durationSeconds,
@@ -70,6 +78,9 @@ export async function runPlannerForVideo(
     campaignRules: campaign?.platform_rules ?? {},
     vault,
     characterMap,
+    energie,
+    bronWoorden,
+    bronPad,
   });
 
   const { data: planRow, error: planError } = await supabase

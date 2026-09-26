@@ -54,6 +54,14 @@ export type Shot = {
    */
   zachtBegin?: boolean;
   zachtEind?: boolean;
+  /**
+   * Grens bewust strak gezet door de retentie-editor (een pauze-jumpcut of
+   * een kaderwissel binnen doorlopende spraak). De rest-stilte is daar al
+   * gekozen; de poort mag hier geen ademruimte meer bijtellen, anders groeit
+   * de weggeknipte pauze elke poortronde weer een stukje terug.
+   */
+  strakBegin?: boolean;
+  strakEind?: boolean;
   /** De grenzen zoals het plan ze bedoelde, vóór uitlijning en verschuiving.
    * Het reddingspunt: blijkt uit de terugluistering dat de eerste woorden van
    * het fragment ontbreken, dan is dít waar we naar teruggrijpen. */

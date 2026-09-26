@@ -22,7 +22,11 @@
     "test:scriptcontrole": "tsx scripts/test-scriptcontrole.ts",
     "test:broll": "tsx scripts/test-broll.ts",
     "test:render": "tsx scripts/test-render.ts",
-    "test:trends": "tsx scripts/test-trends.ts"
+    "test:retentie": "tsx scripts/test-retentie.ts",
+    "test:signalen": "tsx scripts/test-signalen.ts",
+    "test:trends": "tsx scripts/test-trends.ts",
+    "test:normen": "tsx scripts/test-normen.ts",
+    "eval:smaak": "tsx scripts/eval-smaak.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.115.0",

@@ -7,8 +7,9 @@ import { BEELD_EFFECTEN_BEKEND, KADERS } from '../roughcut/kader';
 import { EDITCRAFT } from '../vault/editcraft';
 import { EFFECTEN } from '../vault/effecten';
 import { geleerdeKennis } from '../vault/kennis';
+import { editNormenVoorPrompt, type NormContext } from '../vault/normen';
 
-export const EDIT_PROMPT_VERSIE = 'edit-1.1';
+export const EDIT_PROMPT_VERSIE = 'edit-1.2';
 
 /**
  * Wat de render werkelijk kan uitvoeren. De effectenvault beschrijft ook
@@ -77,6 +78,12 @@ const editSchema = z.object({
         .string()
         .nullable()
         .describe('Waar de muziek volledig moet wegvallen en waarom; null als dat niet speelt.'),
+      rehook: z
+        .string()
+        .nullable()
+        .describe(
+          'Korte re-hookregel (hoogstens zes woorden, spreektaal) die de render in het grootste risicogat vóór de payoff zet; null als de clip zonder kan.',
+        ),
       eindcontrole: z.string().describe('Uitkomst van stap 7: wat is de zwakste plek van deze montage?'),
     }),
   ),
@@ -96,6 +103,7 @@ Werk de zeven stappen af in volgorde en denk per shot:
 - Is dit een tijdsprong? Dan verplicht een tekstkaart met de sprong erop.
 - Kader: verticaal beeld hoort gevuld. "vullend" is de norm; "blur" alleen als de uitsnede echt iets belangrijks afsnijdt (twee mensen naast elkaar, tekst in beeld). Zwarte balken bestaan niet.
 - Waar valt de muziek weg? Op de payoff of een vragende beat — dat is het moment dat je groot maakt.
+- Retentie: per clip krijg je een gemeten risicosamenvatting ("retentie": waar de kijker volgens de meting afhaakt, per shot en seconde, met de reden). De render knipt pauzes zelf weg en zet zelf kaderwissels waar het beeld te lang stilstaat — dat hoef jij niet te doen. Jouw taak is kiezen WAAR een ingreep het verschil maakt, niet hoeveel: leg sfx, beeldingrepen en kaarten op de shots met een risicopiek, en laat shots zonder risico met rust ("geen"). Geef een "rehook" als er een risicopiek vóór de payoff zit die een regel tekst kan dichten.
 
 Sluit per clip af met de eindcontrole: benoem de zwakste plek van de montage die je zojuist hebt ontworpen. Niet "ziet er goed uit" — een concreet zwak punt.`;
 
@@ -108,7 +116,15 @@ Sluit per clip af met de eindcontrole: benoem de zwakste plek van de montage die
  */
 export async function runEditAgent(
   videoId: string,
-  opties: { opnieuw?: boolean; onVoortgang?: (m: string) => void; meetdata?: PlanMeetdata } = {},
+  opties: {
+    opnieuw?: boolean;
+    onVoortgang?: (m: string) => void;
+    meetdata?: PlanMeetdata;
+    /** Per clipnummer de retentiesamenvatting (retentie.ts → samenvatVoorEditAgent). */
+    retentie?: Record<number, string>;
+    /** Platform en thema van de campagne: bepalen welke gemeten normen van anderen gelden. */
+    normContext?: NormContext;
+  } = {},
 ) {
   const supabase = db();
 
@@ -157,7 +173,12 @@ export async function runEditAgent(
           : {}),
       };
     }),
+    ...(opties.retentie?.[i + 1] ? { retentie: opties.retentie[i + 1] } : {}),
   }));
+
+  // Wat top-clips van anderen meetbaar doen: de doelen waar de retentie-editor
+  // op stuurt, als leesbare regels. Leeg zolang er niets gemeten is.
+  const normen = await editNormenVoorPrompt(opties.normContext ?? {}).catch(() => '');
 
   // In batches van zes clips: één antwoord voor 23 clips wordt zo lang dat de
   // verbinding halverwege afbreekt. Kleinere brokken komen betrouwbaar door en
@@ -169,7 +190,7 @@ export async function runEditAgent(
 
   for (let i = 0; i < teDoen.length; i += BATCH) {
     const brok = teDoen.slice(i, i + BATCH);
-    const deel = await editCall(brok, alleClips.map((c) => c.kader));
+    const deel = await editCall(brok, alleClips.map((c) => c.kader), normen);
     alleClips.push(...deel.clips);
 
     // Na elke batch wegschrijven: breekt de run af (limiet, timeout), dan is
@@ -191,13 +212,14 @@ export async function runEditAgent(
 async function editCall(
   brok: unknown[],
   eerdereKaders: string[],
+  normen = '',
 ): Promise<EditBeslissingen> {
   return structuredCall({
     system: `${EDIT_SYSTEM}
 
 ${EDITCRAFT}
 
-${effectenVoorRender()}${await geleerdeKennis('edit')}`,
+${effectenVoorRender()}${normen ? `\n\nGEMETEN BIJ TOP-CLIPS VAN ANDEREN (de doelen waar de retentiecurve tegen gemeten is):\n${normen}` : ''}${await geleerdeKennis('edit')}`,
     user: `Ontwerp de montage voor deze ${brok.length} clips.
 
 Let op de samenhang: wissel het kader af over de clips heen, en herhaal niet steeds dezelfde ingreep.${
