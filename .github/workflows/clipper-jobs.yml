@@ -80,9 +80,14 @@ jobs:
           node-version: 22
           cache: npm
 
-      # ffmpeg staat al op de GitHub-runner. yt-dlp halen we als kant-en-klare
-      # binary op: apt-get bleek minutenlang te kunnen hangen op de runner.
-      - name: Installeer yt-dlp
+      # yt-dlp en ffmpeg halen we als kant-en-klare binaries op: apt-get bleek
+      # minutenlang te kunnen hangen op de runner. ffmpeg stond vroeger al op
+      # de runner-image, maar is er stilzwijgend uit verdwenen — de oude check
+      # (`ffmpeg -version | head -1`) faalde niet omdat de pipe het verborg,
+      # en kijken/editleraar_visueel liepen wekenlang op "spawn ffmpeg ENOENT".
+      # Nu: gebruiken wat er is, anders de statische build, en hard falen als
+      # het dan nog ontbreekt.
+      - name: Installeer yt-dlp en ffmpeg
         if: ${{ steps.kies.outputs.job != 'cliparmy' && steps.kies.outputs.job != 'consolideer' }}
         run: |
           sudo curl -sSL --retry 3 --max-time 120 \
@@ -90,7 +95,16 @@ jobs:
             -o /usr/local/bin/yt-dlp
           sudo chmod +x /usr/local/bin/yt-dlp
           yt-dlp --version
-          ffmpeg -version | head -1
+          if ! command -v ffmpeg >/dev/null || ! command -v ffprobe >/dev/null; then
+            curl -fsSL --retry 3 --max-time 180 \
+              https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz \
+              -o /tmp/ffmpeg.tar.xz
+            mkdir -p /tmp/ffmpeg && tar -xJf /tmp/ffmpeg.tar.xz -C /tmp/ffmpeg --strip-components=1
+            sudo install -m 755 /tmp/ffmpeg/bin/ffmpeg /tmp/ffmpeg/bin/ffprobe /usr/local/bin/
+          fi
+          ffmpeg -hide_banner -version | head -1
+          ffprobe -hide_banner -version | head -1
+          command -v ffmpeg >/dev/null && command -v ffprobe >/dev/null
 
       # Zonder dit lost yt-dlp YouTube's n-challenge niet op: downloads en
       # ondertitels falen dan stil (geen harde fout, gewoon geen bestanden).
