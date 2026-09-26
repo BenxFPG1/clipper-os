@@ -475,10 +475,28 @@ export function controleerAssFont(map: string, stijl?: Huisstijl | null): { fami
     ['-hide_banner', '-loglevel', 'verbose', '-f', 'lavfi', '-i', 'color=c=black:s=1080x1920:d=0.5', '-vf', assFilter(proef), '-frames:v', '1', '-f', 'null', '-'],
     { encoding: 'utf8' },
   );
-  const m = `${res.stdout}${res.stderr}`.match(/fontselect:\s*\(([^,]+),[^)]*\)\s*->\s*([^,\s]+)/);
+  // libass meldt "fontselect: (familie, gewicht, cursief) -> pad-of-naam,
+  // index, postscriptnaam". Bij fonts uit fontsdir is dat eerste deel niet
+  // altijd een pad maar soms de postscriptnaam ("ArchivoBlack-Regular"): de
+  // vergelijking met de bestandsnaam gaf dan een valse waarschuwing. Nu telt
+  // een match op bestandsnaam óf postscriptnaam, zonder map en extensie.
+  const m = `${res.stdout}${res.stderr}`.match(/fontselect:\s*\(([^,]+),[^)]*\)\s*->\s*([^,\n]+?)\s*,\s*\d+\s*,\s*([^\s,]+)/);
   if (!m) return { familie: font.familie, bestand: '(geen fontselect-melding)', goed: false };
-  const gekozen = m[2].split('/').pop() ?? m[2];
-  return { familie: m[1].trim(), bestand: gekozen, goed: gekozen === font.bestand && existsSync(join(process.cwd(), 'assets', 'fonts', gekozen)) };
+  const gekozen = m[2].trim().split('/').pop() ?? m[2];
+  return { familie: m[1].trim(), bestand: gekozen, goed: fontKlopt(font, gekozen, m[3]) };
+}
+
+/** Is het door libass gekozen font (pad of naam, plus postscriptnaam) het bedoelde? */
+export function fontKlopt(font: { familie: string; bestand: string }, gekozen: string, postscript = ''): boolean {
+  const kaal = (x: string) => (x.split('/').pop() ?? x).replace(/\.(ttf|otf)$/i, '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const bestand = kaal(font.bestand);
+  const familie = kaal(font.familie);
+  return [gekozen, postscript].filter(Boolean).some((n) => {
+    const k = kaal(n);
+    // Variabele fonts heten "Montserrat-Variable.ttf" maar melden zich als
+    // "Montserrat-Regular": dan telt de familienaam aan het begin.
+    return k === bestand || (familie.length > 0 && k.startsWith(familie) && existsSync(join(process.cwd(), 'assets', 'fonts', font.bestand)));
+  });
 }
 
 /** Voor de log: welk font de ASS-stijl noemt (moet in assets/fonts staan). */

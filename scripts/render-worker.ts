@@ -658,10 +658,11 @@ async function verwerk(job: Job) {
     // (graphic passend, spreker vullend) met de wissel precies op de
     // bronknip. Vóór de retentie-editor: een bronknip is al een beeldwissel.
     try {
-      const sc = await vulScenes(bronPad, segmenten, gezichtMeterVia(bronPad, pythonMetOpenCV()));
-      if (sc.shots > 0) {
-        console.log(`     scènes: ${sc.shots} shot(s) met een bronknip → ${sc.persoon} deelstuk(ken) met gezicht, ${sc.graphic} zonder (passend)`);
-      }
+      const sc = await vulScenes(bronPad, segmenten, gezichtMeterVia(bronPad, pythonMetOpenCV(), 1));
+      console.log(
+        `     scènes: ${sc.metingen} gezichtsmetingen, ${sc.shots} shot(s) met wissel → ${sc.persoon} deelstuk(ken) met gezicht, ` +
+          `${sc.graphic} zonder (passend), ${sc.overgangen} overgang(en) op de scènepiek (${(sc.ms / 1000).toFixed(1).replace('.', ',')} s)`,
+      );
     } catch (e) {
       console.log(`     scènedetectie overgeslagen (${(e as Error).message.slice(0, 70)})`);
     }

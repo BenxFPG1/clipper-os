@@ -130,12 +130,16 @@ export async function detecteerSceneKnippen(bron: string, van: number, tot: numb
 /** Meet per tijdstip of er een gezicht in beeld is (null = niet te meten). */
 export type GezichtMeter = (tijden: number[]) => Promise<(boolean | null)[]>;
 
-/** De echte meter: scripts/gezichten.py (YuNet), drie frames per tijdstip. */
-export function gezichtMeterVia(bron: string, python: { cmd: string; voor: string[] }): GezichtMeter {
+/**
+ * De echte meter: scripts/gezichten.py (YuNet). `frames` per tijdstip: voor
+ * het dichte scannen één (snel; het gladstrijken vangt een los gemist frame),
+ * voor de keuring drie (robuust per meetpunt).
+ */
+export function gezichtMeterVia(bron: string, python: { cmd: string; voor: string[] }, frames = 3): GezichtMeter {
   return async (tijden) => {
     if (tijden.length === 0) return [];
     const uit = await new Promise<string>((klaar) => {
-      const kind = spawn(python.cmd, [...python.voor, 'scripts/gezichten.py', bron, JSON.stringify(tijden), '3']);
+      const kind = spawn(python.cmd, [...python.voor, 'scripts/gezichten.py', bron, JSON.stringify(tijden), String(frames)]);
       let stdout = '';
       kind.stdout.on('data', (d) => (stdout += d));
       kind.stderr.on('data', () => {});
@@ -154,56 +158,157 @@ export function gezichtMeterVia(bron: string, python: { cmd: string; voor: strin
 }
 
 /**
- * Zoekt per segment de scènewissels van de bron en meet per scène of er een
- * gezicht in staat. Alleen segmenten mét een wissel krijgen `scenes`; een shot
- * zonder bronknip houdt het kader van de visuele controle. Muteert de
- * segmenten en levert tellingen voor de log.
+ * Waar in een overgangsvenster het beeld het sterkst verandert: het frame met
+ * de hoogste scènescore (ffmpeg `scene`, zonder drempel). Bij een harde knip
+ * is dat de knip; bij een overvloeier of animatie het steilste stuk ervan.
+ * Geen meetbare piek → het midden van het venster.
+ */
+export async function overgangsPiek(bron: string, van: number, tot: number): Promise<number> {
+  const uit = await new Promise<string>((klaar) => {
+    const kind = spawn(
+      resolveBinary('ffmpeg'),
+      [
+        '-nostdin', '-hide_banner',
+        '-ss', Math.max(0, van).toFixed(3), '-t', Math.max(0.1, tot - van).toFixed(3), '-i', bron,
+        '-an', '-vf', "scale=160:-2,select='gte(scene\\,0)',metadata=print:key=lavfi.scene_score",
+        '-f', 'null', '-',
+      ],
+      { stdio: ['ignore', 'pipe', 'pipe'] },
+    );
+    let alles = '';
+    kind.stdout.on('data', (d) => (alles += d));
+    kind.stderr.on('data', (d) => (alles += d));
+    kind.on('error', () => klaar(''));
+    kind.on('close', () => klaar(alles));
+  });
+  let tijd: number | null = null;
+  let beste = { t: (van + tot) / 2, score: instelling('SCENE_PIEK_MIN') };
+  for (const regel of uit.split('\n')) {
+    const pt = regel.match(/pts_time:\s*([\d.]+)/);
+    if (pt) tijd = Number(pt[1]);
+    const sc = regel.match(/lavfi\.scene_score=([\d.]+)/);
+    if (sc && tijd !== null && Number(sc[1]) > beste.score) beste = { t: Math.max(0, van) + tijd, score: Number(sc[1]) };
+  }
+  return Math.round(beste.t * 1000) / 1000;
+}
+
+/**
+ * Deelt elk segment op in stukken mét en zónder gezicht, met de
+ * gezichtsdetectie als primaire bron.
+ *
+ * Eerst werd op scènewissels geknipt en per stuk 1-3 keer gemeten. Maar een
+ * nieuwsbron gaat met een overvloeier of animatie naar zijn graphics: geen
+ * harde knip, dus geen scène, dus 3 van de 4 graphics bleven vullend en werden
+ * aangesneden ("< 3 maanden", "−39%"). Nu andersom: elke SCENE_STAP seconde
+ * meten (één aanroep voor alle segmenten), aaneengesloten runs met en zonder
+ * gezicht maken, korte runs (een wegkijkend hoofd, een gemiste detectie)
+ * gladstrijken, en pas daarna de scènescore gebruiken om het wisselmoment
+ * binnen het overgangsvenster op de visuele overgang te leggen.
+ *
+ * Alleen een segment met een wissel, of helemaal zonder gezicht, krijgt
+ * `scenes`; een doorlopend sprekend hoofd blijft zoals het was.
  */
 export async function vulScenes(
   bron: string,
   segmenten: Shot[],
   meter: GezichtMeter,
-): Promise<{ shots: number; persoon: number; graphic: number }> {
-  const plan: { seg: Shot; stukken: { van: number; tot: number }[] }[] = [];
-  for (const seg of segmenten) {
-    const knippen = await detecteerSceneKnippen(bron, seg.start, seg.end);
-    if (knippen.length === 0) {
-      seg.scenes = undefined;
-      continue;
-    }
-    const grenzen = [seg.start, ...knippen, seg.end];
-    plan.push({ seg, stukken: grenzen.slice(0, -1).map((van, i) => ({ van, tot: grenzen[i + 1] })) });
-  }
-  if (plan.length === 0) return { shots: 0, persoon: 0, graphic: 0 };
+): Promise<{ shots: number; persoon: number; graphic: number; metingen: number; overgangen: number; ms: number }> {
+  const begin = Date.now();
+  const stap = instelling('SCENE_STAP');
+  const glad = instelling('SCENE_GAT_GLAD');
+  const marge = instelling('SCENE_OVERGANG_MARGE');
 
-  // Per stuk het midden, en bij een langer stuk ook de kwartpunten: één
-  // ongelukkig frame (een knipperende blik, een halve overgang) mag het
-  // oordeel niet bepalen. Meerderheid beslist.
-  const tijden: number[] = [];
-  const index: { p: number; k: number }[] = [];
-  plan.forEach((pl, p) =>
-    pl.stukken.forEach((st, k) => {
-      const d = st.tot - st.van;
-      const punten = d > 2 ? [0.25, 0.5, 0.75] : [0.5];
-      for (const f of punten) {
-        tijden.push(Math.round((st.van + d * f) * 1000) / 1000);
-        index.push({ p, k });
-      }
-    }),
-  );
-  const uitslag = await meter(tijden);
+  const perSeg = segmenten.map((seg) => {
+    const ts: number[] = [];
+    for (let t = seg.start + stap / 2; t < seg.end - 0.05; t += stap) ts.push(Math.round(t * 1000) / 1000);
+    if (ts.length === 0) ts.push(Math.round(((seg.start + seg.end) / 2) * 1000) / 1000);
+    return ts;
+  });
+  const alle = perSeg.flat();
+  const uitslag = await meter(alle);
 
   let persoon = 0;
   let graphic = 0;
-  plan.forEach((pl, p) => {
-    pl.seg.scenes = pl.stukken.map((st, k) => {
-      const eigen = uitslag.filter((_, i) => index[i].p === p && index[i].k === k);
-      const gemeten = eigen.filter((x): x is boolean => x !== null);
-      const gezicht = gemeten.length === 0 ? null : gemeten.filter(Boolean).length * 2 >= gemeten.length;
-      if (gezicht === true) persoon++;
-      if (gezicht === false) graphic++;
-      return { van: st.van, tot: st.tot, gezicht };
-    });
+  let shots = 0;
+  let overgangen = 0;
+  let cursor = 0;
+  for (const [i, seg] of segmenten.entries()) {
+    const ts = perSeg[i];
+    const ruw = uitslag.slice(cursor, cursor + ts.length);
+    cursor += ts.length;
+    const waarden = vulGaten(ruw);
+    if (!waarden) {
+      seg.scenes = undefined; // niets gemeten: het kader van de visuele controle blijft
+      continue;
+    }
+    const runs = strijkGlad(maakRuns(waarden), stap, glad);
+    if (runs.length === 1 && runs[0].gezicht) {
+      seg.scenes = undefined;
+      continue;
+    }
+    // Wisselmomenten: tussen het laatste meetpunt van een run en het eerste
+    // van de volgende, verfijnd op de scènescore.
+    const grenzen: number[] = [];
+    for (let r = 0; r + 1 < runs.length; r++) {
+      const a = ts[runs[r].tot];
+      const b = ts[runs[r + 1].van];
+      grenzen.push(await overgangsPiek(bron, Math.max(seg.start, a - marge), Math.min(seg.end, b + marge)));
+      overgangen++;
+    }
+    const randen = [seg.start, ...grenzen, seg.end];
+    seg.scenes = runs.map((run, r) => ({ van: randen[r], tot: randen[r + 1], gezicht: run.gezicht }));
+    shots++;
+    for (const run of runs) run.gezicht ? persoon++ : graphic++;
+  }
+  return { shots, persoon, graphic, metingen: alle.length, overgangen, ms: Date.now() - begin };
+}
+
+/** Lege metingen opvullen met de dichtstbijzijnde buur; null als er helemaal niets gemeten is. */
+function vulGaten(ruw: (boolean | null)[]): boolean[] | null {
+  if (ruw.every((x) => x === null)) return null;
+  const uit = [...ruw];
+  for (let i = 1; i < uit.length; i++) if (uit[i] === null) uit[i] = uit[i - 1];
+  for (let i = uit.length - 2; i >= 0; i--) if (uit[i] === null) uit[i] = uit[i + 1];
+  return uit as boolean[];
+}
+
+type Run = { van: number; tot: number; gezicht: boolean };
+
+function maakRuns(w: boolean[]): Run[] {
+  const runs: Run[] = [];
+  w.forEach((g, i) => {
+    const laatste = runs[runs.length - 1];
+    if (laatste && laatste.gezicht === g) laatste.tot = i;
+    else runs.push({ van: i, tot: i, gezicht: g });
   });
-  return { shots: plan.length, persoon, graphic };
+  return runs;
+}
+
+/**
+ * Runs korter dan `glad` seconden gaan op in hun buren: een hoofd dat even
+ * wegdraait is geen graphic, en één losse detectie in een graphic geen
+ * spreker. Telkens de kortste eerst, tot er niets korts meer over is.
+ */
+export function strijkGlad(runs: Run[], stap: number, glad: number): Run[] {
+  const uit = runs.map((r) => ({ ...r }));
+  for (;;) {
+    if (uit.length <= 1) return uit;
+    let k = -1;
+    for (let i = 0; i < uit.length; i++) {
+      const lengte = (uit[i].tot - uit[i].van + 1) * stap;
+      if (lengte < glad && (k < 0 || lengte < (uit[k].tot - uit[k].van + 1) * stap)) k = i;
+    }
+    if (k < 0) return uit;
+    const buur = k > 0 ? uit[k - 1] : uit[k + 1];
+    uit[k].gezicht = buur.gezicht;
+    // Samenvoegen met gelijke buren.
+    const samen: Run[] = [];
+    for (const r of uit) {
+      const l = samen[samen.length - 1];
+      if (l && l.gezicht === r.gezicht) l.tot = r.tot;
+      else samen.push({ ...r });
+    }
+    uit.length = 0;
+    uit.push(...samen);
+  }
 }

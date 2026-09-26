@@ -102,6 +102,17 @@ const STANDAARD = {
   /** Scènewissels in de bron: drempel van ffmpeg's scene-score, en de kortste deelstuklengte (s). */
   SCENE_DREMPEL: 0.3,
   SCENE_MIN_DEEL: 0.4,
+  /**
+   * Gezichtsaanwezigheid is de primaire bron voor deelstukken (een overvloeier
+   * naar een graphic heeft geen harde knip): elke SCENE_STAP s meten, runs
+   * korter dan SCENE_GAT_GLAD gladstrijken, en het wisselmoment op de hoogste
+   * scènescore binnen ±SCENE_OVERGANG_MARGE rond de overgang (onder
+   * SCENE_PIEK_MIN geen piek: het midden).
+   */
+  SCENE_STAP: 0.4,
+  SCENE_GAT_GLAD: 0.6,
+  SCENE_OVERGANG_MARGE: 0.5,
+  SCENE_PIEK_MIN: 0.02,
 
   /** Opschalen: vanaf deze factor een milde verscherping (lanczos schaalt altijd). */
   OPSCHAAL_VERSCHERP_VANAF: 1.1,

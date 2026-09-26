@@ -27,9 +27,9 @@ import { keurRetentie, pasRetentieToe } from '../src/lib/roughcut/retentie';
 import { poort } from '../src/lib/roughcut/poort';
 import { keurKnippen } from '../src/lib/roughcut/keuring';
 import { STANDAARD_DOELEN } from '../src/lib/vault/normen';
-import { deelstukken, detecteerSceneKnippen, vulScenes, type GezichtMeter } from '../src/lib/roughcut/scenes';
+import { deelstukken, detecteerSceneKnippen, strijkGlad, vulScenes, type GezichtMeter } from '../src/lib/roughcut/scenes';
 import { keurGraphics } from '../src/lib/roughcut/keuring';
-import { plaatsRegels, ondertitelMaat, gezichtOpBeeld } from '../src/lib/roughcut/ondertitels';
+import { plaatsRegels, ondertitelMaat, gezichtOpBeeld, fontKlopt } from '../src/lib/roughcut/ondertitels';
 import { kaderKeten } from '../src/lib/roughcut/kader';
 import { readFile } from 'node:fs/promises';
 
@@ -324,6 +324,59 @@ async function main() {
       const zonderScenes: Shot = { ...shot, start: 6.5, end: 9, scenes: undefined };
       const fout = await keurGraphics([zonderScenes], 'vullend', stub);
       toets('keuring "graphics passend": fout als een graphic vullend staat', fout.goed === false, fout.detail);
+    }
+
+    // 7b. Zachte overgang: de bron vloeit in één seconde (5,5-6,5 s) over van
+    //     testbeeld naar het oranje vlak. Geen harde knip, dus scènedetectie
+    //     op drempel 0,3 ziet niets — precies het geval uit de nieuwsbron
+    //     ("< 3 maanden", "−39%"). De gestubde detector ziet tot 6,0 s een
+    //     gezicht, met één gemist frame op 4 s (een wegkijkend hoofd).
+    console.log('scènes: zachte overgang (overvloeier) en gladstrijken');
+    {
+      const zacht = join(map, 'zachtwerk');
+      await (await import('node:fs/promises')).mkdir(zacht, { recursive: true });
+      const bronZacht = join(zacht, 'bron.mp4');
+      const gen = ff([
+        '-f', 'lavfi', '-i', 'testsrc=size=1280x720:rate=25:duration=6.5',
+        '-f', 'lavfi', '-i', 'color=c=0xff7a00:size=1280x720:rate=25:duration=6.5',
+        '-f', 'lavfi', '-i', 'sine=frequency=220:duration=12',
+        '-filter_complex', '[0:v][1:v]xfade=transition=fade:duration=1:offset=5.5,format=yuv420p[v]',
+        '-map', '[v]', '-map', '2:a', '-c:v', 'libx264', '-preset', 'ultrafast', '-c:a', 'aac', '-shortest', bronZacht,
+      ]);
+      toets('bron met overvloeier gegenereerd', gen.ok, gen.uit.slice(-200));
+      const hard = await detecteerSceneKnippen(bronZacht, 3, 9);
+      toets('scènedetectie (drempel 0,3) ziet de overvloeier niet', hard.length === 0, JSON.stringify(hard));
+
+      const zachtStub: GezichtMeter = async (tijden) => tijden.map((t) => (Math.abs(t - 4) < 0.25 ? false : t < 6));
+      const shot: Shot = {
+        volgorde: 1, start: 3, end: 10, functie: 'setup', focusX: 0.5, focusW: 0.12,
+        gezicht: { x: 0.5, breedte: 0.12, top: 0.2, hoogte: 0.3 },
+      };
+      const sc = await vulScenes(bronZacht, [shot], zachtStub);
+      console.log(`  (${sc.metingen} metingen, ${sc.overgangen} overgang, ${sc.ms} ms)`);
+      toets('overgang gevonden zonder scèneknip: 1 persoon, 1 graphic', sc.persoon === 1 && sc.graphic === 1, JSON.stringify(sc));
+      toets('gemist frame op 4 s gladgestreken (geen extra graphic)', (shot.scenes ?? []).length === 2, JSON.stringify(shot.scenes));
+      const wissel = shot.scenes?.[1]?.van ?? 0;
+      toets('wisselmoment binnen de overvloeier (5,5-6,5 s)', wissel >= 5.4 && wissel <= 6.6, String(wissel));
+      const delen = deelstukken(shot, 'vullend');
+      toets('graphic na de overvloeier passend (blur)', delen.length === 2 && delen[1].kader === 'blur', JSON.stringify(delen));
+      const keur = await keurGraphics([shot], 'vullend', zachtStub);
+      toets('keuring "graphics passend" groen met dezelfde meting', keur.goed === true, keur.detail);
+
+      // Gladstrijken los: een korte run tussen twee lange gaat op in de buren.
+      const runs = strijkGlad([{ van: 0, tot: 9, gezicht: true }, { van: 10, tot: 10, gezicht: false }, { van: 11, tot: 20, gezicht: true }], 0.4, 0.6);
+      toets('run van 0,4 s zonder gezicht verdwijnt', runs.length === 1 && runs[0].gezicht, JSON.stringify(runs));
+      const lang = strijkGlad([{ van: 0, tot: 9, gezicht: true }, { van: 10, tot: 14, gezicht: false }], 0.4, 0.6);
+      toets('run van 2 s zonder gezicht blijft', lang.length === 2, JSON.stringify(lang));
+    }
+
+    console.log('fontcontrole');
+    {
+      const archivo = { familie: 'Archivo Black', bestand: 'ArchivoBlack-Regular.ttf' };
+      toets('postscriptnaam als "pad" telt als het bedoelde font', fontKlopt(archivo, 'ArchivoBlack-Regular', 'ArchivoBlack-Regular'));
+      toets('volledig pad telt ook', fontKlopt(archivo, '/home/runner/work/x/assets/fonts/ArchivoBlack-Regular.ttf', 'ArchivoBlack-Regular'));
+      toets('variabel font meldt zich met familienaam', fontKlopt({ familie: 'Montserrat', bestand: 'Montserrat-Variable.ttf' }, 'Montserrat-Regular', 'Montserrat-Regular'));
+      toets('een systeemfont is fout', !fontKlopt(archivo, '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf', 'DejaVuSans'));
     }
 
     // 8. Ondertitelplek: onder de kin, boven de 78%-grens, nooit over het
