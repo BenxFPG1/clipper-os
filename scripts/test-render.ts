@@ -32,6 +32,9 @@ import { keurGraphics } from '../src/lib/roughcut/keuring';
 import { plaatsRegels, ondertitelMaat, gezichtOpBeeld, fontKlopt } from '../src/lib/roughcut/ondertitels';
 import { kaderKeten } from '../src/lib/roughcut/kader';
 import { readFile } from 'node:fs/promises';
+import { createCanvas } from '@napi-rs/canvas';
+import { fontVoor } from '../src/lib/roughcut/tekstkaarten';
+import { inhoudKader, inhoudMeterVia, inhoudOpBeeld, inhoudsboxUitPixels } from '../src/lib/roughcut/graphics';
 
 let gefaald = 0;
 let gedaan = 0;
@@ -377,6 +380,92 @@ async function main() {
       toets('volledig pad telt ook', fontKlopt(archivo, '/home/runner/work/x/assets/fonts/ArchivoBlack-Regular.ttf', 'ArchivoBlack-Regular'));
       toets('variabel font meldt zich met familienaam', fontKlopt({ familie: 'Montserrat', bestand: 'Montserrat-Variable.ttf' }, 'Montserrat-Regular', 'Montserrat-Regular'));
       toets('een systeemfont is fout', !fontKlopt(archivo, '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf', 'DejaVuSans'));
+    }
+
+    // 9. Slimme inzoom op een graphic: een oranje vlak met een groot getal in
+    //    het midden en een kleine bronregel linksonder. De inhoudsbox moet de
+    //    bronregel meenemen, de inzoom moet groter zijn dan passend, en er mag
+    //    niets wegvallen.
+    console.log('graphics: inzoomen op de inhoud');
+    {
+      fontVoor(null); // fonts registreren
+      const doek = createCanvas(1280, 720);
+      const ctx = doek.getContext('2d');
+      ctx.fillStyle = '#ff7a00';
+      ctx.fillRect(0, 0, 1280, 720);
+      ctx.fillStyle = '#ffffff';
+      ctx.font = '160px "Archivo Black"';
+      ctx.textAlign = 'center';
+      ctx.fillText('-39%', 640, 420);
+      ctx.font = '22px "Archivo Black"';
+      ctx.textAlign = 'left';
+      ctx.fillText('BRON: CBS', 40, 690);
+      const png = join(map, 'graphic.png');
+      await (await import('node:fs/promises')).writeFile(png, doek.toBuffer('image/png'));
+      const gwerk = join(map, 'graphicwerk');
+      await (await import('node:fs/promises')).mkdir(gwerk, { recursive: true });
+      const gbron = join(gwerk, 'bron.mp4');
+      const gen = ff(['-loop', '1', '-i', png, '-f', 'lavfi', '-i', 'sine=frequency=220:duration=4', '-t', '4', '-r', '25',
+        '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', gbron]);
+      toets('graphic-bron gegenereerd', gen.ok, gen.uit.slice(-200));
+
+      const box = await inhoudMeterVia(gbron)([0.5, 2, 3.5]);
+      toets('inhoudsbox gemeten', box !== null, 'null');
+      if (box) {
+        toets('box omvat de bronregel linksonder', box.x0 <= 40 / 1280 + 0.01 && box.y1 >= 685 / 720 - 0.02, JSON.stringify(box));
+        toets('box omvat het grote getal', box.x1 >= 0.62 && box.y0 <= 0.45, JSON.stringify(box));
+        const k = inhoudKader(box);
+        toets('kadrering bevat de hele inhoud (niets valt weg)', k.r.x0 <= box.x0 && k.r.y0 <= box.y0 && k.r.x1 >= box.x1 && k.r.y1 >= box.y1, JSON.stringify(k));
+        const passendHoogte = (box.y1 - box.y0) * 1080 * (9 / 16);
+        const ingezoomd = ((box.y1 - box.y0) / (k.r.y1 - k.r.y0)) * k.fgH;
+        toets('inhoud groter dan passend', ingezoomd > passendHoogte * 1.05, `${Math.round(ingezoomd)} px vs ${Math.round(passendHoogte)} px`);
+
+        const shot: Shot = { volgorde: 1, start: 0.2, end: 3.8, functie: 'setup', scenes: [{ van: 0, tot: 4, gezicht: false, inhoud: box }] };
+        const uit = join(map, 'graphic-render.mp4');
+        try {
+          const r = await maakRuweMontage({ sourceUrl: 'lokaal://test', shots: [shot], alGesegmenteerd: true, outputPad: uit, werkmap: gwerk, kader: 'vullend' });
+          toets('render met ingezoomde graphic slaagt', existsSync(uit) && r.kwaliteit.graphicsIngezoomd === 1, JSON.stringify(r.kwaliteit));
+          // De bronregel (wit op oranje) moet in het eindbeeld staan, op de
+          // plek die de geometrie voorspelt.
+          const frame = join(map, 'graphic-eind.raw');
+          ff(['-ss', '1.5', '-i', uit, '-frames:v', '1', '-f', 'rawvideo', '-pix_fmt', 'rgb24', frame]);
+          const px = await readFile(frame);
+          const naarUit = (bx: number, by: number) => ({
+            x: Math.round((1080 - k.fgB) / 2 + ((bx - k.r.x0) / (k.r.x1 - k.r.x0)) * k.fgB),
+            y: Math.round(k.y0 + ((by - k.r.y0) / (k.r.y1 - k.r.y0)) * k.fgH),
+          });
+          const lo = naarUit(40 / 1280, 670 / 720);
+          const hi = naarUit(200 / 1280, 692 / 720);
+          let wit = 0;
+          for (let y = lo.y; y <= hi.y; y++) for (let x = lo.x; x <= hi.x; x++) {
+            const i = (y * 1080 + x) * 3;
+            if (px[i] > 220 && px[i + 1] > 220 && px[i + 2] > 220) wit++;
+          }
+          toets('bronregel staat in het eindbeeld (niet weggesneden)', wit > 20, `${wit} witte pixels in ${lo.x},${lo.y}-${hi.x},${hi.y}`);
+        } catch (e) {
+          toets('render met ingezoomde graphic slaagt', false, (e as Error).message.slice(-400));
+        }
+
+        const stubGeen: GezichtMeter = async (t) => t.map(() => false);
+        const keurGoed = await keurGraphics([shot], 'vullend', stubGeen, inhoudMeterVia(gbron));
+        toets('keuring: ingezoomde graphic binnen beeld', keurGoed.goed === true, keurGoed.detail);
+        // Te krap gemeten (alleen het getal): de hermeting vindt de bronregel
+        // buiten het gerenderde gebied → fout.
+        const krap: Shot = { ...shot, scenes: [{ van: 0, tot: 4, gezicht: false, inhoud: { x0: 0.3, y0: 0.35, x1: 0.7, y1: 0.6 } }] };
+        const keurFout = await keurGraphics([krap], 'vullend', stubGeen, inhoudMeterVia(gbron));
+        toets('keuring: inhoud buiten beeld → fout', keurFout.goed === false && /buiten beeld/.test(keurFout.detail), keurFout.detail);
+
+        const plek = plaatsRegels([{ s: 1, e: 2, woorden: [{ w: 'min', s: 1, e: 1.4 }, { w: 'negenendertig', s: 1.4, e: 2 }] }], [shot], 'vullend');
+        const inhoudY = inhoudOpBeeld(box);
+        const y = plek.plaatsing[0];
+        const hoogte = ondertitelMaat(null).assGrootte;
+        toets('ondertitel valt niet over de graphic-inhoud', y - hoogte >= inhoudY.onder * 1920 || y <= inhoudY.boven * 1920, `regel ${y - hoogte}-${y}, inhoud ${Math.round(inhoudY.boven * 1920)}-${Math.round(inhoudY.onder * 1920)} (${plek.plekken[0]})`);
+      }
+
+      // Geen egale achtergrond (ruis over het hele vlak): geen box, dus passend.
+      const ruis = Buffer.alloc(480 * 270 * 3);
+      for (let i = 0; i < ruis.length; i++) ruis[i] = (i * 7919) % 251;
+      toets('druk beeld zonder egale achtergrond → geen inzoom', inhoudsboxUitPixels(ruis, 480, 270) === null);
     }
 
     // 8. Ondertitelplek: onder de kin, boven de 78%-grens, nooit over het

@@ -9,6 +9,7 @@ import { FONTS, fontVoor, veiligeTekst, type Huisstijl } from './tekstkaarten';
 import { basisZoom, type BurnOverlay, type Shot } from './index';
 import { uitsnedeVan } from './kadercontrole';
 import { deelstukken } from './scenes';
+import { inhoudOpBeeld } from './graphics';
 import type { Kader } from './kader';
 import type { BronWoord } from './woorden';
 
@@ -262,10 +263,13 @@ export type Plek = 'standaard' | 'onder_kin' | 'boven_hoofd' | 'overlap';
  * meting). Zelfde uitsnede-rekenwerk als de kadercontrole en de keuring.
  */
 export function gezichtOpBeeld(seg: Shot, kader: Kader, t: number): { boven: number; onder: number } | null {
-  const g = seg.gezicht;
-  if (!g) return null;
   const rel = t - seg.start;
   const deel = deelstukken(seg, kader).find((d) => rel >= d.van && rel <= d.tot) ?? deelstukken(seg, kader)[0];
+  // Een ingezoomde graphic: de inhoud is hier het obstakel — de ondertitel
+  // hoort eronder (of erboven), niet over de cijfers heen.
+  if (deel.kader === 'blur' && deel.inhoud) return inhoudOpBeeld(deel.inhoud);
+  const g = seg.gezicht;
+  if (!g) return null;
   if (deel.gezicht === false || deel.kader === 'origineel') return null;
   if (deel.kader === 'blur') {
     // Passend: het hele 16:9-beeld op volle breedte, verticaal in het midden.

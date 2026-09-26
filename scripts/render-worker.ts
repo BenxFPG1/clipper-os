@@ -661,7 +661,7 @@ async function verwerk(job: Job) {
       const sc = await vulScenes(bronPad, segmenten, gezichtMeterVia(bronPad, pythonMetOpenCV(), 1));
       console.log(
         `     scènes: ${sc.metingen} gezichtsmetingen, ${sc.shots} shot(s) met wissel → ${sc.persoon} deelstuk(ken) met gezicht, ` +
-          `${sc.graphic} zonder (passend), ${sc.overgangen} overgang(en) op de scènepiek (${(sc.ms / 1000).toFixed(1).replace('.', ',')} s)`,
+          `${sc.graphic} zonder (passend; ${sc.ingezoomd} ingezoomd op de inhoud), ${sc.overgangen} overgang(en) op de scènepiek (${(sc.ms / 1000).toFixed(1).replace('.', ',')} s)`,
       );
     } catch (e) {
       console.log(`     scènedetectie overgeslagen (${(e as Error).message.slice(0, 70)})`);
@@ -1003,6 +1003,9 @@ async function verwerk(job: Job) {
     }
 
     let montage!: Awaited<ReturnType<typeof maakRuweMontage>>;
+    // Een herrender (correctieronde) hergebruikt de gecachte secties; tel de
+    // megabytes over alle rondes, anders staat er na een tweede ronde "0 MB".
+    let mbRenderbron = 0;
     let beeldRondeGedaan = false;
     let keuringsuitslag: Awaited<ReturnType<typeof keurMontage>> | null = null;
     let ondertitels: Ondertitels | null = null;
@@ -1070,6 +1073,9 @@ async function verwerk(job: Job) {
       // verliesvrij, zodat de eindencode (brandOverlays) niet op een al
       // gecomprimeerd beeld stapelt.
       tussenbestand: hookTeksten.length > 0,
+      // Scherpte uit de renderbron: alleen de gebruikte stukken, in de
+      // hoogste kwaliteit; de analysebron blijft voor alle metingen.
+      renderSecties: process.env.RENDERBRON !== '0',
       werkmap: bronmap,
       kader: editClip?.kader ?? clip.kader ?? 'vullend',
       overlays: [...(await bouwOverlays()), ...(ondertitels?.overlays ?? [])],
@@ -1088,6 +1094,7 @@ async function verwerk(job: Job) {
       maxBytes: MAX_BYTES,
       onVoortgang: (m) => console.log(`     ${m}`),
     });
+    mbRenderbron += montage.kwaliteit.renderbron?.mbGedownload ?? 0;
 
     // Zegt de clip wat het script voorschrijft? Het eindbestand wordt
     // terugvertaald naar tekst en vergeleken: dekking van de scriptwoorden, en
@@ -1339,13 +1346,19 @@ async function verwerk(job: Job) {
       const k = montage.kwaliteit;
       const ot = ondertitels?.stijl;
       const bitrate = meetBitrate(lokaal);
+      const rb = k.renderbron;
+      const renderbron = rb
+        ? `renderbron ${rb.secties.map((sc) => `${sc.resolutie} ${sc.codec}`).join(' + ') || 'geen secties'} ` +
+          `(${rb.shotsUitSectie} shots uit secties${rb.shotsTerugval ? `, ${rb.shotsTerugval} uit de analysebron` : ''}; ` +
+          `${mbRenderbron.toFixed(1).replace('.', ',')} MB gedownload${rb.geschatVolMb ? ` vs ~${rb.geschatVolMb} MB voor de hele video` : ''}), `
+        : 'renderbron: analysebron (geen secties), ';
       console.log(
-        `     kwaliteit: bron ${b ? `${b.breedte}x${b.hoogte} ${b.codec ?? '?'}` : 'onbekend'}, ` +
-          `opschaal ×${k.opschaalMax.toFixed(2).replace('.', ',')}, ` +
+        `     kwaliteit: analysebron ${b ? `${b.breedte}x${b.hoogte} ${b.codec ?? '?'}` : 'onbekend'}, ${renderbron}` +
+          `effectieve opschaal bij sterkste zoom ×${k.opschaalMax.toFixed(2).replace('.', ',')}, ` +
           (ot
             ? `ondertitels ${ot.familie} ${ot.assGrootte} (kap ${ot.kapPx} px; ${ot.plekken.standaard} standaard, ${ot.plekken.onder_kin} onder kin, ${ot.plekken.boven_hoofd} boven hoofd, ${ot.plekken.overlap} overlap), `
             : 'geen ondertitels, ') +
-          `deelstukken ${k.persoonDelen} persoon / ${k.graphicDelen} graphic, ` +
+          `deelstukken ${k.persoonDelen} persoon / ${k.graphicDelen} graphic (${k.graphicsIngezoomd} ingezoomd), ` +
           `eindbitrate ${bitrate ? `${(bitrate.totaal / 1e6).toFixed(1).replace('.', ',')} Mbps (video ${(bitrate.video / 1e6).toFixed(1).replace('.', ',')})` : 'onbekend'}`,
       );
     }

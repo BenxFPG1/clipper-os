@@ -78,6 +78,9 @@ async function main() {
         outputPad: doel,
         werkmap: join(WERKMAP, videoId),
         verticaal,
+        // Alleen de gebruikte stukken in de hoogste kwaliteit; de hele video
+        // blijft 1080p voor de metingen (renderbron.ts).
+        renderSecties: true,
         onVoortgang: (m) => console.log(`   ${m}`),
       });
       console.log(`   klaar: ${naam} (${duur}s)\n`);

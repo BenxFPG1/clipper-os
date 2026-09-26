@@ -12,6 +12,7 @@ import { basisZoom } from './index';
 import { instelling } from './instellingen';
 import type { Shot } from './index';
 import { deelstukken, gezichtMeterVia, type GezichtMeter } from './scenes';
+import { boxBinnen, inhoudKader, inhoudMeterVia, type InhoudMeter } from './graphics';
 import type { Kader } from './kader';
 
 /** Breedte/hoogte van een normale bron. */
@@ -312,10 +313,27 @@ export async function keurGraphics(
   segmenten: Shot[],
   kader: Kader,
   meter: GezichtMeter,
+  inhoudMeter?: InhoudMeter,
 ): Promise<KeuringRegel> {
   const naam = 'graphics passend';
   const toetsen: { volgorde: number; van: number; tot: number; tijden: number[] }[] = [];
   let graphicDelen = 0;
+  // Ingezoomde graphics: de inhoud opnieuw meten, op andere momenten dan bij
+  // de kadrering (een animatie die later nog uitloopt), en toetsen dat alles
+  // binnen het gerenderde gebied valt. Inzoomen mag nooit inhoud kosten.
+  const inhoudFouten: string[] = [];
+  let ingezoomd = 0;
+  for (const seg of segmenten) {
+    for (const d of deelstukken(seg, kader)) {
+      if (d.kader !== 'blur' || !d.inhoud || !inhoudMeter) continue;
+      ingezoomd++;
+      const lengte = d.tot - d.van;
+      const opnieuw = await inhoudMeter([0.15, 0.6, 0.9].map((f) => seg.start + d.van + lengte * f));
+      if (opnieuw && !boxBinnen(opnieuw, inhoudKader(d.inhoud).r)) {
+        inhoudFouten.push(`shot ${seg.volgorde} ${(seg.start + d.van).toFixed(1)}s: graphic-inhoud valt buiten beeld na inzoomen`);
+      }
+    }
+  }
   for (const seg of segmenten) {
     for (const d of deelstukken(seg, kader)) {
       if (d.kader === 'blur') graphicDelen++;
@@ -325,10 +343,14 @@ export async function keurGraphics(
       toetsen.push({ volgorde: seg.volgorde, van: seg.start + d.van, tot: seg.start + d.tot, tijden: punten.map((f) => seg.start + d.van + lengte * f) });
     }
   }
-  if (toetsen.length === 0) return { naam, goed: true, detail: `geen vullende deelstukken (${graphicDelen} passend)` };
+  if (toetsen.length === 0) {
+    return inhoudFouten.length
+      ? { naam, goed: false, detail: inhoudFouten.slice(0, 5).join('; ') }
+      : { naam, goed: true, detail: `geen vullende deelstukken (${graphicDelen} passend, ${ingezoomd} ingezoomd op de inhoud)` };
+  }
   const uitslag = await meter(toetsen.flatMap((t) => t.tijden));
   if (uitslag.every((u) => u === null)) return { naam, goed: null, detail: 'gezichtsmeting mislukt; niet te toetsen' };
-  const fouten: string[] = [];
+  const fouten: string[] = [...inhoudFouten];
   let i = 0;
   for (const t of toetsen) {
     const eigen = uitslag.slice(i, i + t.tijden.length);
@@ -342,7 +364,7 @@ export async function keurGraphics(
     goed: fouten.length === 0,
     detail:
       fouten.length === 0
-        ? `${toetsen.length} vullende deelstukken met gezicht, ${graphicDelen} passend (blur)`
+        ? `${toetsen.length} vullende deelstukken met gezicht, ${graphicDelen} passend (blur), ${ingezoomd} ingezoomd op de inhoud, niets buiten beeld`
         : fouten.slice(0, 5).join('; '),
   };
 }
@@ -463,6 +485,8 @@ export async function keurMontage(
     kader?: Kader;
     /** Gezichtsmeter voor "graphics passend"; standaard gezichten.py op de bron. */
     gezichtMeter?: GezichtMeter;
+    /** Inhoudsmeter voor ingezoomde graphics; standaard ffmpeg op de bron. */
+    inhoudMeter?: InhoudMeter;
   } = {},
 ): Promise<Keuringsrapport> {
   const regels: KeuringRegel[] = [
@@ -479,6 +503,7 @@ export async function keurMontage(
             segmenten,
             opties.kader,
             opties.gezichtMeter ?? gezichtMeterVia(opties.bronPad as string, opties.python ?? { cmd: 'python3', voor: [] }),
+            opties.inhoudMeter ?? (opties.bronPad ? inhoudMeterVia(opties.bronPad) : undefined),
           ),
         ]
       : []),

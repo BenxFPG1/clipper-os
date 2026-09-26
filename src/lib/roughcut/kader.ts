@@ -28,6 +28,12 @@ export function kaderKeten(
     focusYExpr?: string;
     /** Hoogte van het beeld waaruit gesneden wordt (px); bepaalt of er opgeschaald wordt. Standaard 1080. */
     bronHoogte?: number;
+    /**
+     * Alleen bij blur: het gebied van de bron dat als voorgrond in beeld komt
+     * (graphics.ts → inhoudKader) en hoe groot. Zonder dit het hele beeld,
+     * passend op volle breedte.
+     */
+    inhoud?: { r: { x0: number; y0: number; x1: number; y1: number }; fgB: number; fgH: number };
   } = {},
 ): string {
   const zoom = opties.zoom ?? 1;
@@ -39,7 +45,13 @@ export function kaderKeten(
   if (kader === 'blur') {
     // Alleen de voorgrond krijgt lanczos: de achtergrond is bewust wazig, daar
     // is scherp schalen verspilde rekentijd.
-    return 'split[a][b];[a]scale=192:342:force_original_aspect_ratio=increase,crop=192:342,boxblur=6:2,scale=1080:1920[bg];[b]scale=1080:-2:flags=lanczos[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2,format=yuv420p';
+    const i = opties.inhoud;
+    // Met gemeten inhoud: alleen dat gebied als voorgrond, zo groot als in
+    // 9:16 past. De geblurde achtergrond blijft het hele beeld.
+    const voorgrond = i
+      ? `crop=iw*${(i.r.x1 - i.r.x0).toFixed(4)}:ih*${(i.r.y1 - i.r.y0).toFixed(4)}:iw*${i.r.x0.toFixed(4)}:ih*${i.r.y0.toFixed(4)},scale=${i.fgB}:${i.fgH}:flags=lanczos`
+      : 'scale=1080:-2:flags=lanczos';
+    return `split[a][b];[a]scale=192:342:force_original_aspect_ratio=increase,crop=192:342,boxblur=6:2,scale=1080:1920[bg];[b]${voorgrond}[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2,format=yuv420p`;
   }
 
   // vullend: hoogte vullen (maal de zoom voor punch-ins), dan de uitsnede op

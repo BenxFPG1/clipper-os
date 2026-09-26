@@ -3,6 +3,7 @@ import { resolveBinary } from '../ingest/binaries';
 import { instelling } from './instellingen';
 import type { Kader } from './kader';
 import type { Shot } from './index';
+import { inhoudMeterVia, type Box, type InhoudMeter } from './graphics';
 
 /**
  * Kaderkeuze per scène binnen een shot.
@@ -20,10 +21,16 @@ import type { Shot } from './index';
  */
 
 /** Een scène in bróntijd (absoluut), met of er een gezicht in staat; null = niet gemeten. */
-export type Scene = { van: number; tot: number; gezicht: boolean | null };
+export type Scene = {
+  van: number;
+  tot: number;
+  gezicht: boolean | null;
+  /** Bij een scène zonder gezicht: de gemeten inhoud van de graphic (graphics.ts); null = geen betrouwbare meting. */
+  inhoud?: Box | null;
+};
 
 /** Een deelstuk van een shot in shot-tijd (0 = begin van het shot), met het kader dat de render gebruikt. */
-export type Deelstuk = { van: number; tot: number; kader: Kader; gezicht: boolean | null };
+export type Deelstuk = { van: number; tot: number; kader: Kader; gezicht: boolean | null; inhoud?: Box | null };
 
 /**
  * Het kader voor een shot als geheel — de regel van vóór de deelstukken: het
@@ -62,6 +69,7 @@ export function deelstukken(shot: Shot, kader: Kader): Deelstuk[] {
       van: Math.max(0, s.van - shot.start),
       tot: Math.min(duur, s.tot - shot.start),
       gezicht: s.gezicht,
+      inhoud: s.inhoud ?? null,
     }))
     .sort((a, b) => a.van - b.van);
   // Gaten dichten en de randen op de shotgrenzen: de poort en de
@@ -82,7 +90,9 @@ export function deelstukken(shot: Shot, kader: Kader): Deelstuk[] {
   const samen: Deelstuk[] = [];
   for (const s of metKader) {
     const vorige = samen[samen.length - 1];
-    if (vorige && vorige.kader === s.kader) {
+    // Samenvoegen alleen bij hetzelfde kader én dezelfde graphic-kadrering:
+    // twee graphics na elkaar met een andere inhoud houden elk hun eigen inzoom.
+    if (vorige && vorige.kader === s.kader && JSON.stringify(vorige.inhoud ?? null) === JSON.stringify(s.inhoud ?? null)) {
       vorige.tot = s.tot;
       if (vorige.gezicht !== s.gezicht) vorige.gezicht = vorige.gezicht || s.gezicht;
     } else samen.push({ ...s });
@@ -212,7 +222,10 @@ export async function vulScenes(
   bron: string,
   segmenten: Shot[],
   meter: GezichtMeter,
-): Promise<{ shots: number; persoon: number; graphic: number; metingen: number; overgangen: number; ms: number }> {
+  opties: { inhoudMeter?: InhoudMeter } = {},
+): Promise<{ shots: number; persoon: number; graphic: number; ingezoomd: number; metingen: number; overgangen: number; ms: number }> {
+  const inhoudMeter = opties.inhoudMeter ?? inhoudMeterVia(bron);
+  let ingezoomd = 0;
   const begin = Date.now();
   const stap = instelling('SCENE_STAP');
   const glad = instelling('SCENE_GAT_GLAD');
@@ -256,11 +269,23 @@ export async function vulScenes(
       overgangen++;
     }
     const randen = [seg.start, ...grenzen, seg.end];
-    seg.scenes = runs.map((run, r) => ({ van: randen[r], tot: randen[r + 1], gezicht: run.gezicht }));
+    seg.scenes = [];
+    for (const [r, run] of runs.entries()) {
+      const scene: Scene = { van: randen[r], tot: randen[r + 1], gezicht: run.gezicht };
+      if (!run.gezicht) {
+        // De inhoud van de graphic op drie momenten, als unie: een animatie
+        // die op één frame nog niet volledig in beeld is valt zo niet weg.
+        // Wegblijven van de randen: daar loopt de overgang nog.
+        const d = scene.tot - scene.van;
+        scene.inhoud = await inhoudMeter([0.25, 0.5, 0.75].map((f) => scene.van + d * f));
+        if (scene.inhoud) ingezoomd++;
+      }
+      seg.scenes.push(scene);
+    }
     shots++;
     for (const run of runs) run.gezicht ? persoon++ : graphic++;
   }
-  return { shots, persoon, graphic, metingen: alle.length, overgangen, ms: Date.now() - begin };
+  return { shots, persoon, graphic, ingezoomd, metingen: alle.length, overgangen, ms: Date.now() - begin };
 }
 
 /** Lege metingen opvullen met de dichtstbijzijnde buur; null als er helemaal niets gemeten is. */

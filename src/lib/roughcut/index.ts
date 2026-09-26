@@ -9,6 +9,8 @@ import { snapShots, verwijderDodeLucht, type SnapSegment, type Stilte } from './
 import { encodePreset, instelling } from './instellingen';
 import { assFilter } from './ondertitels';
 import { deelstukken, type Scene } from './scenes';
+import { inhoudKader } from './graphics';
+import { haalRenderSecties, sectiePlan, sectieTijd, sectieVoor, type RenderBron } from './renderbron';
 
 export type Shot = {
   volgorde: number;
@@ -201,6 +203,14 @@ export async function maakRuweMontage(opties: {
    * tweede encode geen verlies op verlies stapelt.
    */
   tussenbestand?: boolean;
+  /**
+   * Render uit secties in de hoogste kwaliteit (renderbron.ts) in plaats van
+   * uit de analysebron. Alleen voor een echte URL; mislukt een sectie, dan
+   * rendert dat shot gewoon uit de analysebron.
+   */
+  renderSecties?: boolean;
+  /** Al opgehaalde renderbron (tests, of een aanroeper die de secties zelf beheert); wint van renderSecties. */
+  renderBron?: RenderBron;
   onVoortgang?: (bericht: string) => void;
 }): Promise<{ pad: string; duur: number; bron: BronEigenschappen | null; kwaliteit: RenderKwaliteit }> {
   const { sourceUrl, shots, outputPad, werkmap } = opties;
@@ -256,10 +266,42 @@ export async function maakRuweMontage(opties: {
   const invoer: string[] = [];
   const delenVideo: string[] = [];
   const delenAudio: string[] = [];
-  const bronHoogte = bronInfo?.hoogte ?? 1080;
-  const kwaliteit: RenderKwaliteit = { opschaalMax: 0, persoonDelen: 0, graphicDelen: 0 };
+  const kwaliteit: RenderKwaliteit = { opschaalMax: 0, persoonDelen: 0, graphicDelen: 0, graphicsIngezoomd: 0, renderbron: null };
+  const verhouding = bronInfo && bronInfo.hoogte > 0 ? bronInfo.breedte / bronInfo.hoogte : 16 / 9;
+
+  // De renderbron: alleen de stukken die deze clip gebruikt, in de hoogste
+  // kwaliteit. De handles voor de audio-crossfade horen erbij, en de
+  // secties zijn ruim (marge per kant), zodat kleine grensverschuivingen
+  // van latere correctierondes er nog in vallen.
+  let renderBron: RenderBron | null = opties.renderBron ?? null;
+  if (!renderBron && opties.renderSecties && /^https?:\/\//.test(sourceUrl)) {
+    try {
+      renderBron = await haalRenderSecties({
+        sourceUrl,
+        analyseBron: bronBestand,
+        plan: sectiePlan(gesorteerd.map((sh) => ({ start: sh.start - OVERLAP, end: sh.end + OVERLAP }))),
+        map: join(werkmap, 'secties'),
+        videoDuur: await duurVan(bronBestand),
+        log,
+      });
+    } catch (e) {
+      log(`renderbron niet beschikbaar (${(e as Error).message.slice(0, 120)}); alles uit de analysebron`);
+    }
+  }
+  let shotsUitSectie = 0;
+
   gesorteerd.forEach((shot, i) => {
     const duur = shot.end - shot.start;
+    const handleVoor = i === 0 ? 0 : OVERLAP / 2;
+    const handleNa = i === gesorteerd.length - 1 ? 0 : OVERLAP / 2;
+    // Uit welke bron dit shot komt: de sectie die het hele shot plus handles
+    // bevat, anders de analysebron. Beeld én geluid uit hetzelfde bestand, dus
+    // ze blijven onderling synchroon.
+    const sectie = renderBron ? sectieVoor(renderBron.secties, Math.max(0, shot.start - handleVoor), shot.end + handleNa) : null;
+    if (sectie) shotsUitSectie++;
+    const invoerBestand = sectie?.pad ?? bronBestand;
+    const bronTijd = (t: number) => (sectie ? sectieTijd(sectie, t) : t);
+    const bronHoogte = sectie?.hoogte ?? bronInfo?.hoogte ?? 1080;
     // Heeft de kadercontrole een zoom vastgesteld, dan wint die: hij is
     // getoetst tegen het werkelijke gezichtsvak. Anders de zoom die het shot
     // uit zichzelf verdient (spreker klein in beeld → inzoomen tot het hoofd
@@ -300,6 +342,9 @@ export async function maakRuweMontage(opties: {
       if (deel.kader === 'vullend' || deel.kader === 'staand') {
         kwaliteit.opschaalMax = Math.max(kwaliteit.opschaalMax, opschaalFactor(zoom, bronHoogte));
       }
+      // Een graphic met gemeten inhoud: ingezoomd op die inhoud (graphics.ts).
+      const inhoud = deel.kader === 'blur' && deel.inhoud ? inhoudKader(deel.inhoud, verhouding) : undefined;
+      if (inhoud) kwaliteit.graphicsIngezoomd++;
       if (deel.gezicht === false || (deel.gezicht === null && deel.kader === 'blur' && shot.beeldtype === 'graphic')) kwaliteit.graphicDelen++;
       else kwaliteit.persoonDelen++;
       return (
@@ -311,6 +356,7 @@ export async function maakRuweMontage(opties: {
           focusY: shot.focusY,
           focusYExpr: spoorYDeel ? (spoorExpressie(spoorYDeel) ?? undefined) : undefined,
           bronHoogte,
+          inhoud,
         })
       );
     };
@@ -322,13 +368,11 @@ export async function maakRuweMontage(opties: {
     // Alleen aan de kanten waar een naad zit: het begin van de clip en het
     // einde blijven exact staan, zodat de totale lengte gelijk blijft aan de
     // som van de shots en beeld en geluid synchroon blijven.
-    const handleVoor = i === 0 ? 0 : OVERLAP / 2;
-    const handleNa = i === gesorteerd.length - 1 ? 0 : OVERLAP / 2;
-    invoer.push('-ss', shot.start.toFixed(3), '-t', duur.toFixed(3), '-i', bronBestand);
+    invoer.push('-ss', bronTijd(shot.start).toFixed(3), '-t', duur.toFixed(3), '-i', invoerBestand);
     invoer.push(
-      '-ss', Math.max(0, shot.start - handleVoor).toFixed(3),
+      '-ss', bronTijd(Math.max(0, shot.start - handleVoor)).toFixed(3),
       '-t', (duur + handleVoor + handleNa).toFixed(3),
-      '-i', bronBestand,
+      '-i', invoerBestand,
     );
     if (delen.length === 1) {
       delenVideo.push(
@@ -355,6 +399,20 @@ export async function maakRuweMontage(opties: {
       `[${i * 2 + 1}:a]asetpts=PTS-STARTPTS,aformat=sample_rates=48000:channel_layouts=stereo[a${i}]`,
     );
   });
+
+  if (renderBron) {
+    kwaliteit.renderbron = {
+      secties: renderBron.secties.map((sc) => ({ resolutie: `${sc.breedte}x${sc.hoogte}`, codec: sc.codec, mb: Math.round(sc.bytes / 1e5) / 10 })),
+      mbGedownload: renderBron.mbGedownload,
+      geschatVolMb: renderBron.geschatVolMb,
+      shotsUitSectie,
+      shotsTerugval: gesorteerd.length - shotsUitSectie,
+      fouten: renderBron.fouten,
+    };
+    if (shotsUitSectie < gesorteerd.length) {
+      log(`renderbron: ${gesorteerd.length - shotsUitSectie} van ${gesorteerd.length} shots uit de analysebron (geen passende sectie)`);
+    }
+  }
 
   // Beeld: harde knip, want dat is wat een montage hoort te doen. Geluid:
   // crossfade, zodat het laatste woord uitklinkt ónder het eerste woord van
@@ -596,7 +654,21 @@ export async function maakRuweMontage(opties: {
 }
 
 /** Wat de kwaliteitsregel in de log nodig heeft: opschaling en de verdeling persoon/graphic. */
-export type RenderKwaliteit = { opschaalMax: number; persoonDelen: number; graphicDelen: number };
+export type RenderKwaliteit = {
+  opschaalMax: number;
+  persoonDelen: number;
+  graphicDelen: number;
+  /** Graphic-deelstukken die op hun gemeten inhoud zijn ingezoomd. */
+  graphicsIngezoomd: number;
+  renderbron: {
+    secties: { resolutie: string; codec: string; mb: number }[];
+    mbGedownload: number;
+    geschatVolMb: number | null;
+    shotsUitSectie: number;
+    shotsTerugval: number;
+    fouten: string[];
+  } | null;
+};
 
 /**
  * De videoencode van elk bestand dat de deur uitgaat (montage én elke
@@ -636,19 +708,17 @@ export async function zorgVoorBron(
 
   if (!existsSync(bronBestand)) {
     log('Bronvideo downloaden…');
-    // Liefst tot 1440p, ongeacht codec: een 9:16-uitsnede uit 1080p moet
-    // bijna 1,8x opgeschaald worden en oogt dan zacht; uit 1440p is dat 1,33x.
-    // YouTube levert boven 1080p geen H.264, dus VP9 — dat decoderen ffmpeg
-    // en OpenCV (gezichtsmeting) allebei native. AV1 niet: de FFmpeg in de
-    // OpenCV-wheel kan dat niet lezen, en dan meet de gezichtsdetectie niets.
-    // Daarna de oude H.264-keten als terugval.
+    // De analysebron: de hele video, alleen om te meten (gezichten, scènes,
+    // woordtijden, stiltes — allemaal genormaliseerd of in brontijd). 1080p
+    // H.264 is ruim genoeg en leest overal, ook in OpenCV. De scherpte voor
+    // het eindbeeld komt uit de renderbron (renderbron.ts): alleen de
+    // gebruikte stukken, in de hoogste kwaliteit.
     const max = instelling('BRON_MAX_HOOGTE');
     await voerYtdlpUit([
       '--no-warnings',
       '--extractor-args', 'youtube:player_client=default,tv',
       '-f',
-      `bv*[height<=${max}][height>1080][vcodec!^=av01]+ba[ext=m4a]/` +
-        'bv*[vcodec^=avc1][height<=1080]+ba[ext=m4a]/b[vcodec^=avc1][height<=1080]/bv*[height<=1080]+ba[ext=m4a]/b[height<=1080]/b',
+      `bv*[vcodec^=avc1][height<=${max}]+ba[ext=m4a]/b[vcodec^=avc1][height<=${max}]/bv*[height<=${max}]+ba[ext=m4a]/b[height<=${max}]/b`,
       '--merge-output-format', 'mp4',
       '-o', bronBestand,
       sourceUrl,

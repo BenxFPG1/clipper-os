@@ -114,10 +114,37 @@ const STANDAARD = {
   SCENE_OVERGANG_MARGE: 0.5,
   SCENE_PIEK_MIN: 0.02,
 
+  /**
+   * Graphics met gemeten inhoud (graphics.ts): kleurafstand tot de
+   * achtergrond waarboven een pixel inhoud is, het minimale aandeel egale
+   * achtergrond voor een betrouwbare meting, de marge rond de inhoud, en de
+   * maximale inzoom ten opzichte van een 1080p-bron.
+   */
+  GRAPHIC_KLEUR_DREMPEL: 40,
+  GRAPHIC_MIN_ACHTERGROND: 0.4,
+  GRAPHIC_MARGE: 0.06,
+  GRAPHIC_MAX_OPSCHAAL: 3,
+
+  /**
+   * Renderbron (renderbron.ts): alleen de stukken die de clip gebruikt, in de
+   * hoogste kwaliteit. Marge per kant (s), samenvoegen bij een gat kleiner dan
+   * dit (s), maximale hoogte, time-out per sectie (s), en de minimale
+   * correlatie waarmee de audio-uitlijning vertrouwd wordt.
+   */
+  RENDERBRON_MARGE: 2,
+  RENDERBRON_SAMENVOEG_GAT: 15,
+  RENDERBRON_MAX_HOOGTE: 2160,
+  RENDERBRON_TIMEOUT: 300,
+  RENDERBRON_MIN_CORRELATIE: 0.6,
+
   /** Opschalen: vanaf deze factor een milde verscherping (lanczos schaalt altijd). */
   OPSCHAAL_VERSCHERP_VANAF: 1.1,
-  /** Bron: hoogste resolutie die gedownload wordt (niet-AV1; YouTube levert boven 1080p geen H.264). */
-  BRON_MAX_HOOGTE: 1440,
+  /**
+   * Analysebron: de hele video, alleen voor meten (gezichten, scènes,
+   * woordtijden, stiltes). 1080p H.264 is ruim genoeg; alle metingen zijn
+   * genormaliseerd. Scherpte komt uit de renderbron (renderbron.ts).
+   */
+  BRON_MAX_HOOGTE: 1080,
 
   /**
    * Encode van het eindbestand. Platforms her-encoden altijd; een master op

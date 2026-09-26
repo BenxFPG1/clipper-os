@@ -60,6 +60,9 @@ jobs:
             https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux \
             -o /usr/local/bin/yt-dlp
           sudo chmod +x /usr/local/bin/yt-dlp
+          # De renderbron komt uit --download-sections, en daarvoor gebruikt
+          # yt-dlp ffmpeg: die moet op het PATH staan (stap hierboven).
+          echo "yt-dlp $(yt-dlp --version), ffmpeg voor --download-sections: $(which ffmpeg || echo ONTBREEKT)"
 
       # yt-dlp heeft een JS-runtime nodig om YouTube's n-challenge op te
       # lossen; zonder krijg je "Only images are available for download".
