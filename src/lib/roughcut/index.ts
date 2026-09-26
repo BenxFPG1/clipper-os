@@ -4,10 +4,11 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { resolveBinary } from '../ingest/binaries';
 import { voerYtdlpUit } from '../ingest/youtube';
-import { effectKeten, focusNaarX, kaderKeten, spoorExpressie, type Kader } from './kader';
+import { effectKeten, focusNaarX, kaderKeten, opschaalFactor, spoorExpressie, type Kader } from './kader';
 import { snapShots, verwijderDodeLucht, type SnapSegment, type Stilte } from './snap';
-import { instelling } from './instellingen';
+import { encodePreset, instelling } from './instellingen';
 import { assFilter } from './ondertitels';
+import { deelstukken, type Scene } from './scenes';
 
 export type Shot = {
   volgorde: number;
@@ -113,6 +114,12 @@ export type Shot = {
    * passend gemaakt: het hele beeld, met een geblurde achtergrond.
    */
   beeldtype?: 'persoon' | 'graphic' | 'gemengd';
+  /**
+   * De scènes van de bron binnen dit shot (absolute brontijd), met per scène
+   * of er een gezicht in staat. Knipt de bron binnen één shot van spreker naar
+   * graphic, dan wisselt het kader op precies die bronknip (scenes.ts).
+   */
+  scenes?: Scene[];
 };
 
 export type BurnOverlay = {
@@ -123,14 +130,14 @@ export type BurnOverlay = {
   end: number;
 };
 
-export type BronEigenschappen = { fps: number; breedte: number; hoogte: number };
+export type BronEigenschappen = { fps: number; breedte: number; hoogte: number; codec?: string };
 
 /** Meet framerate en afmetingen van een bronbestand met ffprobe. */
 export async function probeBron(pad: string): Promise<BronEigenschappen> {
   const uit = await run(resolveBinary('ffprobe'), [
     '-v', 'error',
     '-select_streams', 'v:0',
-    '-show_entries', 'stream=width,height,r_frame_rate',
+    '-show_entries', 'stream=width,height,r_frame_rate,codec_name',
     '-of', 'json',
     pad,
   ]);
@@ -138,9 +145,10 @@ export async function probeBron(pad: string): Promise<BronEigenschappen> {
     width: number;
     height: number;
     r_frame_rate: string;
+    codec_name?: string;
   };
   const [t, n] = stream.r_frame_rate.split('/').map(Number);
-  return { fps: n ? t / n : 25, breedte: stream.width, hoogte: stream.height };
+  return { fps: n ? t / n : 25, breedte: stream.width, hoogte: stream.height, codec: stream.codec_name };
 }
 
 /**
@@ -187,8 +195,14 @@ export async function maakRuweMontage(opties: {
   maxBytes?: number;
   /** ASS-bestand met woordelijke ondertitels; ingebrand vóór de overlays. */
   ondertitelAss?: string;
+  /**
+   * Dit is een tussenbestand waar straks nog hookkaarten overheen gaan: dan
+   * bijna verliesvrij (ENCODE_CRF_TUSSEN) en zonder bytesplafond, zodat de
+   * tweede encode geen verlies op verlies stapelt.
+   */
+  tussenbestand?: boolean;
   onVoortgang?: (bericht: string) => void;
-}): Promise<{ pad: string; duur: number; bron: BronEigenschappen | null }> {
+}): Promise<{ pad: string; duur: number; bron: BronEigenschappen | null; kwaliteit: RenderKwaliteit }> {
   const { sourceUrl, shots, outputPad, werkmap } = opties;
   const log = opties.onVoortgang ?? (() => {});
 
@@ -213,11 +227,9 @@ export async function maakRuweMontage(opties: {
   const totaleDuur = gesorteerd.reduce((som, sh) => som + (sh.end - sh.start), 0);
   const totaal = totaleDuur;
 
-  const plafond =
-    opties.maxBytes && totaleDuur > 0
-      ? Math.max(800_000, Math.floor(((opties.maxBytes * 8) / totaleDuur) * 0.85) - 192_000)
-      : null;
-  const bitrateGrens = plafond ? ['-maxrate', String(plafond), '-bufsize', String(plafond * 2)] : [];
+  const encode = opties.tussenbestand
+    ? encodeArgs({ tussen: true })
+    : encodeArgs({ maxBytes: opties.maxBytes, duur: totaleDuur });
 
   const kader: Kader = opties.verticaal === false ? 'origineel' : (opties.kader ?? 'vullend');
   log(`Monteren in één doorloop (${gesorteerd.length} segmenten, kader: ${kader})…`);
@@ -244,6 +256,8 @@ export async function maakRuweMontage(opties: {
   const invoer: string[] = [];
   const delenVideo: string[] = [];
   const delenAudio: string[] = [];
+  const bronHoogte = bronInfo?.hoogte ?? 1080;
+  const kwaliteit: RenderKwaliteit = { opschaalMax: 0, persoonDelen: 0, graphicDelen: 0 };
   gesorteerd.forEach((shot, i) => {
     const duur = shot.end - shot.start;
     // Heeft de kadercontrole een zoom vastgesteld, dan wint die: hij is
@@ -270,28 +284,36 @@ export async function maakRuweMontage(opties: {
       x: paneel ? (punt.x - paneel[0]) / (paneel[1] - paneel[0]) : punt.x,
     }));
     const spoorYRel = shot.spoorY?.map((punt) => ({ t: punt.t - shot.start, x: punt.x }));
-    // Een graphic (titel, grafiek, schermopname) wordt niet op een gezicht
-    // gekadreerd maar passend gemaakt, anders snijd je de titel af.
-    // Het beeldtype van de kadercontrole wint per shot van de clipkeuze, in
-    // beide richtingen: een graphic in een 'vullend'-clip krijgt blur (anders
-    // vallen titels weg), en een sprekend hoofd in een 'blur'-clip krijgt
-    // 'vullend' (anders staat de spreker als postzegel tussen twee wazige
-    // balken — gezien op de waterstofclip, waar de edit-agent voor de hele
-    // clip blur koos vanwege twee graphic-shots).
-    const shotKader: Kader =
-      shot.beeldtype === 'graphic' && (kader === 'vullend' || kader === 'staand')
-        ? 'blur'
-        : shot.beeldtype === 'persoon' && kader === 'blur'
-          ? 'vullend'
-          : kader;
-    const keten = kaderKeten(shotKader, {
-      focusX: focusNaarX(shot.focus, focusInPaneel),
-      focusExpr: spoorInPaneel ? (spoorExpressie(spoorInPaneel) ?? undefined) : undefined,
-      zoom,
-      focusY: shot.focusY,
-      focusYExpr: spoorYRel ? (spoorExpressie(spoorYRel) ?? undefined) : undefined,
-    });
-    const effect = effectKeten(shot.beeld_effect, duur, { fps: fpsUit, staand: shotKader !== 'origineel' });
+    // Per deelstuk een eigen kader: knipt de bron binnen dit shot van de
+    // spreker naar een graphic, dan wisselt het kader op precies die bronknip
+    // (scenes.ts). Zonder scènes is het één deelstuk met het shotkader: het
+    // beeldtype van de kadercontrole wint van de clipkeuze, in beide
+    // richtingen (graphic → blur, sprekend hoofd in een blur-clip → vullend).
+    const delen = deelstukken(shot, kader);
+    const effect = effectKeten(shot.beeld_effect, duur, { fps: fpsUit, staand: delen[0].kader !== 'origineel' });
+    const ketenVoor = (deel: (typeof delen)[number]) => {
+      // Een graphic wordt passend getoond: het paneel van de spreker ertussen
+      // uitsnijden zou de graphic juist weer aansnijden.
+      const knip = deel.gezicht === false ? '' : paneelKnip;
+      const spoorDeel = spoorInPaneel?.map((punt) => ({ t: punt.t - deel.van, x: punt.x }));
+      const spoorYDeel = spoorYRel?.map((punt) => ({ t: punt.t - deel.van, x: punt.x }));
+      if (deel.kader === 'vullend' || deel.kader === 'staand') {
+        kwaliteit.opschaalMax = Math.max(kwaliteit.opschaalMax, opschaalFactor(zoom, bronHoogte));
+      }
+      if (deel.gezicht === false || (deel.gezicht === null && deel.kader === 'blur' && shot.beeldtype === 'graphic')) kwaliteit.graphicDelen++;
+      else kwaliteit.persoonDelen++;
+      return (
+        knip +
+        kaderKeten(deel.kader, {
+          focusX: focusNaarX(shot.focus, focusInPaneel),
+          focusExpr: spoorDeel ? (spoorExpressie(spoorDeel) ?? undefined) : undefined,
+          zoom,
+          focusY: shot.focusY,
+          focusYExpr: spoorYDeel ? (spoorExpressie(spoorYDeel) ?? undefined) : undefined,
+          bronHoogte,
+        })
+      );
+    };
     // Twee invoeren per shot: beeld precies op de knip, geluid met handles
     // eromheen. Die handles zijn wat een crossfade mogelijk maakt — zonder
     // materiaal vóór en ná het knippunt valt er niets te vervlechten en blijft
@@ -308,9 +330,23 @@ export async function maakRuweMontage(opties: {
       '-t', (duur + handleVoor + handleNa).toFixed(3),
       '-i', bronBestand,
     );
-    delenVideo.push(
-      `[${i * 2}:v]setpts=PTS-STARTPTS,fps=${fpsUit},${paneelKnip}${keten}${effect ? `,${effect}` : ''},setsar=1[v${i}]`,
-    );
+    if (delen.length === 1) {
+      delenVideo.push(
+        `[${i * 2}:v]setpts=PTS-STARTPTS,fps=${fpsUit},${ketenVoor(delen[0])}${effect ? `,${effect}` : ''},setsar=1[v${i}]`,
+      );
+    } else {
+      // Eén invoer, gesplitst en per deelstuk getrimd: het geluid blijft één
+      // doorlopende invoer, alleen de beeldketen wisselt op de bronknip.
+      const labels = delen.map((_, k) => `v${i}d${k}`);
+      let graaf = `[${i * 2}:v]setpts=PTS-STARTPTS,fps=${fpsUit},split=${delen.length}${labels.map((l) => `[${l}i]`).join('')}`;
+      delen.forEach((deel, k) => {
+        graaf +=
+          `;[${labels[k]}i]trim=start=${deel.van.toFixed(3)}:end=${deel.tot.toFixed(3)},setpts=PTS-STARTPTS,` +
+          `${ketenVoor(deel)},setsar=1[${labels[k]}]`;
+      });
+      graaf += `;${labels.map((l) => `[${l}]`).join('')}concat=n=${delen.length}:v=1:a=0${effect ? `,${effect}` : ''},setsar=1[v${i}]`;
+      delenVideo.push(graaf);
+    }
     // Per-shot fades zijn niet meer nodig: de crossfade hieronder vervlecht de
     // naden. Alleen een minimale fade aan de buitenranden van de clip blijft,
     // tegen een klik bij het starten en stoppen.
@@ -521,8 +557,7 @@ export async function maakRuweMontage(opties: {
     ...invoer,
     '-filter_complex', `${videoFilter};${filter}`,
     '-map', `[${laatsteV}]`, '-map', `[${audioUit}]`,
-    '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20',
-    ...bitrateGrens,
+    ...encode,
     '-c:a', 'aac', '-b:a', '192k', '-ar', '48000', '-ac', '2',
     '-movflags', '+faststart',
     outputPad,
@@ -531,7 +566,7 @@ export async function maakRuweMontage(opties: {
   // Past het bestand niet binnen de opslaglimiet, dan comprimeren we het naar
   // een bitrate die wél past. Liever iets minder scherp dan helemaal geen
   // montage: dit is werkmateriaal voor de editor, geen eindproduct.
-  if (opties.maxBytes) {
+  if (opties.maxBytes && !opties.tussenbestand) {
     const { size } = await stat(outputPad);
     if (size > opties.maxBytes) {
       log(`${Math.round(size / 1e6)}MB is te groot; opnieuw comprimeren…`);
@@ -557,7 +592,33 @@ export async function maakRuweMontage(opties: {
 
   // Geen tussenbestanden meer op te ruimen: de montage wordt in één doorloop
   // gebouwd. De bronvideo blijft staan voor de volgende clip.
-  return { pad: outputPad, duur: Math.round(totaal), bron: bronInfo };
+  return { pad: outputPad, duur: Math.round(totaal), bron: bronInfo, kwaliteit };
+}
+
+/** Wat de kwaliteitsregel in de log nodig heeft: opschaling en de verdeling persoon/graphic. */
+export type RenderKwaliteit = { opschaalMax: number; persoonDelen: number; graphicDelen: number };
+
+/**
+ * De videoencode van elk bestand dat de deur uitgaat (montage én elke
+ * hookvariant): één plek, zodat de drie varianten nooit verschillend
+ * gecomprimeerd worden. Het maxBytes-plafond van de opslag wint van
+ * ENCODE_MAXRATE als het lager uitkomt.
+ */
+export function encodeArgs(opties: { maxBytes?: number; duur?: number; tussen?: boolean } = {}): string[] {
+  if (opties.tussen) {
+    return ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', String(instelling('ENCODE_CRF_TUSSEN')), '-pix_fmt', 'yuv420p'];
+  }
+  const opslagPlafond =
+    opties.maxBytes && opties.duur && opties.duur > 0
+      ? Math.max(800_000, Math.floor(((opties.maxBytes * 8) / opties.duur) * 0.85) - 192_000)
+      : Infinity;
+  const maxrate = Math.min(instelling('ENCODE_MAXRATE'), opslagPlafond);
+  const bufsize = Math.min(instelling('ENCODE_BUFSIZE'), maxrate * 2);
+  return [
+    '-c:v', 'libx264', '-preset', encodePreset(), '-crf', String(instelling('ENCODE_CRF')),
+    '-profile:v', 'high', '-pix_fmt', 'yuv420p',
+    '-maxrate', String(Math.round(maxrate)), '-bufsize', String(Math.round(bufsize)),
+  ];
 }
 
 /**
@@ -575,11 +636,19 @@ export async function zorgVoorBron(
 
   if (!existsSync(bronBestand)) {
     log('Bronvideo downloaden…');
+    // Liefst tot 1440p, ongeacht codec: een 9:16-uitsnede uit 1080p moet
+    // bijna 1,8x opgeschaald worden en oogt dan zacht; uit 1440p is dat 1,33x.
+    // YouTube levert boven 1080p geen H.264, dus VP9 — dat decoderen ffmpeg
+    // en OpenCV (gezichtsmeting) allebei native. AV1 niet: de FFmpeg in de
+    // OpenCV-wheel kan dat niet lezen, en dan meet de gezichtsdetectie niets.
+    // Daarna de oude H.264-keten als terugval.
+    const max = instelling('BRON_MAX_HOOGTE');
     await voerYtdlpUit([
       '--no-warnings',
       '--extractor-args', 'youtube:player_client=default,tv',
       '-f',
-      'bv*[vcodec^=avc1][height<=1080]+ba[ext=m4a]/b[vcodec^=avc1][height<=1080]/bv*[height<=1080]+ba[ext=m4a]/b[height<=1080]/b',
+      `bv*[height<=${max}][height>1080][vcodec!^=av01]+ba[ext=m4a]/` +
+        'bv*[vcodec^=avc1][height<=1080]+ba[ext=m4a]/b[vcodec^=avc1][height<=1080]/bv*[height<=1080]+ba[ext=m4a]/b[height<=1080]/b',
       '--merge-output-format', 'mp4',
       '-o', bronBestand,
       sourceUrl,
@@ -862,16 +931,13 @@ export async function brandOverlays(
     filter += `${filter ? ';' : ''}[${laatste}][${n + 1}:v]overlay=0:0:enable='between(t,${o.start.toFixed(2)},${o.end.toFixed(2)})'[${uit}]`;
     laatste = uit;
   });
-  const plafond =
-    opties.maxBytes && opties.duur
-      ? Math.max(800_000, Math.floor(((opties.maxBytes * 8) / opties.duur) * 0.85) - 192_000)
-      : null;
+  // Precies dezelfde encode als een montage zonder hook: alle drie de
+  // varianten zijn een eindbestand en horen gelijk te zijn.
   await run(resolveBinary('ffmpeg'), [
     '-y', ...invoer,
     '-filter_complex', filter,
     '-map', `[${laatste}]`, '-map', '0:a?',
-    '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20',
-    ...(plafond ? ['-maxrate', String(plafond), '-bufsize', String(plafond * 2)] : []),
+    ...encodeArgs({ maxBytes: opties.maxBytes, duur: opties.duur }),
     '-c:a', 'copy',
     '-movflags', '+faststart',
     uitPad,

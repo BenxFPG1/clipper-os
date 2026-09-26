@@ -26,6 +26,8 @@ export function kaderKeten(
     focusExpr?: string;
     /** Verticale variant; wint van focusY. */
     focusYExpr?: string;
+    /** Hoogte van het beeld waaruit gesneden wordt (px); bepaalt of er opgeschaald wordt. Standaard 1080. */
+    bronHoogte?: number;
   } = {},
 ): string {
   const zoom = opties.zoom ?? 1;
@@ -35,7 +37,9 @@ export function kaderKeten(
   if (kader === 'origineel') return 'null';
 
   if (kader === 'blur') {
-    return 'split[a][b];[a]scale=192:342:force_original_aspect_ratio=increase,crop=192:342,boxblur=6:2,scale=1080:1920[bg];[b]scale=1080:-2[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2,format=yuv420p';
+    // Alleen de voorgrond krijgt lanczos: de achtergrond is bewust wazig, daar
+    // is scherp schalen verspilde rekentijd.
+    return 'split[a][b];[a]scale=192:342:force_original_aspect_ratio=increase,crop=192:342,boxblur=6:2,scale=1080:1920[bg];[b]scale=1080:-2:flags=lanczos[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2,format=yuv420p';
   }
 
   // vullend: hoogte vullen (maal de zoom voor punch-ins), dan de uitsnede op
@@ -46,14 +50,25 @@ export function kaderKeten(
   // ongeveer een derde van boven. Een sprekend hoofd hoort daar; precies
   // gecentreerd geeft te veel lucht boven en een kin tegen de onderrand.
   const fy = opties.focusYExpr ?? Math.min(1, Math.max(0, opties.focusY ?? 0.5)).toFixed(3);
+  // Een 9:16-uitsnede uit een 1080p-bron is ~608x1080 en wordt bijna 1,8x
+  // opgeschaald; met de standaard bicubic-scaler oogt een gezicht dan wazig.
+  // Lanczos houdt meer detail vast, en alleen bij echt opschalen komt er een
+  // milde verscherping achteraan (op een neergeschaalde 1440p-bron niet).
+  const factor = opschaalFactor(zoom, opties.bronHoogte);
+  const scherp = factor > instelling('OPSCHAAL_VERSCHERP_VANAF') ? ',unsharp=5:5:0.5:5:5:0.0' : '';
   return (
-    `scale=-2:${hoogte},` +
+    `scale=-2:${hoogte}:flags=lanczos,` +
     // Horizontaal net als verticaal: het focuspunt is het middelpunt van de
     // uitsnede. Zo betekent focusX overal hetzelfde — in de meting, in de
     // controle en hier in de render.
-    `crop=1080:1920:min(max(iw*${f}-540\\,0)\\,iw-1080):min(max(ih*${fy}-960\\,0)\\,ih-1920),` +
+    `crop=1080:1920:min(max(iw*${f}-540\\,0)\\,iw-1080):min(max(ih*${fy}-960\\,0)\\,ih-1920)${scherp},` +
     'format=yuv420p'
   );
+}
+
+/** Hoeveel een vullende uitsnede opgeschaald wordt: doelhoogte (1920 maal de zoom) gedeeld door de bronhoogte. */
+export function opschaalFactor(zoom = 1, bronHoogte = 1080): number {
+  return (1920 * zoom) / Math.max(1, bronHoogte);
 }
 
 /**

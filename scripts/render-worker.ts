@@ -27,7 +27,8 @@ import {
   kaartenMap,
   type Huisstijl,
 } from '../src/lib/roughcut/tekstkaarten';
-import { maakOndertitels, type Ondertitels } from '../src/lib/roughcut/ondertitels';
+import { controleerAssFont, maakOndertitels, type Ondertitels } from '../src/lib/roughcut/ondertitels';
+import { gezichtMeterVia, vulScenes } from '../src/lib/roughcut/scenes';
 import { afwijkendeInstellingen, gebruikteInstellingen } from '../src/lib/roughcut/instellingen';
 import { lijnShotsUit } from '../src/lib/roughcut/uitlijnen';
 import { runEditAgent, beslissingenVoorClip, bekendeEffectSlugs, type PlanMeetdata } from '../src/lib/agents/edit';
@@ -305,6 +306,18 @@ async function verwerk(job: Job) {
   // Huisstijl pas hier: de agent kijkt naar frames uit de bron, en die staat nu
   // op schijf. Eerder zou hij de hele video een tweede keer downloaden.
   const stijl = await bepaalHuisstijl(supabase, job.video_id, video.source_url, bronPad);
+  // Kiest libass werkelijk het ondertitelfont? Een onbekende familienaam valt
+  // stil terug op een systeemletter; dat moet in de log staan, niet pas in beeld.
+  {
+    const fontCheck = controleerAssFont(kaartMap, stijl);
+    if (fontCheck) {
+      console.log(
+        `  ondertitelfont (libass): ${fontCheck.familie} → ${fontCheck.bestand}${fontCheck.goed ? '' : ' ⚠ NIET het bedoelde bestand uit assets/fonts'}`,
+      );
+    } else {
+      console.log('  ondertitelfont: geen libass in deze ffmpeg — PNG-terugval met hetzelfde font');
+    }
+  }
   if (!stiltes) {
     try {
       stiltes = await detecteerStiltes(bronPad);
@@ -638,6 +651,19 @@ async function verwerk(job: Job) {
         if (seg.gezicht) seg.gezicht = { ...seg.gezicht, x: voor };
         segmenten.splice(i + 1, 0, tweede);
       }
+    }
+
+    // Scènewissels binnen de shots: knipt de bron midden in een shot van de
+    // spreker naar een graphic, dan krijgt elk deelstuk zijn eigen kader
+    // (graphic passend, spreker vullend) met de wissel precies op de
+    // bronknip. Vóór de retentie-editor: een bronknip is al een beeldwissel.
+    try {
+      const sc = await vulScenes(bronPad, segmenten, gezichtMeterVia(bronPad, pythonMetOpenCV()));
+      if (sc.shots > 0) {
+        console.log(`     scènes: ${sc.shots} shot(s) met een bronknip → ${sc.persoon} deelstuk(ken) met gezicht, ${sc.graphic} zonder (passend)`);
+      }
+    } catch (e) {
+      console.log(`     scènedetectie overgeslagen (${(e as Error).message.slice(0, 70)})`);
     }
 
     // Beslissingen van de edit-agent op de segmenten leggen. Subsegmenten
@@ -1018,7 +1044,9 @@ async function verwerk(job: Job) {
     ondertitels = null;
     if (bronWoorden && stijl.ondertitels !== false) {
       try {
-        ondertitels = await maakOndertitels(segmenten, bronWoorden, kaartMap, `c${nummer}`, stijl);
+        ondertitels = await maakOndertitels(segmenten, bronWoorden, kaartMap, `c${nummer}`, stijl, {
+          kader: (editClip?.kader ?? clip.kader ?? 'vullend') as Kader,
+        });
         console.log(
           `     ondertitels: ${ondertitels.regels.length} regels` +
             (ondertitels.assPad ? ' (ASS, woord in accentkleur)' : ondertitels.overlays.length ? ' (PNG-terugval: geen libass in deze ffmpeg)' : ''),
@@ -1037,6 +1065,10 @@ async function verwerk(job: Job) {
       // De basis zonder hookkaart; de hookvarianten worden er na de controles
       // overheen gebrand.
       outputPad: basisPad,
+      // Gaan er nog hookkaarten overheen, dan is dit een tussenbestand: bijna
+      // verliesvrij, zodat de eindencode (brandOverlays) niet op een al
+      // gecomprimeerd beeld stapelt.
+      tussenbestand: hookTeksten.length > 0,
       werkmap: bronmap,
       kader: editClip?.kader ?? clip.kader ?? 'vullend',
       overlays: [...(await bouwOverlays()), ...(ondertitels?.overlays ?? [])],
@@ -1298,6 +1330,25 @@ async function verwerk(job: Job) {
       montage = { ...montage, pad: lokaal };
     }
 
+    // De kwaliteitsregel: alles wat bepaalt of de clip op een telefoon scherp
+    // en leesbaar oogt, op één regel — bron, opschaling, ondertitel, kaders
+    // en de bitrate van wat er werkelijk geüpload wordt.
+    {
+      const b = montage.bron;
+      const k = montage.kwaliteit;
+      const ot = ondertitels?.stijl;
+      const bitrate = meetBitrate(lokaal);
+      console.log(
+        `     kwaliteit: bron ${b ? `${b.breedte}x${b.hoogte} ${b.codec ?? '?'}` : 'onbekend'}, ` +
+          `opschaal ×${k.opschaalMax.toFixed(2).replace('.', ',')}, ` +
+          (ot
+            ? `ondertitels ${ot.familie} ${ot.assGrootte} (kap ${ot.kapPx} px; ${ot.plekken.standaard} standaard, ${ot.plekken.onder_kin} onder kin, ${ot.plekken.boven_hoofd} boven hoofd, ${ot.plekken.overlap} overlap), `
+            : 'geen ondertitels, ') +
+          `deelstukken ${k.persoonDelen} persoon / ${k.graphicDelen} graphic, ` +
+          `eindbitrate ${bitrate ? `${(bitrate.totaal / 1e6).toFixed(1).replace('.', ',')} Mbps (video ${(bitrate.video / 1e6).toFixed(1).replace('.', ',')})` : 'onbekend'}`,
+      );
+    }
+
     // De keuring: het eindoordeel over precies datgene waarop geoordeeld
     // wordt. Zelfde meting als de evaluatieset gebruikt, zodat "groen bij mij"
     // en "groen bij jou" hetzelfde betekenen.
@@ -1311,6 +1362,7 @@ async function verwerk(job: Job) {
         python: pythonMetOpenCV(),
         bronPad,
         retentie: retentieEind && doelen ? keurRetentie(retentieEind, doelen, { ondertitels: Boolean(ondertitels) }) : undefined,
+        kader: (editClip?.kader ?? clip.kader ?? 'vullend') as Kader,
       });
       if (retentieEind) await vulMontageplanAan(supabase, job.video_id, nummer, { retentie_eind: retentieEind });
       const kop =
@@ -1428,6 +1480,23 @@ async function verwerk(job: Job) {
 
   if (bestanden.length === 0) throw new Error('Niets geüpload; alle clips waren te groot of mislukten.');
   return bestanden;
+}
+
+/** Bitrate van een gerenderd bestand (totaal en videostroom, bit/s); null als ffprobe het niet weet. */
+function meetBitrate(pad: string): { totaal: number; video: number } | null {
+  const res = spawnSync(
+    resolveBinary('ffprobe'),
+    ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=bit_rate:format=bit_rate', '-of', 'json', pad],
+    { encoding: 'utf8' },
+  );
+  try {
+    const j = JSON.parse(res.stdout || '{}') as { streams?: { bit_rate?: string }[]; format?: { bit_rate?: string } };
+    const totaal = Number(j.format?.bit_rate);
+    const video = Number(j.streams?.[0]?.bit_rate ?? totaal);
+    return Number.isFinite(totaal) ? { totaal, video: Number.isFinite(video) ? video : totaal } : null;
+  } catch {
+    return null;
+  }
 }
 
 /**

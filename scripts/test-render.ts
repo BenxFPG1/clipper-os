@@ -27,6 +27,11 @@ import { keurRetentie, pasRetentieToe } from '../src/lib/roughcut/retentie';
 import { poort } from '../src/lib/roughcut/poort';
 import { keurKnippen } from '../src/lib/roughcut/keuring';
 import { STANDAARD_DOELEN } from '../src/lib/vault/normen';
+import { deelstukken, detecteerSceneKnippen, vulScenes, type GezichtMeter } from '../src/lib/roughcut/scenes';
+import { keurGraphics } from '../src/lib/roughcut/keuring';
+import { plaatsRegels, ondertitelMaat, gezichtOpBeeld } from '../src/lib/roughcut/ondertitels';
+import { kaderKeten } from '../src/lib/roughcut/kader';
+import { readFile } from 'node:fs/promises';
 
 let gefaald = 0;
 let gedaan = 0;
@@ -228,6 +233,120 @@ async function main() {
       } catch (e) {
         toets('retentie-render slaagt', false, (e as Error).message.slice(-600));
       }
+    }
+    // 5. Encode: het eindbestand op crf 17 / medium, het tussenbestand bijna
+    //    verliesvrij. x264 schrijft zijn instellingen als tekst in de stroom.
+    console.log('encode-instellingen');
+    {
+      const x264 = async (pad: string) => (await readFile(pad)).toString('latin1').match(/x264 - core[^\0]{0,2000}/)?.[0] ?? '';
+      const basisOpties = await x264(basis);
+      toets('eindbestand: crf 17', /crf=17\.0/.test(basisOpties), basisOpties.match(/crf=[\d.]+/)?.[0] ?? 'geen x264-info');
+      toets('eindbestand: preset medium (subme=7, ref=3)', /subme=7/.test(basisOpties) && /ref=3/.test(basisOpties), basisOpties.match(/subme=\d+/)?.[0] ?? '');
+      toets('eindbestand: maxrate begrensd', /vbv_maxrate=\d+/.test(basisOpties), basisOpties.match(/vbv_maxrate=\d+/)?.[0] ?? '');
+      const variantPad = join(map, 'variant.mp4');
+      if (existsSync(variantPad)) {
+        const v = await x264(variantPad);
+        toets('hookvariant: zelfde crf 17 / medium', /crf=17\.0/.test(v) && /subme=7/.test(v), v.match(/crf=[\d.]+/)?.[0] ?? '');
+      }
+      const tussen = join(map, 'tussen.mp4');
+      await maakRuweMontage({ sourceUrl: 'lokaal://test', shots: shots.slice(0, 1), alGesegmenteerd: true, outputPad: tussen, werkmap, kader: 'vullend', tussenbestand: true });
+      toets('tussenbestand: crf 12', /crf=12\.0/.test(await x264(tussen)));
+    }
+
+    // 6. Opschalen: lanczos altijd, verscherping alleen bij echt opschalen,
+    //    en nooit op de blur-achtergrond.
+    console.log('schaalketen');
+    {
+      const k720 = kaderKeten('vullend', { zoom: 1, bronHoogte: 720 });
+      const k2160 = kaderKeten('vullend', { zoom: 1, bronHoogte: 2160 });
+      toets('vullend schaalt met lanczos', k720.includes('flags=lanczos'), k720);
+      toets('opschalen ×2,7 krijgt unsharp', k720.includes('unsharp='), k720);
+      toets('neerschalen uit 2160p krijgt geen unsharp', !k2160.includes('unsharp'), k2160);
+      const blur = kaderKeten('blur', { bronHoogte: 720 });
+      toets('blur: voorgrond lanczos, geen unsharp', blur.includes('[fg]') && /scale=1080:-2:flags=lanczos/.test(blur) && !blur.includes('unsharp'), blur);
+    }
+
+    // 7. Graphic binnen een shot: een bron die op 6 s hard van testbeeld
+    //    ("spreker") naar een effen oranje vlak ("graphic") knipt. De
+    //    gezichtsdetectie is een meetstub: vóór 6 s een gezicht, erna niet.
+    console.log('scènes: graphic binnen een shot');
+    {
+      const scenebron = join(werkmap, 'scenes.mp4');
+      const gen = ff([
+        '-f', 'lavfi', '-i', 'testsrc=size=1280x720:rate=25:duration=6',
+        '-f', 'lavfi', '-i', 'color=c=0xff7a00:size=1280x720:rate=25:duration=6',
+        '-f', 'lavfi', '-i', 'sine=frequency=220:duration=12',
+        '-filter_complex', '[0:v][1:v]concat=n=2:v=1:a=0[v]',
+        '-map', '[v]', '-map', '2:a',
+        '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', scenebron,
+      ]);
+      toets('scènebron gegenereerd', gen.ok, gen.uit.slice(-200));
+      const knippen = await detecteerSceneKnippen(scenebron, 3, 9);
+      toets('bronknip op 6 s gevonden', knippen.length === 1 && Math.abs(knippen[0] - 6) < 0.1, JSON.stringify(knippen));
+
+      const stub: GezichtMeter = async (tijden) => tijden.map((t) => t < 6);
+      const shot: Shot = {
+        volgorde: 1, start: 3, end: 9, functie: 'setup', focusX: 0.5, focusW: 0.12,
+        gezicht: { x: 0.5, breedte: 0.12, top: 0.2, hoogte: 0.3 },
+      };
+      const sc = await vulScenes(scenebron, [shot], stub);
+      toets('één deelstuk met gezicht, één zonder', sc.persoon === 1 && sc.graphic === 1, JSON.stringify(sc));
+      const delen = deelstukken(shot, 'vullend');
+      toets('spreker vullend, graphic passend (blur)', delen.length === 2 && delen[0].kader === 'vullend' && delen[1].kader === 'blur', JSON.stringify(delen));
+      toets('kaderwissel precies op de bronknip', Math.abs(delen[0].tot - 3) < 0.1, JSON.stringify(delen));
+      const blurClip = deelstukken(shot, 'blur');
+      toets('in een blur-clip wordt het deelstuk met gezicht vullend', blurClip[0].kader === 'vullend' && blurClip[1].kader === 'blur');
+
+      // maakRuweMontage verwacht de bron als <werkmap>/bron.mp4: een eigen
+      // werkmap met de scènebron.
+      const uitScene = join(map, 'scenes-render.mp4');
+      const sceneWerk = join(map, 'scenewerk');
+      await (await import('node:fs/promises')).mkdir(sceneWerk, { recursive: true });
+      await (await import('node:fs/promises')).copyFile(scenebron, join(sceneWerk, 'bron.mp4'));
+      try {
+        const r = await maakRuweMontage({ sourceUrl: 'lokaal://test', shots: [shot], alGesegmenteerd: true, outputPad: uitScene, werkmap: sceneWerk, kader: 'vullend' });
+        const p = probe(uitScene);
+        toets('render met kaderwissel binnen het shot slaagt (6 s)', Math.abs(p.duur - 6) < 0.3, `${p.duur}s`);
+        toets('kwaliteit telt 1 persoon- en 1 graphic-deelstuk', r.kwaliteit.persoonDelen === 1 && r.kwaliteit.graphicDelen === 1, JSON.stringify(r.kwaliteit));
+        // Het graphic-deel staat passend: boven- en onderrand zijn de geblurde
+        // oranje achtergrond, het midden het volle oranje vlak — geen zwart,
+        // geen testbeeld.
+        const frame = join(map, 'graphic.png');
+        ff(['-ss', '4.5', '-i', uitScene, '-frames:v', '1', '-vf', 'crop=1080:40:0:900,scale=1:1', '-f', 'rawvideo', '-pix_fmt', 'rgb24', frame]);
+        const px = await readFile(frame);
+        toets('graphic-deel toont het oranje vlak (passend, niet aangesneden testbeeld)', px[0] > 200 && px[1] > 80 && px[1] < 160 && px[2] < 60, `rgb ${px[0]},${px[1]},${px[2]}`);
+      } catch (e) {
+        toets('render met kaderwissel binnen het shot slaagt', false, (e as Error).message.slice(-400));
+      }
+
+      const goed = await keurGraphics([shot], 'vullend', stub);
+      toets('keuring "graphics passend": goed als het graphic-deel blur is', goed.goed === true, goed.detail);
+      const zonderScenes: Shot = { ...shot, start: 6.5, end: 9, scenes: undefined };
+      const fout = await keurGraphics([zonderScenes], 'vullend', stub);
+      toets('keuring "graphics passend": fout als een graphic vullend staat', fout.goed === false, fout.detail);
+    }
+
+    // 8. Ondertitelplek: onder de kin, boven de 78%-grens, nooit over het
+    //    gezicht; zonder gezicht op de standaardhoogte.
+    console.log('ondertitelplek');
+    {
+      const regelH = ondertitelMaat(null).assGrootte;
+      const regels = [{ s: 0.2, e: 1.2, woorden: [{ w: 'Het', s: 0.2, e: 0.5 }, { w: 'getal', s: 0.5, e: 1.2 }] }];
+      const seg = (gezicht?: Shot['gezicht'], zoom = 1.2): Shot => ({ volgorde: 1, start: 10, end: 14, functie: 'setup', focusX: 0.5, focusW: 0.12, zoom, focusY: 0.45, gezicht });
+      const geen = plaatsRegels(regels, [seg(undefined)], 'vullend');
+      toets('zonder gezicht: standaardhoogte (~72%)', geen.plekken[0] === 'standaard' && Math.abs(geen.plaatsing[0] - regelH / 2 - 0.72 * 1920) < 2, JSON.stringify(geen));
+      // Een presentatrice in een medium close-up: kin rond 64% van het eindbeeld.
+      const midden = seg({ x: 0.5, breedte: 0.12, top: 0.28, hoogte: 0.22 });
+      const opBeeld = gezichtOpBeeld(midden, 'vullend', 11)!;
+      const p = plaatsRegels(regels, [midden], 'vullend');
+      const y = p.plaatsing[0];
+      toets('ondertitel boven de 78%-grens', y <= 0.78 * 1920 + 0.5, `${y}px (${(y / 19.2).toFixed(1)}%)`);
+      toets('ondertitel onder de kin (niet over het gezicht)', p.plekken[0] !== 'overlap' && (y - regelH >= opBeeld.onder * 1920 || y <= opBeeld.boven * 1920), `regel ${Math.round(y - regelH)}-${y}px, gezicht ${Math.round(opBeeld.boven * 1920)}-${Math.round(opBeeld.onder * 1920)}px (${p.plekken[0]})`);
+      const closeUp = seg({ x: 0.5, breedte: 0.2, top: 0.25, hoogte: 0.5 }, 1.5);
+      const pc = plaatsRegels(regels, [closeUp], 'vullend');
+      toets('close-up: nooit onder 78%, en een overlap wordt benoemd of vermeden', pc.plaatsing[0] <= 0.78 * 1920 + 0.5 && ['boven_hoofd', 'overlap', 'onder_kin'].includes(pc.plekken[0]), JSON.stringify(pc));
+      const graphicShot: Shot = { ...midden, scenes: [{ van: 10, tot: 14, gezicht: false }] };
+      toets('graphic-deelstuk: ondertitel op de standaardhoogte', plaatsRegels(regels, [graphicShot], 'vullend').plekken[0] === 'standaard');
     }
   } finally {
     await rm(map, { recursive: true, force: true });

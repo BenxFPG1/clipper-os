@@ -201,6 +201,13 @@ export function wisselMomenten(segmenten: Shot[], kaarten: Kaart[] = []): number
     const effect = ZICHTBARE_EFFECTEN.has(seg.beeld_effect ?? '');
     if (!aansluitend || zoomVerschil >= minVerschil - 1e-6 || focusVerschil > 0.1 || effect) t.push(begin[i]);
   });
+  // Een scènewissel in de bron zelf (spreker → graphic) is ook een
+  // beeldwissel; daar hoeft de retentie-editor niet nog een wissel te zetten.
+  segmenten.forEach((seg, i) => {
+    for (const sc of seg.scenes ?? []) {
+      if (sc.van > seg.start + 0.3 && sc.van < seg.end - 0.1) t.push(begin[i] + (sc.van - seg.start));
+    }
+  });
   for (const k of [...kaarten, ...segmentKaarten(segmenten)]) {
     if (k.start > 0.3 && k.start < duur - 0.1) t.push(k.start);
     if (k.end > 0.3 && k.end < duur - 0.1) t.push(k.end);

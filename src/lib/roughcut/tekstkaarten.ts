@@ -9,6 +9,12 @@ export type Huisstijl = {
   font?: string | null;
   /** Woordelijke ondertitels inbranden; standaard aan, per campagne uit te zetten. */
   ondertitels?: boolean | null;
+  /**
+   * Optionele override van het ondertitelfont (sleutel in FONTS). Standaard
+   * volgen ondertitels níet het merkfont: een dunne schreef als Playfair is
+   * op een telefoon onleesbaar. De huisstijl bepaalt wel de accentkleur.
+   */
+  ondertitel_font?: string | null;
 };
 
 /**
@@ -251,8 +257,11 @@ export async function tekenKaart(ruweTekst: string, pad: string, stijl?: Huissti
   const balkB = Math.min(B - 80, breedte + padding * 2);
   const balkH = fontgrootte + 46;
   const x = (B - balkB) / 2;
-  // Boven de onderste 20%: daar staan de caption en de knoppen van het platform.
-  const y = H * 0.72;
+  // Bovenin, onder de hookzone: onderin staan nu de ondertitels (die daar
+  // rond de kin van de spreker schuiven), en twee tekstlagen op dezelfde
+  // hoogte botsen. De kaart komt pas ná de hook in beeld (de worker schuift
+  // hem daarachter), dus met de hookkaart botst hij niet.
+  const y = H * instelling('KAART_Y');
 
   const kleuren = kaartkleuren(stijl);
   ctx.fillStyle = kleuren.vlak;

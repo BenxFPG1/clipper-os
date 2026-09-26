@@ -11,6 +11,8 @@ import { uitsnedeVan } from './kadercontrole';
 import { basisZoom } from './index';
 import { instelling } from './instellingen';
 import type { Shot } from './index';
+import { deelstukken, gezichtMeterVia, type GezichtMeter } from './scenes';
+import type { Kader } from './kader';
 
 /** Breedte/hoogte van een normale bron. */
 const BRON_VERHOUDING = 16 / 9;
@@ -299,6 +301,52 @@ export async function keurGezicht(
   };
 }
 
+/**
+ * Regel: graphics passend. Geen deelstuk zonder gezicht mag vullend
+ * gekadreerd zijn — dan valt de helft van een graphic buiten beeld ("PLATIN",
+ * "−39"). Gemeten los van de beslissing: per vullend deelstuk opnieuw een
+ * paar momenten door de gezichtsdetectie; is er op géén enkel moment een
+ * gezicht, dan is het een graphic die aangesneden wordt.
+ */
+export async function keurGraphics(
+  segmenten: Shot[],
+  kader: Kader,
+  meter: GezichtMeter,
+): Promise<KeuringRegel> {
+  const naam = 'graphics passend';
+  const toetsen: { volgorde: number; van: number; tot: number; tijden: number[] }[] = [];
+  let graphicDelen = 0;
+  for (const seg of segmenten) {
+    for (const d of deelstukken(seg, kader)) {
+      if (d.kader === 'blur') graphicDelen++;
+      if (d.kader !== 'vullend' && d.kader !== 'staand') continue;
+      const lengte = d.tot - d.van;
+      const punten = lengte > 2 ? [0.2, 0.5, 0.8] : [0.5];
+      toetsen.push({ volgorde: seg.volgorde, van: seg.start + d.van, tot: seg.start + d.tot, tijden: punten.map((f) => seg.start + d.van + lengte * f) });
+    }
+  }
+  if (toetsen.length === 0) return { naam, goed: true, detail: `geen vullende deelstukken (${graphicDelen} passend)` };
+  const uitslag = await meter(toetsen.flatMap((t) => t.tijden));
+  if (uitslag.every((u) => u === null)) return { naam, goed: null, detail: 'gezichtsmeting mislukt; niet te toetsen' };
+  const fouten: string[] = [];
+  let i = 0;
+  for (const t of toetsen) {
+    const eigen = uitslag.slice(i, i + t.tijden.length);
+    i += t.tijden.length;
+    if (eigen.length > 0 && eigen.every((u) => u === false)) {
+      fouten.push(`shot ${t.volgorde} ${t.van.toFixed(1)}-${t.tot.toFixed(1)}s: geen gezicht maar vullend gekadreerd`);
+    }
+  }
+  return {
+    naam,
+    goed: fouten.length === 0,
+    detail:
+      fouten.length === 0
+        ? `${toetsen.length} vullende deelstukken met gezicht, ${graphicDelen} passend (blur)`
+        : fouten.slice(0, 5).join('; '),
+  };
+}
+
 /** Regels 4 en 5: klinkt het script, en klinkt niets dubbel? */
 export async function keurScript(
   montagePad: string,
@@ -411,6 +459,10 @@ export async function keurMontage(
      * campagne nodig heeft; ontbreekt hij, dan telt hij niet mee.
      */
     retentie?: KeuringRegel;
+    /** Het clipkader; alleen dan wordt "graphics passend" getoetst. */
+    kader?: Kader;
+    /** Gezichtsmeter voor "graphics passend"; standaard gezichten.py op de bron. */
+    gezichtMeter?: GezichtMeter;
   } = {},
 ): Promise<Keuringsrapport> {
   const regels: KeuringRegel[] = [
@@ -421,6 +473,15 @@ export async function keurMontage(
     ...(await keurScript(montagePad, segmenten)),
     await keurNaden(montagePad, segmenten, bronWoorden),
     ...(opties.retentie ? [opties.retentie] : []),
+    ...(opties.kader && (opties.gezichtMeter || opties.bronPad)
+      ? [
+          await keurGraphics(
+            segmenten,
+            opties.kader,
+            opties.gezichtMeter ?? gezichtMeterVia(opties.bronPad as string, opties.python ?? { cmd: 'python3', voor: [] }),
+          ),
+        ]
+      : []),
   ];
   return { goed: regels.every((r) => r.goed === true), status: keuringStatus(regels), regels };
 }

@@ -76,9 +76,48 @@ const STANDAARD = {
   HOOK_SECONDEN_PER_WOORD: 0.35,
 
   /** Ondertitels: woorden per regel en de pauze waarop een regel breekt (s). */
-  ONDERTITEL_MAX_WOORDEN: 4,
-  ONDERTITEL_MAX_TEKENS: 22,
+  ONDERTITEL_MAX_WOORDEN: 3,
+  ONDERTITEL_MAX_TEKENS: 14,
   ONDERTITEL_BREEK_PAUZE: 0.6,
+  /**
+   * Ondertitelstijl (eigen stijl, los van het kaartfont): kapitaalhoogte in px
+   * op 1080x1920, dikte van de zwarte rand en de schaduw. 35 px bleek op een
+   * telefoon onleesbaar; 60-70 is wat top-clips doen.
+   */
+  ONDERTITEL_KAPHOOGTE: 64,
+  ONDERTITEL_RAND: 7,
+  ONDERTITEL_SCHADUW: 3,
+  /** Maximale regelbreedte in px; een langere regel wordt smaller geschaald in plaats van afgebroken. */
+  ONDERTITEL_MAX_BREEDTE: 960,
+  /** Standaardhoogte van het regelmidden (fractie), en de onderrand die nooit gepasseerd wordt (TikTok-UI). */
+  ONDERTITEL_Y: 0.72,
+  ONDERTITEL_Y_MAX: 0.78,
+  /** Ruimte tussen kin en ondertitel (fractie van de hoogte). */
+  ONDERTITEL_KIN_MARGE: 0.015,
+  /** Boven het hoofd mag een regel alleen als hij dan niet in de hookzone valt (fractie). */
+  ONDERTITEL_Y_MIN_BOVEN: 0.3,
+  /** Tekstkaarten (context, re-hook, uitvalrisico): bovenkant van de balk (fractie), onder de hookzone. */
+  KAART_Y: 0.19,
+
+  /** Scènewissels in de bron: drempel van ffmpeg's scene-score, en de kortste deelstuklengte (s). */
+  SCENE_DREMPEL: 0.3,
+  SCENE_MIN_DEEL: 0.4,
+
+  /** Opschalen: vanaf deze factor een milde verscherping (lanczos schaalt altijd). */
+  OPSCHAAL_VERSCHERP_VANAF: 1.1,
+  /** Bron: hoogste resolutie die gedownload wordt (niet-AV1; YouTube levert boven 1080p geen H.264). */
+  BRON_MAX_HOOGTE: 1440,
+
+  /**
+   * Encode van het eindbestand. Platforms her-encoden altijd; een master op
+   * 0,9 Mbps wordt daar blokkerig. CRF 17 op medium met een plafond: het
+   * maxBytes-plafond van de opslag blijft de bovengrens winnen.
+   */
+  ENCODE_CRF: 17,
+  ENCODE_MAXRATE: 12_000_000,
+  ENCODE_BUFSIZE: 24_000_000,
+  /** Het tussenbestand waar de hookkaarten nog overheen gaan: bijna verliesvrij, zodat de tweede encode niets opstapelt. */
+  ENCODE_CRF_TUSSEN: 12,
 
   /**
    * Retentie-editor (retentie.ts). De doelen zelf (max pauze, max tijd zonder
@@ -120,6 +159,20 @@ const STANDAARD = {
 } as const;
 
 export type InstellingNaam = keyof typeof STANDAARD;
+
+/**
+ * De x264-preset is geen getal en staat daarom apart, met dezelfde
+ * overschrijfbaarheid (MONTAGE_ENCODE_PRESET). Voor tussenbestanden altijd
+ * snel: die zijn bijna verliesvrij en worden niet geüpload.
+ */
+export function encodePreset(): string {
+  return process.env.MONTAGE_ENCODE_PRESET || 'medium';
+}
+
+/** Standaard ondertitelfont (sleutel in FONTS): dik, schreefloos en statisch, zodat libass het zeker laadt. */
+export function ondertitelFontStandaard(): string {
+  return process.env.MONTAGE_ONDERTITEL_FONT || 'archivo';
+}
 
 const cache = new Map<InstellingNaam, number>();
 

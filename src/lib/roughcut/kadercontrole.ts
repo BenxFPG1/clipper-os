@@ -5,6 +5,7 @@ import { resolveBinary } from '../ingest/binaries';
 import { focusNaarX, kaderKeten, type Kader } from './kader';
 import { basisZoom, type Shot } from './index';
 import { instelling } from './instellingen';
+import { deelstukken, kaderOpMoment } from './scenes';
 
 /**
  * Controleert of de spreker daadwerkelijk in de uitsnede past, en corrigeert
@@ -236,7 +237,13 @@ export async function maakControlebeelden(
   const uit: { volgorde: number; pad: string }[] = [];
 
   for (const shot of shots) {
-    const t = shot.start + (shot.end - shot.start) / 2;
+    // Heeft het shot bronscènes, dan kijkt de controle naar het grootste
+    // deelstuk mét spreker: daar gaat de kadrering over. Een graphic-deelstuk
+    // wordt passend getoond en heeft geen gezicht om te beoordelen.
+    const delen = deelstukken(shot, kader);
+    const persoon = delen.filter((d) => d.gezicht !== false).sort((a, b) => b.tot - b.van - (a.tot - a.van))[0];
+    const t = persoon ? shot.start + (persoon.van + persoon.tot) / 2 : shot.start + (shot.end - shot.start) / 2;
+    const kaderHier = kaderOpMoment(shot, kader, t);
     // Volgt de uitsnede de spreker, dan is het focuspunt op dit moment een
     // ander dan het gemiddelde. De controle moet zien wat de kijker ziet.
     const opMoment = shot.spoor?.length
@@ -253,7 +260,7 @@ export async function maakControlebeelden(
     // wijd totaalshot dat nooit gerenderd zou worden, zei "inzoomen", en de
     // correctie zette een zoom die lager uitkwam dan de basiszoom — feitelijk
     // een uitzoom. Wat hier in beeld komt moet zijn wat de kijker krijgt.
-    const keten = kaderKeten(kader, {
+    const keten = kaderKeten(kaderHier, {
       focusX: focusNaarX(shot.focus, focusInPaneel),
       zoom: shot.zoom ?? basisZoom(shot),
       focusY: shot.focusY,
