@@ -329,13 +329,21 @@ export async function vulScenes(
           // Het beeld dat bij een verlengde leestijd blijft staan: het laatste
           // meetmoment dat écht op een graphic lijkt — niet blind het laatste
           // frame, dat al in de overgang naar de spreker kan liggen.
+          //
+          // Niet het láátste graphic-moment maar het duidelijkste: bij een
+          // uitschuivende of wegvegende graphic is het laatste meetmoment vaak
+          // al half camerabeeld, en dan stond de spreker bevroren in het
+          // passende kader (PLATINA clip 1, 18–21 s). Het vlakste frame is
+          // het frame waarop de graphic het volledigst in beeld staat; bij
+          // gelijke vlakheid wint het latere (meer ingeanimeerde) frame.
           const vlakken = meting.vlakken ?? [];
-          for (let k = tijden.length - 1; k >= 0; k--) {
-            if ((vlakken[k] ?? 0) >= instelling('GRAPHIC_MIN_VLAK')) {
-              scene.bevries = tijden[k];
-              break;
-            }
+          let beste = -1;
+          for (let k = 0; k < tijden.length; k++) {
+            const v = vlakken[k] ?? 0;
+            if (v < instelling('GRAPHIC_MIN_VLAK')) continue;
+            if (beste < 0 || v >= (vlakken[beste] ?? 0) - 0.01) beste = k;
           }
+          if (beste >= 0) scene.bevries = tijden[beste];
         }
       }
       seg.scenes.push(scene);
