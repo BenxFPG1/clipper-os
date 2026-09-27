@@ -74,12 +74,10 @@ export function leestijdPlan(segmenten: Shot[], kader: Kader): LeesPlan {
         // Zonder dat viel de render terug op het laatste frame van het stuk,
         // en dat lag bij een overgang al in het camerabeeld: de spreker stond
         // dan bevroren als postzegel in het passende kader (PLATINA clip 1).
-        // Een heel shot dat als graphic is beoordeeld (geen deelstukken) heeft
-        // geen overgang binnenin; daar is het laatste frame wél de graphic.
-        houdbaar:
-          d.bevries !== undefined
-            ? d.bevries - seg.start >= d.van && d.bevries - seg.start <= d.tot
-            : d.gezicht === null,
+        // Ook een heel shot dat de beeldcontrole als graphic zag, wordt niet
+        // verlengd zonder gemeten, stilstaand graphic-frame: zo'n shot was in
+        // PLATINA clip 1 een 1,3 s lange sectietitel-overgang.
+        houdbaar: d.bevries !== undefined && d.bevries - seg.start >= d.van && d.bevries - seg.start <= d.tot,
       });
     });
     cursor += seg.end - seg.start;
