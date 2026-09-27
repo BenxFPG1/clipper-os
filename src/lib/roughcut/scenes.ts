@@ -33,6 +33,8 @@ export type Scene = {
   wijd?: boolean;
   /** Geschatte horizontale plek van de persoon (uit beweging) als er geen gezicht is gemeten. */
   persoonX?: number | null;
+  /** Brontijd van het frame dat bij een verlengde leestijd blijft staan. */
+  bevries?: number;
 };
 
 /** Een deelstuk van een shot in shot-tijd (0 = begin van het shot), met het kader dat de render gebruikt. */
@@ -45,6 +47,8 @@ export type Deelstuk = {
   leeswoorden?: number | null;
   /** Geschatte persoonsplek in een wijd shot zonder gemeten gezicht. */
   persoonX?: number | null;
+  /** Brontijd (absoluut) van het vast te houden frame bij een verlengde leestijd. */
+  bevries?: number;
 };
 
 /**
@@ -87,6 +91,7 @@ export function deelstukken(shot: Shot, kader: Kader): Deelstuk[] {
       inhoud: s.inhoud ?? null,
       leeswoorden: s.leeswoorden ?? null,
       persoonX: s.persoonX ?? null,
+      bevries: s.bevries,
     }))
     .sort((a, b) => a.van - b.van);
   // Gaten dichten en de randen op de shotgrenzen: de poort en de
@@ -240,10 +245,11 @@ export async function vulScenes(
   segmenten: Shot[],
   meter: GezichtMeter,
   opties: { graphicMeter?: GraphicMeter } = {},
-): Promise<{ shots: number; persoon: number; graphic: number; ingezoomd: number; wijd: number; metingen: number; overgangen: number; ms: number }> {
+): Promise<{ shots: number; persoon: number; graphic: number; ingezoomd: number; wijd: number; animerend: number; metingen: number; overgangen: number; ms: number }> {
   const graphicMeter = opties.graphicMeter ?? graphicMeterVia(bron);
   let ingezoomd = 0;
   let wijd = 0;
+  let animerend = 0;
   const begin = Date.now();
   const stap = instelling('SCENE_STAP');
   const glad = instelling('SCENE_GAT_GLAD');
@@ -283,7 +289,11 @@ export async function vulScenes(
     for (let r = 0; r + 1 < runs.length; r++) {
       const a = ts[runs[r].tot];
       const b = ts[runs[r + 1].van];
-      grenzen.push(await overgangsPiek(bron, Math.max(seg.start, a - marge), Math.min(seg.end, b + marge)));
+      // De piek mag niet vóór het laatste meetpunt van de vorige run of na het
+      // eerste van de volgende liggen: dáár is gemeten wat er in beeld stond.
+      // Een piek erbuiten gaf een graphic-deelstuk dat eindigde in de spreker.
+      const piek = await overgangsPiek(bron, Math.max(seg.start, a - marge), Math.min(seg.end, b + marge));
+      grenzen.push(Math.min(b, Math.max(a, piek)));
       overgangen++;
     }
     const randen = [seg.start, ...grenzen, seg.end];
@@ -296,7 +306,10 @@ export async function vulScenes(
         // na de balk) valt zo niet weg — en het laatste frame is ook het frame
         // dat bij een verlengde leestijd blijft staan.
         const d = scene.tot - scene.van;
-        const meting = await graphicMeter([0.15, 0.35, 0.55, 0.75, 0.95].map((f) => scene.van + d * f));
+        // Vijf momenten plus het allerlaatste frame: een graphic die inanimeert
+        // heeft zijn volle inhoud vaak pas aan het eind.
+        const tijden = [...[0.1, 0.3, 0.5, 0.7, 0.9].map((f) => scene.van + d * f), Math.max(scene.van, scene.tot - 0.06)];
+        const meting = await graphicMeter(tijden);
         if (!lijktGraphic(meting)) {
           // Geen gezicht gevonden, maar ook geen graphic: een camerabeeld
           // (een wijd studioshot, iemand van opzij). Dat hoort vullend op de
@@ -306,9 +319,23 @@ export async function vulScenes(
           scene.persoonX = meting.persoonX;
           wijd++;
         } else {
-          scene.inhoud = meting.box;
+          // Alleen inzoomen op inhoud die stilstaat: verschillen begin en eind
+          // sterk (tekst die later verschijnt, een balk die groeit), dan past
+          // geen enkele vaste uitsnede en blijft het passende kader.
+          scene.inhoud = meting.stabiel ? meting.box : null;
+          if (meting.box && !meting.stabiel) animerend++;
           scene.leeswoorden = meting.woorden;
           if (scene.inhoud) ingezoomd++;
+          // Het beeld dat bij een verlengde leestijd blijft staan: het laatste
+          // meetmoment dat écht op een graphic lijkt — niet blind het laatste
+          // frame, dat al in de overgang naar de spreker kan liggen.
+          const vlakken = meting.vlakken ?? [];
+          for (let k = tijden.length - 1; k >= 0; k--) {
+            if ((vlakken[k] ?? 0) >= instelling('GRAPHIC_MIN_VLAK')) {
+              scene.bevries = tijden[k];
+              break;
+            }
+          }
         }
       }
       seg.scenes.push(scene);
@@ -326,7 +353,7 @@ export async function vulScenes(
       shots--;
     }
   }
-  return { shots, persoon, graphic, ingezoomd, wijd, metingen: alle.length, overgangen, ms: Date.now() - begin };
+  return { shots, persoon, graphic, ingezoomd, wijd, animerend, metingen: alle.length, overgangen, ms: Date.now() - begin };
 }
 
 /** Lege metingen opvullen met de dichtstbijzijnde buur; null als er helemaal niets gemeten is. */

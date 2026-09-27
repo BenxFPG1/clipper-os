@@ -301,7 +301,32 @@ export type InhoudMeter = (tijden: number[]) => Promise<Box | null>;
  * (horizontaal zwaartepunt van het verschil tussen de frames): de beste
  * schatting van waar de persoon staat.
  */
-export type GraphicMeting = { box: Box | null; woorden: number | null; vlak: number; persoonX: number | null };
+export type GraphicMeting = {
+  box: Box | null;
+  woorden: number | null;
+  vlak: number;
+  persoonX: number | null;
+  /** Per meetmoment de box en de vlakheid (in de volgorde van de tijden). */
+  boxen?: (Box | null)[];
+  vlakken?: number[];
+  /**
+   * Staat de inhoud stil? Bij een graphic die inanimeert (tekst die later
+   * verschijnt, een balk die groeit) verschillen de boxen van begin en eind
+   * sterk; dan is er geen veilige inzoom en blijft het passende kader.
+   */
+  stabiel?: boolean;
+};
+
+const oppervlak = (b: Box) => Math.max(0, b.x1 - b.x0) * Math.max(0, b.y1 - b.y0);
+
+/** Zijn alle boxen er, en beslaan de eerste én de laatste elk het grootste deel van de unie? */
+export function stabieleInhoud(boxen: (Box | null)[]): boolean {
+  if (boxen.length === 0 || boxen.some((b) => b === null)) return false;
+  const u = unie(boxen);
+  if (!u || oppervlak(u) <= 0) return false;
+  const min = instelling('GRAPHIC_MIN_STABIEL');
+  return oppervlak(boxen[0] as Box) / oppervlak(u) >= min && oppervlak(boxen[boxen.length - 1] as Box) / oppervlak(u) >= min;
+}
 export type GraphicMeter = (tijden: number[]) => Promise<GraphicMeting>;
 
 export function graphicMeterVia(bron: string): GraphicMeter {
@@ -320,7 +345,15 @@ export function graphicMeterVia(bron: string): GraphicMeter {
       vlak.push(a.vlak);
     }
     const mediaanVlak = [...vlak].sort((a, b) => a - b)[Math.floor(vlak.length / 2)] ?? 0;
-    return { box: unie(boxen), woorden: woorden.length ? Math.max(...woorden) : null, vlak: mediaanVlak, persoonX: bewegingX(frames) };
+    return {
+      box: unie(boxen),
+      woorden: woorden.length ? Math.max(...woorden) : null,
+      vlak: mediaanVlak,
+      persoonX: bewegingX(frames),
+      boxen,
+      vlakken: vlak,
+      stabiel: stabieleInhoud(boxen),
+    };
   };
 }
 

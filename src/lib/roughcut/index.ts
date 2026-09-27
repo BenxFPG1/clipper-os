@@ -125,6 +125,8 @@ export type Shot = {
   scenes?: Scene[];
   /** Gemeten eindscherm-/abonneeroverlay (genormaliseerd, eindscherm.ts); het kader houdt die buiten beeld. */
   overlay?: { x0: number; y0: number; x1: number; y1: number };
+  /** Brontijd waarop de overlay voor het eerst gezien is (voor inkorten bij zelfherstel). */
+  overlayVanaf?: number;
 };
 
 export type BurnOverlay = {
@@ -396,14 +398,35 @@ export async function maakRuweMontage(opties: {
       // deelstuk erna begint zoveel later in de bron — zo blijft elk beeld op
       // zijn eigen brontijd en loopt het geluid ongemoeid door.
       const labels = delen.map((_, k) => `v${i}d${k}`);
-      let graaf = `[${i * 2}:v]setpts=PTS-STARTPTS,fps=${fpsUit},split=${delen.length}${labels.map((l) => `[${l}i]`).join('')}`;
+      // Vasthouden gebeurt met een frame van ín de graphic (deel.bevries, het
+      // laatste meetmoment dat echt een graphic was), niet met het laatste
+      // frame van het deelstuk: dat lag soms al in de overgang naar de spreker,
+      // en dan stond de spreker bevroren in het passende kader.
+      const houd = delen.map((deel, k) => {
+        const h = aanpassing[k].vasthouden;
+        if (h <= 0 || deel.bevries === undefined) return null;
+        const rel = deel.bevries - shot.start;
+        return rel >= deel.van && rel <= deel.tot ? { rel, h } : null;
+      });
+      const invoerLabels = [...labels.map((l) => `[${l}i]`), ...houd.flatMap((x, k) => (x ? [`[v${i}h${k}i]`] : []))];
+      let graaf = `[${i * 2}:v]setpts=PTS-STARTPTS,fps=${fpsUit},split=${invoerLabels.length}${invoerLabels.join('')}`;
+      const frameDuur = 1 / (Number(fpsUit) || 25);
       delen.forEach((deel, k) => {
         const { vasthouden, inkorten } = aanpassing[k];
         const van = deel.van + inkorten;
-        const vast = vasthouden > 0 ? `,tpad=stop_mode=clone:stop_duration=${vasthouden.toFixed(3)}` : '';
+        const h = houd[k];
+        const vast = vasthouden > 0 && !h ? `,tpad=stop_mode=clone:stop_duration=${vasthouden.toFixed(3)}` : '';
         graaf +=
           `;[${labels[k]}i]trim=start=${van.toFixed(3)}:end=${deel.tot.toFixed(3)},setpts=PTS-STARTPTS,` +
-          `${ketenVoor({ ...deel, van })}${vast},setsar=1[${labels[k]}]`;
+          `${ketenVoor({ ...deel, van })}${vast},setsar=1[${labels[k]}${h ? 'a' : ''}]`;
+        if (h) {
+          graaf +=
+            // Precies één frame: na het fps-filter ligt er in elk venster van
+            // één frameduur exact één frame.
+            `;[v${i}h${k}i]trim=start=${h.rel.toFixed(3)}:duration=${frameDuur.toFixed(4)},setpts=PTS-STARTPTS,` +
+            `${ketenVoor({ ...deel, van: h.rel })},tpad=stop_mode=clone:stop_duration=${Math.max(0, h.h - frameDuur).toFixed(3)},setsar=1[${labels[k]}b]` +
+            `;[${labels[k]}a][${labels[k]}b]concat=n=2:v=1:a=0[${labels[k]}]`;
+        }
       });
       graaf += `;${labels.map((l) => `[${l}]`).join('')}concat=n=${delen.length}:v=1:a=0${effect ? `,${effect}` : ''},setsar=1[v${i}]`;
       delenVideo.push(graaf);

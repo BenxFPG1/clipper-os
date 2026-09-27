@@ -30,7 +30,7 @@ import {
 import { controleerAssFont, maakOndertitels, type Ondertitels } from '../src/lib/roughcut/ondertitels';
 import { gezichtMeterVia, vulScenes } from '../src/lib/roughcut/scenes';
 import { graphicMeterVia, lijktGraphic } from '../src/lib/roughcut/graphics';
-import { behandelEindscherm, bronDuur, overlayMeterVia, vermijdOverlay } from '../src/lib/roughcut/eindscherm';
+import { behandelEindscherm, bronDuur, keurOverlayDetail, overlayMeterVia, vermijdOverlay } from '../src/lib/roughcut/eindscherm';
 import { afwijkendeInstellingen, gebruikteInstellingen, instelling } from '../src/lib/roughcut/instellingen';
 import { lijnShotsUit } from '../src/lib/roughcut/uitlijnen';
 import { runEditAgent, beslissingenVoorClip, bekendeEffectSlugs, type PlanMeetdata } from '../src/lib/agents/edit';
@@ -54,7 +54,8 @@ import {
 import { controleerScript } from '../src/lib/roughcut/scriptcontrole';
 import { haalBronWoorden, vindFragment } from '../src/lib/roughcut/woorden';
 import { poort, verzetGrens } from '../src/lib/roughcut/poort';
-import { keurMontage, type Keuringsrapport } from '../src/lib/roughcut/keuring';
+import { keurGraphicsDetail, keurMontage, type Keuringsrapport } from '../src/lib/roughcut/keuring';
+import { zelfherstelStap } from '../src/lib/roughcut/herstel';
 import {
   keurRetentie,
   meetRetentie,
@@ -667,7 +668,7 @@ async function verwerk(job: Job) {
       const sc = await vulScenes(bronPad, segmenten, gezichtMeterVia(bronPad, pythonMetOpenCV(), 1));
       console.log(
         `     scènes: ${sc.metingen} gezichtsmetingen, ${sc.shots} shot(s) met wissel → ${sc.persoon} deelstuk(ken) met gezicht, ` +
-          `${sc.graphic} zonder (passend; ${sc.ingezoomd} ingezoomd op de inhoud), ${sc.wijd} wijd camerabeeld zonder gevonden gezicht (vullend), ` +
+          `${sc.graphic} zonder (passend; ${sc.ingezoomd} ingezoomd op de inhoud, ${sc.animerend} animerend → niet ingezoomd), ${sc.wijd} wijd camerabeeld zonder gevonden gezicht (vullend), ` +
           `${sc.overgangen} overgang(en) op de scènepiek (${(sc.ms / 1000).toFixed(1).replace('.', ',')} s)`,
       );
     } catch (e) {
@@ -1059,7 +1060,12 @@ async function verwerk(job: Job) {
     // tegen elkaar in werken — precies de stille oscillatie die de
     // aanloop-bug wekenlang verborg. Dat mag nooit meer geruisloos gebeuren.
     const eerdereIngrepen = new Map<string, number>();
-    for (let poging = 1; poging <= 4; poging++) {
+    // Zelfherstel (herstel.ts): hoeveel keer de keuring het montageplan al
+    // gerepareerd heeft. De poging-lus krijgt daarvoor ruimte bovenop zijn
+    // eigen correctierondes.
+    let herstelRonde = 0;
+    const MAX_POGINGEN = 4 + instelling('ZELFHERSTEL_RONDES');
+    for (let poging = 1; poging <= MAX_POGINGEN; poging++) {
     // De poort staat vóór élke render, niet alleen vóór de eerste. De
     // correctielussen hieronder (aanloop, ontbrekend fragment, beeldcontrole)
     // verzetten grenzen ná de eerste poortdoorloop, en gingen daarmee om de
@@ -1342,6 +1348,36 @@ async function verwerk(job: Job) {
       } catch (e) {
         console.log(`     eindbeeldcontrole overgeslagen (${(e as Error).message.slice(0, 60)})`);
       }
+    }
+
+    // ZELFHERSTEL. De keuring is een poort, geen rapport achteraf: meet
+    // "graphics passend" en "geen eindscherm/overlay" nu al op dit
+    // montageplan, en repareer wat faalt met de veilige terugval (passend in
+    // plaats van inzoomen, vullend in plaats van postzegel, inkorten vóór het
+    // eindscherm). Dan opnieuw renderen en keuren; hoogstens
+    // ZELFHERSTEL_RONDES keer. Wat daarna nog faalt, meldt de eindkeuring als
+    // review nodig.
+    try {
+      const kaderNu = (editClip?.kader ?? clip.kader ?? 'vullend') as Kader;
+      const stap = await zelfherstelStap(
+        segmenten,
+        async () => ({
+          graphic: (await keurGraphicsDetail(segmenten, kaderNu, gezichtMeterVia(bronPad, pythonMetOpenCV()), graphicMeterVia(bronPad))).fouten,
+          overlay: keurOverlayDetail(segmenten, kaderNu).fouten,
+        }),
+        { ronde: herstelRonde, maxRondes: instelling('ZELFHERSTEL_RONDES'), bronWoorden },
+      );
+      herstelRonde = stap.ronde;
+      if (stap.log) console.log(`     ${stap.log}`);
+      if (stap.opnieuw && poging < MAX_POGINGEN) {
+        // Kaders zijn veranderd: de kadrering opnieuw rekenkundig toetsen en
+        // de eindscherm-uitsnede opnieuw leggen, dan opnieuw renderen.
+        corrigeerKadrering(segmenten);
+        for (const sg of segmenten) if (sg.overlay) vermijdOverlay(sg);
+        continue;
+      }
+    } catch (e) {
+      console.log(`     zelfherstel overgeslagen (${(e as Error).message.slice(0, 70)})`);
     }
 
     break;

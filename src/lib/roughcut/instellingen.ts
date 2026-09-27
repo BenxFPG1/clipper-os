@@ -122,6 +122,10 @@ const STANDAARD = {
    */
   /** Een beeld zonder gezicht is pas een graphic als minstens dit aandeel vlak is; anders is het een wijd camerashot. */
   GRAPHIC_MIN_VLAK: 0.62,
+  /** De inhoud van het eerste en het laatste meetframe moet elk minstens dit aandeel van de unie beslaan, anders animeert de graphic en wordt er niet ingezoomd. */
+  GRAPHIC_MIN_STABIEL: 0.7,
+  /** Zelfherstel: zoveel extra render-en-keurrondes voor graphics en eindscherm. */
+  ZELFHERSTEL_RONDES: 2,
   GRAPHIC_KLEUR_DREMPEL: 36,
   GRAPHIC_MIN_ACHTERGROND: 0.4,
   /** Randsterkte (Sobel op helderheid, 0..~1400) waarboven een pixel tot tekst of een lijn hoort. */

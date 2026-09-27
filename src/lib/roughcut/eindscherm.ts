@@ -176,6 +176,7 @@ export async function behandelEindscherm(
       gevonden[0].b!,
     );
     seg.overlay = box;
+    seg.overlayVanaf = gevonden[0].t;
     if (vermijdOverlay(seg)) {
       uit.vermeden++;
       uit.regels.push(`shot ${seg.volgorde}: eindscherm op ${gevonden[0].t.toFixed(1)} s → ingezoomd tot ${seg.zoom?.toFixed(2)} boven de overlay`);
@@ -200,8 +201,14 @@ export async function behandelEindscherm(
 
 /** Keuringsregel "geen eindscherm/overlay": geen gemeten overlay binnen de uitsnede die de render neemt. */
 export function keurOverlay(segmenten: Shot[], kader: Kader): KeuringRegel {
+  return keurOverlayDetail(segmenten, kader).regel;
+}
+
+/** Idem, met per fout het shot — voor het zelfherstel. */
+export function keurOverlayDetail(segmenten: Shot[], kader: Kader): { regel: KeuringRegel; fouten: { volgorde: number; wat: string }[] } {
   const naam = 'geen eindscherm/overlay';
   const fouten: string[] = [];
+  const perShot: { volgorde: number; wat: string }[] = [];
   let getoetst = 0;
   for (const seg of segmenten) {
     const o = seg.overlay;
@@ -210,16 +217,23 @@ export function keurOverlay(segmenten: Shot[], kader: Kader): KeuringRegel {
     const delen = deelstukken(seg, kader);
     if (delen.some((d) => d.kader !== 'vullend' && d.kader !== 'staand')) {
       fouten.push(`shot ${seg.volgorde}: overlay in beeld (passend kader toont het hele beeld)`);
+      perShot.push({ volgorde: seg.volgorde, wat: fouten[fouten.length - 1] });
       continue;
     }
     const paneelBreed = seg.paneel ? seg.paneel[1] - seg.paneel[0] : 1;
     const u = uitsnedeVan(seg.focusX ?? 0.5, seg.zoom ?? basisZoom(seg), seg.focusY ?? 0.5, (16 / 9) * paneelBreed);
     const overlapt = u.y1 > o.y0 + 0.01 && u.x1 > o.x0 && u.x0 < o.x1;
-    if (overlapt) fouten.push(`shot ${seg.volgorde}: eindscherm-overlay valt in de uitsnede (onder ${Math.round(o.y0 * 100)}% hoogte)`);
+    if (overlapt) {
+      fouten.push(`shot ${seg.volgorde}: eindscherm-overlay valt in de uitsnede (onder ${Math.round(o.y0 * 100)}% hoogte)`);
+      perShot.push({ volgorde: seg.volgorde, wat: fouten[fouten.length - 1] });
+    }
   }
   return {
-    naam,
-    goed: fouten.length === 0,
-    detail: fouten.length === 0 ? (getoetst ? `${getoetst} shot(s) met eindscherm, overlay overal buiten beeld` : 'geen eindscherm in beeld') : fouten.join('; '),
+    regel: {
+      naam,
+      goed: fouten.length === 0,
+      detail: fouten.length === 0 ? (getoetst ? `${getoetst} shot(s) met eindscherm, overlay overal buiten beeld` : 'geen eindscherm in beeld') : fouten.join('; '),
+    },
+    fouten: perShot,
   };
 }

@@ -10,7 +10,9 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { resolveBinary } from '../src/lib/ingest/binaries';
-import { analyseerGraphic, graphicMeterVia, inhoudKader, lijktGraphic } from '../src/lib/roughcut/graphics';
+import { analyseerGraphic, graphicMeterVia, inhoudKader, lijktGraphic, stabieleInhoud } from '../src/lib/roughcut/graphics';
+import { keurGraphicsDetail, type GraphicFout } from '../src/lib/roughcut/keuring';
+import { herstelNaKeuring, zelfherstelStap } from '../src/lib/roughcut/herstel';
 import { deelstukken, vulScenes, type GezichtMeter } from '../src/lib/roughcut/scenes';
 import { keurGraphics } from '../src/lib/roughcut/keuring';
 import { behandelEindscherm, keurOverlay, overlayUitPixels, vermijdOverlay } from '../src/lib/roughcut/eindscherm';
@@ -167,6 +169,98 @@ async function vervolg() {
         const es2 = await behandelEindscherm([vroeg], { bronDuur: 353, meter: async (t) => t.map(() => o) });
         toets('shots buiten de laatste 30 s worden niet getoetst', es2.gemeten === 0);
       }
+    }
+
+    console.log('animerende graphic: niet inzoomen');
+    {
+      const vast = { x0: 0.2, y0: 0.1, x1: 0.8, y1: 0.9 };
+      toets('stilstaande inhoud is stabiel', stabieleInhoud([vast, vast, { ...vast, x1: 0.82 }]));
+      toets('inhoud die inanimeert (klein → groot) is niet stabiel', !stabieleInhoud([{ x0: 0.2, y0: 0.3, x1: 0.4, y1: 0.7 }, vast, vast]));
+      toets('een onbetrouwbare meting maakt het onstabiel', !stabieleInhoud([vast, null, vast]));
+    }
+
+    console.log('keuring "graphics passend": camerabeeld in het passende kader');
+    {
+      const studio = video(fix('wijd-studio.jpg'), 'studio2.mp4');
+      const geenGezicht: GezichtMeter = async (t) => t.map(() => false);
+      const seg: Shot = { volgorde: 3, start: 0.2, end: 3.8, functie: 'setup', scenes: [{ van: 0.2, tot: 3.8, gezicht: false }] };
+      const r = await keurGraphicsDetail([seg], 'vullend', geenGezicht, graphicMeterVia(studio));
+      toets('postzegel gevonden', r.fouten.length === 1 && r.fouten[0].soort === 'camerabeeld_passend', JSON.stringify(r.fouten));
+      toets('regel is fout', r.regel.goed === false, r.regel.detail);
+    }
+
+    console.log('zelfherstel: herstelacties');
+    {
+      const box = { x0: 0.3, y0: 0.2, x1: 0.7, y1: 0.8 };
+      const segs: Shot[] = [
+        { volgorde: 3, start: 130, end: 137, functie: 'setup', scenes: [{ van: 130, tot: 132, gezicht: true }, { van: 132, tot: 137, gezicht: false, inhoud: box }] },
+        { volgorde: 4, start: 175, end: 181, functie: 'escalatie', scenes: [{ van: 175, tot: 177, gezicht: false }, { van: 177, tot: 181, gezicht: true }] },
+        { volgorde: 5, start: 200, end: 205, functie: 'escalatie' },
+        { volgorde: 6, start: 330, end: 336, functie: 'button', overlay: box, overlayVanaf: 334 },
+      ];
+      const fouten: GraphicFout[] = [
+        { soort: 'inhoud_buiten_beeld', volgorde: 3, van: 132, tot: 137, wat: 'x' },
+        { soort: 'camerabeeld_passend', volgorde: 4, van: 175, tot: 177, wat: 'y' },
+        { soort: 'graphic_vullend', volgorde: 5, van: 201, tot: 203, wat: 'z' },
+      ];
+      const woorden = Array.from({ length: 15 }, (_, i) => ({ w: `w${i}`, s: 330 + i * 0.4, e: 330 + i * 0.4 + 0.3 }));
+      const acties = herstelNaKeuring(segs, fouten, [{ volgorde: 6 }], { bronWoorden: woorden });
+      toets('inzoom eraf bij inhoud buiten beeld', segs[0].scenes?.[1].inhoud === null && deelstukken(segs[0], 'vullend')[1].kader === 'blur');
+      toets('camerabeeld in passend → vullend', segs[1].scenes?.[0].gezicht === true && deelstukken(segs[1], 'vullend').every((d) => d.kader === 'vullend'));
+      toets('graphic vullend → passend deelstuk op precies dat stuk', deelstukken(segs[2], 'vullend').map((d) => d.kader).join(',') === 'vullend,blur,vullend', JSON.stringify(deelstukken(segs[2], 'vullend')));
+      toets('eindscherm → ingekort vóór de overlay (woordgrens)', segs[3].end < 334 && segs[3].end > 332 && !segs[3].overlay, String(segs[3].end));
+      toets('vier acties gelogd', acties.length === 4, acties.join(' | '));
+    }
+
+    console.log('zelfherstel: de lus met gestubde keuring');
+    {
+      const box = { x0: 0.3, y0: 0.2, x1: 0.7, y1: 0.8 };
+      const seg: Shot = { volgorde: 3, start: 130, end: 137, functie: 'setup', scenes: [{ van: 130, tot: 137, gezicht: false, inhoud: box }] };
+      // De "keuring" faalt zolang er nog ingezoomd wordt; de "render" doet niets.
+      const keur = async () => ({
+        graphic: seg.scenes?.some((sc) => sc.inhoud)
+          ? [{ soort: 'inhoud_buiten_beeld' as const, volgorde: 3, van: 130, tot: 137, wat: 'shot 3 130.0s: graphic-inhoud valt buiten beeld na inzoomen' }]
+          : [],
+        overlay: [],
+      });
+      let ronde = 0;
+      let renders = 1;
+      const logs: string[] = [];
+      for (let poging = 1; poging <= 6; poging++) {
+        const stap = await zelfherstelStap([seg], keur, { ronde, maxRondes: 2 });
+        ronde = stap.ronde;
+        if (stap.log) logs.push(stap.log);
+        if (stap.opnieuw) {
+          renders++;
+          continue;
+        }
+        break;
+      }
+      toets('na één herstelronde goed: één extra render', renders === 2 && ronde === 1, JSON.stringify({ renders, ronde, logs }));
+      toets('logregels "zelfherstel ronde 1: …" en "na ronde 1 … in orde"', /^zelfherstel ronde 1: .* → shot 3 130\.0s: inzoom eraf/.test(logs[0] ?? '') && /na ronde 1/.test(logs[1] ?? ''), logs.join(' | '));
+
+      // Een fout die niet te herstellen is: de lus stopt, geen eindeloos renderen.
+      const koppig = async () => ({ graphic: [], overlay: [{ volgorde: 99, wat: 'shot 99: eindscherm' }] });
+      let r2 = 0;
+      let n2 = 0;
+      for (let poging = 1; poging <= 6; poging++) {
+        const stap = await zelfherstelStap([seg], koppig, { ronde: r2, maxRondes: 2 });
+        r2 = stap.ronde;
+        n2++;
+        if (!stap.opnieuw) break;
+      }
+      toets('onherstelbaar: stopt meteen (review via de eindkeuring)', n2 === 1 && r2 === 1);
+      // Maximaal twee rondes, ook als elke ronde iets "herstelt" maar het blijft falen.
+      let r3 = 0;
+      let n3 = 0;
+      const altijd = async () => ({ graphic: [{ soort: 'camerabeeld_passend' as const, volgorde: 3, van: 130, tot: 137, wat: 'x' }], overlay: [] });
+      for (let poging = 1; poging <= 6; poging++) {
+        const stap = await zelfherstelStap([{ ...seg, scenes: [{ van: 130, tot: 137, gezicht: false }] }], altijd, { ronde: r3, maxRondes: 2 });
+        r3 = stap.ronde;
+        n3++;
+        if (!stap.opnieuw) break;
+      }
+      toets('hoogstens twee herstelrondes', r3 === 2 && n3 === 3, JSON.stringify({ r3, n3 }));
     }
 
     console.log('ondertitels: koppeltekens bij elkaar');

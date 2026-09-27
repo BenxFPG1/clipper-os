@@ -311,72 +311,110 @@ export async function keurGezicht(
  * paar momenten door de gezichtsdetectie; is er op géén enkel moment een
  * gezicht, dan is het een graphic die aangesneden wordt.
  */
+/** Eén concrete fout van "graphics passend", met genoeg om hem te herstellen (herstel.ts). */
+export type GraphicFout = {
+  soort: 'inhoud_buiten_beeld' | 'graphic_vullend' | 'camerabeeld_passend';
+  volgorde: number;
+  /** Absolute brontijden van het deelstuk. */
+  van: number;
+  tot: number;
+  wat: string;
+};
+
+/**
+ * Regel: graphics passend — in beide richtingen.
+ *
+ * - Een deelstuk zonder gezicht dat vullend gekadreerd is en op een graphic
+ *   lijkt: dan valt de helft van de graphic weg ("PLATIN", "−39").
+ * - Een ingezoomde graphic waarvan de (opnieuw gemeten) inhoud buiten het
+ *   gerenderde gebied valt: een animatie die later uitloopt.
+ * - Een camerabeeld in het passende kader: een spreker als postzegel tussen
+ *   twee wazige balken.
+ *
+ * Gemeten los van de beslissing, op andere momenten. De structuur (fouten)
+ * voedt het zelfherstel in de worker; de regel is wat de keuring toont.
+ */
+export async function keurGraphicsDetail(
+  segmenten: Shot[],
+  kader: Kader,
+  meter: GezichtMeter,
+  graphicMeter?: GraphicMeter,
+): Promise<{ regel: KeuringRegel; fouten: GraphicFout[] }> {
+  const naam = 'graphics passend';
+  const fouten: GraphicFout[] = [];
+  const toetsen: { volgorde: number; van: number; tot: number; tijden: number[] }[] = [];
+  let graphicDelen = 0;
+  let ingezoomd = 0;
+  let wijd = 0;
+
+  for (const seg of segmenten) {
+    for (const d of deelstukken(seg, kader)) {
+      const van = seg.start + d.van;
+      const tot = seg.start + d.tot;
+      const lengte = d.tot - d.van;
+      if (d.kader === 'blur') {
+        graphicDelen++;
+        if (!graphicMeter) continue;
+        const meting = await graphicMeter([0.1, 0.5, 0.9, 0.98].map((f) => van + lengte * f));
+        if (d.inhoud) {
+          ingezoomd++;
+          // Inzoomen mag nooit inhoud kosten.
+          if (meting.box && !boxBinnen(meting.box, inhoudKader(d.inhoud).r)) {
+            fouten.push({ soort: 'inhoud_buiten_beeld', volgorde: seg.volgorde, van, tot, wat: `shot ${seg.volgorde} ${van.toFixed(1)}s: graphic-inhoud valt buiten beeld na inzoomen` });
+          }
+        } else if (!lijktGraphic(meting) && (d.gezicht === false || seg.beeldtype === 'graphic')) {
+          fouten.push({ soort: 'camerabeeld_passend', volgorde: seg.volgorde, van, tot, wat: `shot ${seg.volgorde} ${van.toFixed(1)}s: camerabeeld in het passende kader (postzegel)` });
+        }
+        continue;
+      }
+      if (d.kader !== 'vullend' && d.kader !== 'staand') continue;
+      const punten = lengte > 2 ? [0.2, 0.5, 0.8] : [0.5];
+      toetsen.push({ volgorde: seg.volgorde, van, tot, tijden: punten.map((f) => van + lengte * f) });
+    }
+  }
+
+  if (toetsen.length > 0) {
+    const uitslag = await meter(toetsen.flatMap((t) => t.tijden));
+    if (uitslag.every((u) => u === null) && fouten.length === 0) {
+      return { regel: { naam, goed: null, detail: 'gezichtsmeting mislukt; niet te toetsen' }, fouten };
+    }
+    let i = 0;
+    for (const t of toetsen) {
+      const eigen = uitslag.slice(i, i + t.tijden.length);
+      i += t.tijden.length;
+      if (eigen.length > 0 && eigen.every((u) => u === false)) {
+        // Geen gezicht is nog geen graphic: een wijd camerashot hoort juist
+        // vullend. Alleen fout als het beeld ook op een graphic lijkt.
+        const beeld = graphicMeter ? await graphicMeter(t.tijden) : null;
+        if (beeld && !lijktGraphic(beeld)) {
+          wijd++;
+          continue;
+        }
+        fouten.push({ soort: 'graphic_vullend', volgorde: t.volgorde, van: t.van, tot: t.tot, wat: `shot ${t.volgorde} ${t.van.toFixed(1)}-${t.tot.toFixed(1)}s: geen gezicht maar vullend gekadreerd` });
+      }
+    }
+  }
+
+  return {
+    regel: {
+      naam,
+      goed: fouten.length === 0,
+      detail:
+        fouten.length === 0
+          ? `${toetsen.length} vullende deelstukken (${wijd} wijd camerabeeld zonder gevonden gezicht), ${graphicDelen} passend (blur), ${ingezoomd} ingezoomd op de inhoud, niets buiten beeld`
+          : fouten.slice(0, 5).map((f) => f.wat).join('; '),
+    },
+    fouten,
+  };
+}
+
 export async function keurGraphics(
   segmenten: Shot[],
   kader: Kader,
   meter: GezichtMeter,
   graphicMeter?: GraphicMeter,
 ): Promise<KeuringRegel> {
-  const naam = 'graphics passend';
-  const toetsen: { volgorde: number; van: number; tot: number; tijden: number[] }[] = [];
-  let graphicDelen = 0;
-  // Ingezoomde graphics: de inhoud opnieuw meten, op andere momenten dan bij
-  // de kadrering (een animatie die later nog uitloopt), en toetsen dat alles
-  // binnen het gerenderde gebied valt. Inzoomen mag nooit inhoud kosten.
-  const inhoudFouten: string[] = [];
-  let ingezoomd = 0;
-  for (const seg of segmenten) {
-    for (const d of deelstukken(seg, kader)) {
-      if (d.kader !== 'blur' || !d.inhoud || !graphicMeter) continue;
-      ingezoomd++;
-      const lengte = d.tot - d.van;
-      const opnieuw = (await graphicMeter([0.1, 0.5, 0.9, 0.98].map((f) => seg.start + d.van + lengte * f))).box;
-      if (opnieuw && !boxBinnen(opnieuw, inhoudKader(d.inhoud).r)) {
-        inhoudFouten.push(`shot ${seg.volgorde} ${(seg.start + d.van).toFixed(1)}s: graphic-inhoud valt buiten beeld na inzoomen`);
-      }
-    }
-  }
-  for (const seg of segmenten) {
-    for (const d of deelstukken(seg, kader)) {
-      if (d.kader === 'blur') graphicDelen++;
-      if (d.kader !== 'vullend' && d.kader !== 'staand') continue;
-      const lengte = d.tot - d.van;
-      const punten = lengte > 2 ? [0.2, 0.5, 0.8] : [0.5];
-      toetsen.push({ volgorde: seg.volgorde, van: seg.start + d.van, tot: seg.start + d.tot, tijden: punten.map((f) => seg.start + d.van + lengte * f) });
-    }
-  }
-  if (toetsen.length === 0) {
-    return inhoudFouten.length
-      ? { naam, goed: false, detail: inhoudFouten.slice(0, 5).join('; ') }
-      : { naam, goed: true, detail: `geen vullende deelstukken (${graphicDelen} passend, ${ingezoomd} ingezoomd op de inhoud)` };
-  }
-  const uitslag = await meter(toetsen.flatMap((t) => t.tijden));
-  if (uitslag.every((u) => u === null)) return { naam, goed: null, detail: 'gezichtsmeting mislukt; niet te toetsen' };
-  const fouten: string[] = [...inhoudFouten];
-  let i = 0;
-  let wijd = 0;
-  for (const t of toetsen) {
-    const eigen = uitslag.slice(i, i + t.tijden.length);
-    i += t.tijden.length;
-    if (eigen.length > 0 && eigen.every((u) => u === false)) {
-      // Geen gezicht is nog geen graphic: een wijd camerashot hoort juist
-      // vullend. Alleen fout als het beeld ook op een graphic lijkt.
-      const beeld = graphicMeter ? await graphicMeter(t.tijden) : null;
-      if (beeld && !lijktGraphic(beeld)) {
-        wijd++;
-        continue;
-      }
-      fouten.push(`shot ${t.volgorde} ${t.van.toFixed(1)}-${t.tot.toFixed(1)}s: geen gezicht maar vullend gekadreerd`);
-    }
-  }
-  return {
-    naam,
-    goed: fouten.length === 0,
-    detail:
-      fouten.length === 0
-        ? `${toetsen.length} vullende deelstukken (${wijd} wijd camerabeeld zonder gevonden gezicht), ${graphicDelen} passend (blur), ${ingezoomd} ingezoomd op de inhoud, niets buiten beeld`
-        : fouten.slice(0, 5).join('; '),
-  };
+  return (await keurGraphicsDetail(segmenten, kader, meter, graphicMeter)).regel;
 }
 
 /** Regels 4 en 5: klinkt het script, en klinkt niets dubbel? */

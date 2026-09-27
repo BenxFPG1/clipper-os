@@ -503,6 +503,39 @@ async function main() {
       }
     }
 
+    // 11. Vasthouden met een frame van ín de graphic: de bron gaat van oranje
+    //     (graphic) naar testbeeld (spreker) op 4 s, maar het graphic-deelstuk
+    //     loopt tot 4,5 s. Het laatste frame is dus al de spreker; vastgehouden
+    //     moet het oranje worden (bevries = 3,0 s), geen bevroren spreker.
+    console.log('leestijd: vastgehouden frame komt uit de graphic');
+    {
+      const holdWerk = join(map, 'holdwerk');
+      await (await import('node:fs/promises')).mkdir(holdWerk, { recursive: true });
+      const holdBron = join(holdWerk, 'bron.mp4');
+      const gen = ff([
+        '-f', 'lavfi', '-i', 'color=c=0xff7a00:size=1280x720:rate=25:duration=4',
+        '-f', 'lavfi', '-i', 'testsrc=size=1280x720:rate=25:duration=6',
+        '-f', 'lavfi', '-i', 'sine=frequency=220:duration=10',
+        '-filter_complex', '[0:v][1:v]concat=n=2:v=1:a=0[v]', '-map', '[v]', '-map', '2:a',
+        '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', holdBron,
+      ]);
+      toets('bron oranje → testbeeld gegenereerd', gen.ok, gen.uit.slice(-200));
+      const a: Shot = { volgorde: 1, start: 2, end: 4.5, functie: 'setup', focusX: 0.5, focusW: 0.12, scenes: [{ van: 2, tot: 4.5, gezicht: false, leeswoorden: 8, bevries: 3.0 }] };
+      const b: Shot = { volgorde: 2, start: 6, end: 9, functie: 'escalatie', focusX: 0.5, focusW: 0.12 };
+      const uitHold = join(map, 'hold.mp4');
+      try {
+        await maakRuweMontage({ sourceUrl: 'lokaal://test', shots: [a, b], alGesegmenteerd: true, outputPad: uitHold, werkmap: holdWerk, kader: 'vullend' });
+        const p = probe(uitHold);
+        toets('lengte = som van de shots (5,5 s)', Math.abs(p.duur - 5.5) < 0.2, `${p.duur}s`);
+        const f = join(map, 'hold.raw');
+        ff(['-ss', '2.9', '-i', uitHold, '-frames:v', '1', '-vf', 'crop=1080:40:0:940,scale=1:1', '-f', 'rawvideo', '-pix_fmt', 'rgb24', f]);
+        const px = await readFile(f);
+        toets('tijdens het vasthouden staat de graphic (oranje), niet de spreker', px[0] > 200 && px[1] > 80 && px[1] < 160 && px[2] < 60, `rgb ${px[0]},${px[1]},${px[2]}`);
+      } catch (e) {
+        toets('render met vasthoudframe slaagt', false, (e as Error).message.slice(-400));
+      }
+    }
+
     // 8. Ondertitelplek: onder de kin, boven de 78%-grens, nooit over het
     //    gezicht; zonder gezicht op de standaardhoogte.
     console.log('ondertitelplek');
