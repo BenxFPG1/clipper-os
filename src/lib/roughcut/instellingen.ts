@@ -162,6 +162,9 @@ const STANDAARD = {
   GRAPHIC_LEES_TERUGVAL_WOORDEN: 4,
   GRAPHIC_LEES_MAX: 4,
   GRAPHIC_MAX_HOLD: 2.5,
+  // Korter dan dit in de bron is een overgang (wipe, sectietitel), geen
+  // informatie om te lezen: niet verlengen en niet als leesbaarheidsfout tellen.
+  GRAPHIC_MIN_VOOR_LEESTIJD: 1.2,
   GRAPHIC_MAX_ONZICHTBAAR: 3,
   GRAPHIC_MIN_REST: 0.8,
 

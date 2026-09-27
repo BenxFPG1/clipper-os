@@ -95,6 +95,10 @@ export function leestijdPlan(segmenten: Shot[], kader: Kader): LeesPlan {
   for (let j = 0; j < stukken.length; j++) {
     const g = stukken[j];
     if (!g.graphic) continue;
+    // Een flits van een graphic is een overgang, geen leesmoment. Verlengen
+    // bevroor in PLATINA clip 1 een halve sectietitel ("… TERM TALK") 3 s
+    // lang over een zin die over iets anders ging.
+    if (g.duur < instelling('GRAPHIC_MIN_VOOR_LEESTIJD')) continue;
     const nodig = leestijd(g.woorden);
     let vasthouden = 0;
     let reden: string | undefined;
