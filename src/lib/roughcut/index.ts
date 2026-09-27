@@ -408,6 +408,19 @@ export async function maakRuweMontage(opties: {
         const rel = deel.bevries - shot.start;
         return rel >= deel.van && rel <= deel.tot ? { rel, h } : null;
       });
+      // Eén regel per vastgehouden graphic: welk bronmoment er bevriest en
+      // met welke inhoud. Zonder dit is een verkeerd bevroren frame in CI niet
+      // terug te voeren op de meting.
+      delen.forEach((deel, k) => {
+        const v = aanpassing[k].vasthouden;
+        if (v <= 0) return;
+        const b = deel.inhoud;
+        log(
+          `hold: shot ${shot.volgorde} deel ${k} bron ${(shot.start + deel.van).toFixed(2)}–${(shot.start + deel.tot).toFixed(2)} s, ` +
+            `+${v.toFixed(2)} s, bevries ${deel.bevries?.toFixed(2) ?? '—'}${houd[k] ? '' : ' (terugval: laatste frame)'}, ` +
+            `inhoud ${b ? `${b.x0.toFixed(2)}–${b.x1.toFixed(2)} × ${b.y0.toFixed(2)}–${b.y1.toFixed(2)}` : 'geen box'}`,
+        );
+      });
       const invoerLabels = [...labels.map((l) => `[${l}i]`), ...houd.flatMap((x, k) => (x ? [`[v${i}h${k}i]`] : []))];
       let graaf = `[${i * 2}:v]setpts=PTS-STARTPTS,fps=${fpsUit},split=${invoerLabels.length}${invoerLabels.join('')}`;
       const frameDuur = 1 / (Number(fpsUit) || 25);
