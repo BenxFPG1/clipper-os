@@ -14,6 +14,7 @@ import type { Shot } from './index';
 import { deelstukken, gezichtMeterVia, type GezichtMeter } from './scenes';
 import { boxBinnen, inhoudKader, inhoudMeterVia, type InhoudMeter } from './graphics';
 import type { Kader } from './kader';
+import { keurLeesbaar } from './leestijd';
 
 /** Breedte/hoogte van een normale bron. */
 const BRON_VERHOUDING = 16 / 9;
@@ -497,6 +498,7 @@ export async function keurMontage(
     ...(await keurScript(montagePad, segmenten)),
     await keurNaden(montagePad, segmenten, bronWoorden),
     ...(opties.retentie ? [opties.retentie] : []),
+    ...(opties.kader ? [keurLeesbaar(segmenten, opties.kader)] : []),
     ...(opties.kader && (opties.gezichtMeter || opties.bronPad)
       ? [
           await keurGraphics(

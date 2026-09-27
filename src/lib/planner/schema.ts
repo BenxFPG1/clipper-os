@@ -1,8 +1,8 @@
 import { z } from 'zod';
 
 export const SCHEMA_VERSION = '1.0';
-export const PROMPT_VERSION_CHARACTER_MAP = 'charmap-3.1';
-export const PROMPT_VERSION_PLAN = 'plan-6.2';
+export const PROMPT_VERSION_CHARACTER_MAP = 'charmap-3.2';
+export const PROMPT_VERSION_PLAN = 'plan-6.3';
 
 // ------------------------------------------------------- stap 1: character map
 export const sleutelmomentSchema = z.object({
@@ -15,6 +15,13 @@ export const sleutelmomentSchema = z.object({
 export const persoonSchema = z.object({
   naam: z.string(),
   rol: z.string(),
+  /**
+   * Hoe over deze persoon gesproken wordt, afgeleid uit de context (naam,
+   * aanspreekvorm, "ze zegt", een introductie). Een presentatrice die in de
+   * character map "hij" heette, werd dat ook in hooks en verhaallijnen.
+   * Twijfel → "onbekend", en dan gebruikt de planner de naam of de rol.
+   */
+  voornaamwoord: z.enum(['hij', 'zij', 'die', 'onbekend']),
   boog: z.string(),
   sleutelmomenten: z.array(sleutelmomentSchema).min(1),
   ironie: z.string(),
@@ -103,6 +110,12 @@ export const scrollStopSchema = z.object({
 });
 export type ScrollStop = z.infer<typeof scrollStopSchema>;
 
+export const kaartSchema = z.object({
+  shot: z.number().int().min(1).describe('volgorde van het shot waarbij de kaart in beeld komt'),
+  tekst: z.string().min(2).max(60).describe('de letterlijke kaarttekst, kort (spreektaal, hoogstens ~8 woorden)'),
+});
+export type PlanKaart = z.infer<typeof kaartSchema>;
+
 export const clipSchema = z.object({
   titel_intern: z.string(),
   structure_type: z.string(),
@@ -175,12 +188,26 @@ export const clipSchema = z.object({
       }),
     )
     .min(2),
-  risico: z.enum(['geen', 'check_regels']),
+  /**
+   * 'merkonveilig': de clip maakt de klant van de campagne, zijn product of
+   * zijn eigen video belachelijk, spreekt hem tegen of betrapt hem op een
+   * fout. Zo'n clip wordt in code geschrapt (pasMerkveiligheidToe).
+   */
+  risico: z.enum(['geen', 'check_regels', 'merkonveilig']),
   waarom_dit_werkt: z.string(),
   muziek: z.string().optional(),
   kader: z.enum(['staand', 'vullend', 'blur', 'origineel']).optional(),
   /** Optioneel: oudere plannen hebben het niet; het examen vult het altijd (zie examenClipSchema). */
   scroll_stop: scrollStopSchema.optional(),
+  /**
+   * Tekstkaarten die de verhaallijn nodig heeft (een rekensom, een
+   * vergelijking), verankerd aan het shot waarbij ze verschijnen. Dit is het
+   * énige kaartveld dat de renderer naast hook, context_kaart en
+   * uitvalrisico's letterlijk tekent; een kaart in edit_notitie bestaat voor
+   * de kijker niet. Aan een shot verankerd, niet aan een seconde: de
+   * retentie-editor knipt pauzes weg en verschuift de tijdlijn.
+   */
+  kaarten: z.array(kaartSchema).optional(),
 });
 
 export const clipPlanSchema = z.object({
@@ -202,8 +229,9 @@ export type ClipPlan = z.infer<typeof clipPlanSchema>;
 export const examenShotSchema = shotSchema.omit({ sfx: true, beeld_effect: true, effect_waarom: true, focus: true });
 export const examenClipSchema = clipSchema
   .omit({ muziek: true, kader: true })
-  // scroll_stop is hier verplicht: optioneel liet het model het weg.
-  .extend({ shots: z.array(examenShotSchema).min(1), scroll_stop: scrollStopSchema });
+  // scroll_stop en kaarten zijn hier verplicht (kaarten mag leeg): optioneel
+  // liet het model ze weg.
+  .extend({ shots: z.array(examenShotSchema).min(1), scroll_stop: scrollStopSchema, kaarten: z.array(kaartSchema) });
 export const examenPlanSchema = z.object({
   clips: z.array(examenClipSchema).min(1),
 });

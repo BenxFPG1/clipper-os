@@ -468,6 +468,41 @@ async function main() {
       toets('druk beeld zonder egale achtergrond → geen inzoom', inhoudsboxUitPixels(ruis, 480, 270) === null);
     }
 
+    // 10. Leestijd: shot A eindigt op een graphic van 1,3 s (bronknip naar
+    //     oranje op 6 s), shot B is spreker. De graphic blijft 0,9 s staan
+    //     over het begin van B; het geluid loopt gewoon door.
+    console.log('leestijd: graphic vasthouden over het volgende shot');
+    {
+      const sceneWerk = join(map, 'scenewerk');
+      if (existsSync(join(sceneWerk, 'bron.mp4'))) {
+        const a: Shot = {
+          volgorde: 1, start: 4, end: 7.3, functie: 'setup', focusX: 0.5, focusW: 0.12,
+          scenes: [{ van: 4, tot: 6, gezicht: true }, { van: 6, tot: 7.3, gezicht: false, leeswoorden: 4 }],
+        };
+        const b: Shot = { volgorde: 2, start: 2, end: 4, functie: 'escalatie', focusX: 0.5, focusW: 0.12 };
+        const uitLees = join(map, 'leestijd.mp4');
+        try {
+          const r = await maakRuweMontage({ sourceUrl: 'lokaal://test', shots: [a, b], alGesegmenteerd: true, outputPad: uitLees, werkmap: sceneWerk, kader: 'vullend' });
+          const p = probe(uitLees);
+          toets('lengte blijft de som van de shots (5,3 s)', Math.abs(p.duur - 5.3) < 0.2, `${p.duur}s`);
+          toets('logregel meldt de verlenging', /1 verlengd/.test(r.kwaliteit.leestijd ?? ''), r.kwaliteit.leestijd ?? '');
+          const kleur = async (t: number) => {
+            const f = join(map, `lees-${t}.raw`);
+            ff(['-ss', t.toFixed(2), '-i', uitLees, '-frames:v', '1', '-vf', 'crop=1080:40:0:940,scale=1:1', '-f', 'rawvideo', '-pix_fmt', 'rgb24', f]);
+            const px = await readFile(f);
+            return [px[0], px[1], px[2]];
+          };
+          const oranje = (c: number[]) => c[0] > 200 && c[1] > 80 && c[1] < 160 && c[2] < 60;
+          const inHold = await kleur(3.3 + 0.5);
+          const naHold = await kleur(3.3 + 1.5);
+          toets('0,5 s in shot B staat de graphic nog (vastgehouden)', oranje(inHold), `rgb ${inHold}`);
+          toets('na de vasthoudtijd is shot B weer de spreker', !oranje(naHold), `rgb ${naHold}`);
+        } catch (e) {
+          toets('render met leestijd slaagt', false, (e as Error).message.slice(-400));
+        }
+      }
+    }
+
     // 8. Ondertitelplek: onder de kin, boven de 78%-grens, nooit over het
     //    gezicht; zonder gezicht op de standaardhoogte.
     console.log('ondertitelplek');

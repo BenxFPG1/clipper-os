@@ -27,67 +27,210 @@ const MEET_B = 480;
 const MEET_H = 270;
 
 /**
- * De inhoudsbox uit één frame (rgb24, w×h). Achtergrond = de mediaankleur van
- * de rand; inhoud = elke pixel die daar duidelijk van afwijkt, minus losse
- * ruispixels. Null als het beeld geen egale achtergrond heeft (dan is er niets
- * om op in te zoomen zonder risico) of als de inhoud al vrijwel het hele vlak
- * vult (dan levert inzoomen niets op).
+ * Box-blur via een integraalbeeld: het gemiddelde over een venster van
+ * (2r+1)² pixels, met de randen afgekapt. Snel genoeg voor een paar passes
+ * op 480x270.
+ */
+function boxBlur(bron: Float32Array, w: number, h: number, r: number): Float32Array {
+  const I = new Float64Array((w + 1) * (h + 1));
+  for (let y = 0; y < h; y++) {
+    let rij = 0;
+    for (let x = 0; x < w; x++) {
+      rij += bron[y * w + x];
+      I[(y + 1) * (w + 1) + x + 1] = I[y * (w + 1) + x + 1] + rij;
+    }
+  }
+  const uit = new Float32Array(w * h);
+  for (let y = 0; y < h; y++) {
+    const y0 = Math.max(0, y - r);
+    const y1 = Math.min(h, y + r + 1);
+    for (let x = 0; x < w; x++) {
+      const x0 = Math.max(0, x - r);
+      const x1 = Math.min(w, x + r + 1);
+      uit[y * w + x] = I[y1 * (w + 1) + x1] - I[y0 * (w + 1) + x1] - I[y1 * (w + 1) + x0] + I[y0 * (w + 1) + x0];
+    }
+  }
+  return uit;
+}
+
+/**
+ * De inhoudsbox uit één frame (rgb24, w×h).
+ *
+ * De achtergrond van een merkgraphic is zelden egaal: een verloop, een
+ * vignet, een lichtvlek in het midden. Een vaste achtergrondkleur (de
+ * mediaan van de rand) zag bij GoldRepublic het hele vlak als "inhoud" en
+ * zoomde nooit in. Nu wordt de achtergrond gemodelleerd als een glad
+ * oppervlak: een zware blur die de inhoud zelf uitsluit (genormaliseerde
+ * convolutie, drie rondes), zodat een verloop wel in het model komt en een
+ * cijfer niet. Inhoud is wat daar lokaal sterk van afwijkt, of wat veel
+ * scherpe randen heeft (kleine, lichte tekst op een lichte achtergrond).
+ *
+ * Genegeerd: losse ruispixels, dunne stroken langs de beeldrand (een zwarte
+ * rand van de bron) en een klein los element in een bovenhoek (een logo of
+ * watermerk) — dat laatste mag buiten beeld vallen, en juist dat logo in de
+ * hoek maakte de box anders altijd beeldbreed.
  */
 export function inhoudsboxUitPixels(rgb: Buffer | Uint8Array, w: number, h: number): Box | null {
+  return analyseerGraphic(rgb, w, h).box;
+}
+
+/**
+ * Box én een schatting van het aantal leeseenheden (woorden, getallen,
+ * grafiekelementen) op de graphic. Geen OCR: elk tekstblok telt naar zijn
+ * vorm — een regel tekst van hoogte h en breedte b is ongeveer b / (4h)
+ * woorden, een groot getal of een balk is één eenheid. Grof, maar het gaat
+ * om de leestijd, niet om de tekst.
+ */
+export function analyseerGraphic(rgb: Buffer | Uint8Array, w: number, h: number): { box: Box | null; woorden: number | null } {
   const drempel = instelling('GRAPHIC_KLEUR_DREMPEL');
-  const rand = Math.max(2, Math.round(Math.min(w, h) * 0.02));
-  const r: number[] = [];
-  const g: number[] = [];
-  const b: number[] = [];
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      if (x >= rand && x < w - rand && y >= rand && y < h - rand) continue;
-      const i = (y * w + x) * 3;
-      r.push(rgb[i]);
-      g.push(rgb[i + 1]);
-      b.push(rgb[i + 2]);
-    }
-  }
-  const mediaan = (xs: number[]) => xs.sort((p, q) => p - q)[Math.floor(xs.length / 2)];
-  const bg = [mediaan(r), mediaan(g), mediaan(b)];
+  const n = w * h;
+  const kanalen = [0, 1, 2].map((c) => {
+    const k = new Float32Array(n);
+    for (let p = 0; p < n; p++) k[c === 0 ? p : p] = rgb[p * 3 + c];
+    return k;
+  });
 
-  const masker = new Uint8Array(w * h);
+  // Achtergrondmodel: genormaliseerde convolutie, inhoud telt niet mee.
+  const r = Math.round(w / 12);
+  let gewicht = new Float32Array(n).fill(1);
+  let achtergrond: Float32Array[] = kanalen;
+  const afwijking = new Float32Array(n);
+  for (let ronde = 0; ronde < 3; ronde++) {
+    const wb = boxBlur(gewicht, w, h, r);
+    achtergrond = kanalen.map((k) => {
+      const gewogen = new Float32Array(n);
+      for (let p = 0; p < n; p++) gewogen[p] = k[p] * gewicht[p];
+      const b = boxBlur(gewogen, w, h, r);
+      for (let p = 0; p < n; p++) b[p] = wb[p] > 1e-3 ? b[p] / wb[p] : k[p];
+      return b;
+    });
+    const nieuw = new Float32Array(n);
+    for (let p = 0; p < n; p++) {
+      afwijking[p] = Math.max(
+        Math.abs(kanalen[0][p] - achtergrond[0][p]),
+        Math.abs(kanalen[1][p] - achtergrond[1][p]),
+        Math.abs(kanalen[2][p] - achtergrond[2][p]),
+      );
+      nieuw[p] = afwijking[p] < drempel * 0.6 ? 1 : 0;
+    }
+    gewicht = nieuw;
+  }
+
+  // Randen: Sobel op de helderheid. Een verloop heeft vrijwel geen rand, tekst veel.
+  const luma = new Float32Array(n);
+  for (let p = 0; p < n; p++) luma[p] = 0.299 * kanalen[0][p] + 0.587 * kanalen[1][p] + 0.114 * kanalen[2][p];
+  const randDrempel = instelling('GRAPHIC_RAND_DREMPEL');
+  const masker = new Uint8Array(n);
   let inhoud = 0;
-  for (let p = 0; p < w * h; p++) {
-    const i = p * 3;
-    const verschil = Math.max(Math.abs(rgb[i] - bg[0]), Math.abs(rgb[i + 1] - bg[1]), Math.abs(rgb[i + 2] - bg[2]));
-    if (verschil > drempel) {
-      masker[p] = 1;
-      inhoud++;
+  // Een smalle band langs de beeldrand telt niet mee: daar zitten
+  // compressieranden, zwarte naden en uitsnede-artefacten, die anders een logo
+  // in de hoek met de rest van de inhoud verbonden. Echte inhoud tot vlak
+  // tegen de rand valt toch binnen beeld: de kadrering zet er marge omheen.
+  const band = Math.max(2, Math.round(Math.min(w, h) * 0.02));
+  for (let y = band; y < h - band; y++) {
+    for (let x = band; x < w - band; x++) {
+      const p = y * w + x;
+      const gx = luma[p - w + 1] + 2 * luma[p + 1] + luma[p + w + 1] - luma[p - w - 1] - 2 * luma[p - 1] - luma[p + w - 1];
+      const gy = luma[p + w - 1] + 2 * luma[p + w] + luma[p + w + 1] - luma[p - w - 1] - 2 * luma[p - w] - luma[p - w + 1];
+      if (afwijking[p] > drempel || Math.hypot(gx, gy) > randDrempel) {
+        masker[p] = 1;
+        inhoud++;
+      }
     }
   }
-  // Geen egale achtergrond: een foto of een druk beeld. Daar is geen veilige
-  // inhoudsgrens te trekken.
-  if (inhoud / (w * h) > 1 - instelling('GRAPHIC_MIN_ACHTERGROND')) return null;
+  // Een druk beeld (foto, video) wijkt overal af van elk glad model: daar is
+  // geen veilige inhoudsgrens te trekken.
+  if (inhoud / n > 1 - instelling('GRAPHIC_MIN_ACHTERGROND')) return { box: null, woorden: null };
 
-  // Losse ruispixels (compressie, een stofje) tellen niet: een pixel hoort bij
-  // de inhoud als minstens twee buren dat ook doen. Een lijn van één pixel
-  // dik (een as, een onderstreping) overleeft dat.
-  let x0 = w;
-  let y0 = h;
-  let x1 = -1;
-  let y1 = -1;
+  // Ruis eruit, dan tekst tot blokken laten samengroeien (een woord is een
+  // blok, geen losse letters) en de blokken als componenten tellen.
+  const schoon = new Uint8Array(n);
   for (let y = 1; y < h - 1; y++) {
     for (let x = 1; x < w - 1; x++) {
-      if (!masker[y * w + x]) continue;
+      const p = y * w + x;
+      if (!masker[p]) continue;
       let buren = 0;
-      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) if ((dx || dy) && masker[(y + dy) * w + x + dx]) buren++;
-      if (buren < 2) continue;
-      if (x < x0) x0 = x;
-      if (x > x1) x1 = x;
-      if (y < y0) y0 = y;
-      if (y > y1) y1 = y;
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) if ((dx || dy) && masker[p + dy * w + dx]) buren++;
+      if (buren >= 2) schoon[p] = 1;
     }
   }
-  if (x1 < 0) return null;
-  const box = { x0: x0 / w, y0: y0 / h, x1: (x1 + 1) / w, y1: (y1 + 1) / h };
-  if ((box.x1 - box.x0) * (box.y1 - box.y0) > 0.92) return null;
-  return box;
+  const groei = 3;
+  const blok = new Uint8Array(n);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      if (!schoon[y * w + x]) continue;
+      for (let dy = -groei; dy <= groei; dy++) {
+        const yy = y + dy;
+        if (yy < 0 || yy >= h) continue;
+        for (let dx = -groei; dx <= groei; dx++) {
+          const xx = x + dx;
+          if (xx >= 0 && xx < w) blok[yy * w + xx] = 1;
+        }
+      }
+    }
+  }
+  const label = new Int32Array(n).fill(-1);
+  const componenten: { x0: number; y0: number; x1: number; y1: number; pixels: number }[] = [];
+  const stapel: number[] = [];
+  for (let start = 0; start < n; start++) {
+    if (!blok[start] || label[start] >= 0) continue;
+    const c = { x0: w, y0: h, x1: -1, y1: -1, pixels: 0 };
+    const id = componenten.length;
+    label[start] = id;
+    stapel.push(start);
+    while (stapel.length) {
+      const p = stapel.pop() as number;
+      const x = p % w;
+      const y = (p - x) / w;
+      if (schoon[p]) {
+        c.pixels++;
+        if (x < c.x0) c.x0 = x;
+        if (x > c.x1) c.x1 = x;
+        if (y < c.y0) c.y0 = y;
+        if (y > c.y1) c.y1 = y;
+      }
+      for (const q of [x > 0 ? p - 1 : -1, x < w - 1 ? p + 1 : -1, y > 0 ? p - w : -1, y < h - 1 ? p + w : -1]) {
+        if (q >= 0 && blok[q] && label[q] < 0) {
+          label[q] = id;
+          stapel.push(q);
+        }
+      }
+    }
+    if (c.x1 >= 0) componenten.push(c);
+  }
+
+  const hoek = instelling('GRAPHIC_HOEK');
+  const echt = componenten.filter((c) => {
+    if (c.pixels < 8) return false;
+    const bx0 = c.x0 / w;
+    const bx1 = (c.x1 + 1) / w;
+    const by0 = c.y0 / h;
+    const by1 = (c.y1 + 1) / h;
+    // Een dunne strook langs de beeldrand: een zwarte rand of een naad van de bron.
+    const langsRand = (bx0 < 0.02 || bx1 > 0.98) && bx1 - bx0 < 0.03;
+    const langsBoven = (by0 < 0.02 || by1 > 0.98) && by1 - by0 < 0.03;
+    if (langsRand || langsBoven) return false;
+    // Een klein los element in een bovenhoek: logo of watermerk. Alleen
+    // bovenin: onderin staan bronvermeldingen en voetnoten ("BRON: CBS"), en
+    // die mogen nooit wegvallen.
+    const inHoek = (bx1 < hoek || bx0 > 1 - hoek) && by1 < hoek;
+    if (inHoek && (bx1 - bx0) * (by1 - by0) < 0.02) return false;
+    return true;
+  });
+  if (echt.length === 0) return { box: null, woorden: 0 };
+  const woorden = echt.reduce((t, c) => {
+    const bw = c.x1 - c.x0 + 1;
+    const bh = c.y1 - c.y0 + 1;
+    return t + Math.max(1, Math.round(bw / (4 * bh)));
+  }, 0);
+  const box = {
+    x0: Math.min(...echt.map((c) => c.x0)) / w,
+    y0: Math.min(...echt.map((c) => c.y0)) / h,
+    x1: (Math.max(...echt.map((c) => c.x1)) + 1) / w,
+    y1: (Math.max(...echt.map((c) => c.y1)) + 1) / h,
+  };
+  if ((box.x1 - box.x0) * (box.y1 - box.y0) > 0.92) return { box: null, woorden };
+  return { box, woorden };
 }
 
 /** De kleinste box die beide omvat; null blijft null (één onbetrouwbare meting maakt het geheel onbetrouwbaar). */
@@ -105,15 +248,26 @@ export function unie(boxen: (Box | null)[]): Box | null {
 /** Meet de inhoudsbox op een reeks brontijden en neemt de unie: animatie die op één frame nog niet in beeld is valt zo niet weg. */
 export type InhoudMeter = (tijden: number[]) => Promise<Box | null>;
 
-export function inhoudMeterVia(bron: string): InhoudMeter {
+/** Box (unie) plus het grootste aantal leeseenheden over de frames: een animatie die tekst laat verschijnen telt volledig. */
+export type GraphicMeter = (tijden: number[]) => Promise<{ box: Box | null; woorden: number | null }>;
+
+export function graphicMeterVia(bron: string): GraphicMeter {
   return async (tijden) => {
     const boxen: (Box | null)[] = [];
+    const woorden: number[] = [];
     for (const t of tijden) {
       const rgb = await frameRgb(bron, t);
-      boxen.push(rgb && rgb.length === MEET_B * MEET_H * 3 ? inhoudsboxUitPixels(rgb, MEET_B, MEET_H) : null);
+      const a = rgb && rgb.length === MEET_B * MEET_H * 3 ? analyseerGraphic(rgb, MEET_B, MEET_H) : { box: null, woorden: null };
+      boxen.push(a.box);
+      if (a.woorden !== null) woorden.push(a.woorden);
     }
-    return unie(boxen);
+    return { box: unie(boxen), woorden: woorden.length ? Math.max(...woorden) : null };
   };
+}
+
+export function inhoudMeterVia(bron: string): InhoudMeter {
+  const meter = graphicMeterVia(bron);
+  return async (tijden) => (await meter(tijden)).box;
 }
 
 function frameRgb(bron: string, t: number): Promise<Buffer | null> {

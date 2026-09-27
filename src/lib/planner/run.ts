@@ -26,7 +26,7 @@ export async function runPlannerForVideo(
 
   const { data: video, error } = await supabase
     .from('videos')
-    .select('*, campaigns(platform_rules, theme)')
+    .select('*, campaigns(name, platform_rules, theme)')
     .eq('id', videoId)
     .single();
   if (error) throw error;
@@ -36,7 +36,7 @@ export async function runPlannerForVideo(
   const durationSeconds = video.duration_seconds ?? Math.round(transcriptDuration(transcript));
   // Een clip-plan is niet platformgebonden (dezelfde clip gaat naar TikTok,
   // Reels en Shorts), maar wel themagebonden.
-  const campaign = video.campaigns as { platform_rules?: unknown; theme?: string | null } | null;
+  const campaign = video.campaigns as { name?: string | null; platform_rules?: unknown; theme?: string | null } | null;
   const vault = await loadVault({ theme: campaign?.theme ?? null });
 
   // De oor-laag (bouwsteen A): best-effort, en gecached net als de character
@@ -51,8 +51,16 @@ export async function runPlannerForVideo(
     await supabase.from('videos').update({ energie_momenten: energie }).eq('id', videoId);
   }
 
+  // Een gecachte character map van vóór charmap-3.2 kent geen voornaamwoorden
+  // (daar heette een presentatrice "hij"); die wordt eenmalig opnieuw gemaakt.
+  const cacheBruikbaar =
+    Boolean(video.character_map) &&
+    ((video.character_map as { personen?: { voornaamwoord?: string }[] }).personen ?? []).every((p) => Boolean(p.voornaamwoord));
+  if (video.character_map && !cacheBruikbaar && !options?.opnieuwAnalyseren) {
+    console.log('[planner] character map zonder voornaamwoorden (van vóór charmap-3.2): opnieuw analyseren');
+  }
   const characterMap =
-    !options?.opnieuwAnalyseren && video.character_map
+    !options?.opnieuwAnalyseren && cacheBruikbaar
       ? video.character_map
       : await generateCharacterMap({
           title: video.title,
@@ -76,6 +84,7 @@ export async function runPlannerForVideo(
     durationSeconds,
     transcript,
     campaignRules: campaign?.platform_rules ?? {},
+    campaignName: campaign?.name ?? null,
     vault,
     characterMap,
     energie,

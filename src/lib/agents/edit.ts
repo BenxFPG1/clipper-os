@@ -9,7 +9,7 @@ import { EFFECTEN } from '../vault/effecten';
 import { geleerdeKennis } from '../vault/kennis';
 import { editNormenVoorPrompt, type NormContext } from '../vault/normen';
 
-export const EDIT_PROMPT_VERSIE = 'edit-1.2';
+export const EDIT_PROMPT_VERSIE = 'edit-1.3';
 
 /**
  * Wat de render werkelijk kan uitvoeren. De effectenvault beschrijft ook
@@ -101,6 +101,7 @@ Werk de zeven stappen af in volgorde en denk per shot:
 - Kies alleen ingrepen uit de effectenvault hieronder: die lijst is precies wat de render kan uitvoeren. Een slug die er niet in staat wordt genegeerd.
 - Verdient dit shot een ingreep, of redt het zich? Hoogstens twee ingrepen per shot; een ingreep zonder functie kost aandacht.
 - Is dit een tijdsprong? Dan verplicht een tekstkaart met de sprong erop.
+- "plankaarten" staan al vast (de verhaallijn heeft ze nodig) en worden getekend bij hun shot: zet op die shots geen eigen tekstkaart.
 - Kader: verticaal beeld hoort gevuld. "vullend" is de norm; "blur" alleen als de uitsnede echt iets belangrijks afsnijdt (twee mensen naast elkaar, tekst in beeld). Zwarte balken bestaan niet.
 - Waar valt de muziek weg? Op de payoff of een vragende beat — dat is het moment dat je groot maakt.
 - Retentie: per clip krijg je een gemeten risicosamenvatting ("retentie": waar de kijker volgens de meting afhaakt, per shot en seconde, met de reden). De render knipt pauzes zelf weg en zet zelf kaderwissels waar het beeld te lang stilstaat — dat hoef jij niet te doen. Jouw taak is kiezen WAAR een ingreep het verschil maakt, niet hoeveel: leg sfx, beeldingrepen en kaarten op de shots met een risicopiek, en laat shots zonder risico met rust ("geen"). Geef een "rehook" als er een risicopiek vóór de payoff zit die een regel tekst kan dichten.
@@ -142,6 +143,7 @@ export async function runEditAgent(
   const clips = ((planRij.plan as { clips?: unknown[] }).clips ?? []) as {
     titel_intern: string;
     hook?: { tekst_overlay?: string };
+    kaarten?: { shot: number; tekst: string }[];
     shots: { volgorde: number; functie: string; start: number; end: number; transcript_fragment?: string; edit_notitie?: string }[];
   }[];
   if (clips.length === 0) throw new Error('Het plan bevat geen clips.');
@@ -174,6 +176,8 @@ export async function runEditAgent(
       };
     }),
     ...(opties.retentie?.[i + 1] ? { retentie: opties.retentie[i + 1] } : {}),
+    // Kaarten die de verhaallijn draagt: die tekent de render al.
+    ...(c.kaarten?.length ? { plankaarten: c.kaarten } : {}),
   }));
 
   // Wat top-clips van anderen meetbaar doen: de doelen waar de retentie-editor

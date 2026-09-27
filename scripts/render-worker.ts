@@ -25,6 +25,7 @@ import {
   hookDuur,
   kleurUitThumbnail,
   kaartenMap,
+  planKaartenOpTijdlijn,
   type Huisstijl,
 } from '../src/lib/roughcut/tekstkaarten';
 import { controleerAssFont, maakOndertitels, type Ondertitels } from '../src/lib/roughcut/ondertitels';
@@ -178,6 +179,8 @@ async function verwerk(job: Job) {
     hooks?: { tekst_overlay?: string; type?: string }[];
     context_kaart?: string | null;
     uitval_risicos?: { seconde: number; waarom: string; fix: string }[];
+    /** Kaarten die de verhaallijn nodig heeft, verankerd aan een shot (plan-6.3). */
+    kaarten?: { shot: number; tekst: string }[];
     kader?: 'staand' | 'vullend' | 'blur' | 'origineel';
     muziek?: string;
   }[];
@@ -737,6 +740,11 @@ async function verwerk(job: Job) {
         .filter((k): k is { i: number; tekst: string; seconde: number } =>
           Boolean(k.tekst) && k.seconde >= hookTot + 1 && k.seconde <= totaal - 1.5,
         );
+    // Plankaarten: aan het begin van hun shot (het eerste segment met dat
+    // volgnummer — retentiedelen en sprekerswissels hebben een fractie erachter),
+    // op de huidige segmenten uitgerekend zodat ze elke tijdlijnverschuiving
+    // volgen.
+    const planKaarten = () => planKaartenOpTijdlijn(segmenten, clip.kaarten ?? [], hookTot);
     // Gevuld door de retentie-editor verderop; de re-hookkaart gaat mee in de overlays.
     let retentie: RetentieResultaat | null = null;
     let retentieKaarten: Kaart[] = [];
@@ -761,6 +769,11 @@ async function verwerk(job: Job) {
         const pad = join(kaartMap, `c${nummer}-rehook-${i}.png`);
         await tekenKaart(tekst, pad, stijl);
         overlays.push({ pad, start: seconde, end: Math.min(totaal, seconde + 2.0) });
+      }
+      for (const [i, k] of planKaarten().entries()) {
+        const pad = join(kaartMap, `c${nummer}-plankaart-${i}.png`);
+        await tekenKaart(k.tekst, pad, stijl);
+        overlays.push({ pad, start: k.start, end: k.end });
       }
       // De re-hook van de retentie-editor: in het zwaarste risicogat vóór de
       // payoff, niet op een vaste seconde.
@@ -787,6 +800,11 @@ async function verwerk(job: Job) {
       return overlays.filter((o) => o.end - o.start >= 0.5);
     };
 
+    if (clip.kaarten?.length) {
+      const k = planKaarten();
+      console.log(`     plankaarten: ${k.length}/${clip.kaarten.length} getekend (${k.map((x) => `"${x.tekst}" op ${x.start.toFixed(1)} s`).join(', ')})`);
+    }
+
     // RETENTIE. Per halve seconde voorspellen waar de kijker afhaakt en daar
     // ingrijpen: pauzes boven het doel weg als jump-cut op woordgrenzen,
     // kaderwissels waar het beeld te lang stilstaat, de eerste wissel binnen
@@ -799,6 +817,7 @@ async function verwerk(job: Job) {
         ...(hookTot > 0 ? [{ start: 0, end: hookTot }] : []),
         ...(clip.context_kaart ? [{ start: hookTot + 0.3, end: Math.min(totaal, hookTot + 2.5), tekst: clip.context_kaart }] : []),
         ...uitvalKaarten(totaal).map((k) => ({ start: k.seconde, end: Math.min(totaal, k.seconde + 2), tekst: k.tekst })),
+        ...planKaarten(),
       ];
       retentieKaarten = vast;
       // Kandidaten voor de re-hook: eerst die van de edit-agent (die kent de
@@ -1337,6 +1356,8 @@ async function verwerk(job: Job) {
       if (hookTeksten.length > 1) console.log(`     ${varianten.length} hookvarianten gebrand (hook ${hookDuur(hookTeksten[0]).toFixed(1)}s in beeld)`);
       montage = { ...montage, pad: lokaal };
     }
+
+    if (montage.kwaliteit.leestijd) console.log(`     ${montage.kwaliteit.leestijd}`);
 
     // De kwaliteitsregel: alles wat bepaalt of de clip op een telefoon scherp
     // en leesbaar oogt, op één regel — bron, opschaling, ondertitel, kaders

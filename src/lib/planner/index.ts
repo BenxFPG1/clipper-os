@@ -11,7 +11,13 @@ import {
   planExamenSystem,
   schetsSystem,
 } from './prompts';
-import { keurVerhaaldokter, rapportVoorPrompt } from './verhaaldokterpoort';
+import {
+  gesprokenTekst,
+  keurVerhaaldokter,
+  pasMerkveiligheidToe,
+  rapportVoorPrompt,
+  renderbareTekst,
+} from './verhaaldokterpoort';
 import { editNormenVoorPrompt } from '../vault/normen';
 import {
   MAX_BEELD_KANDIDATEN,
@@ -42,6 +48,12 @@ export type PlannerInput = {
   durationSeconds: number | null;
   transcript: TranscriptSegment[];
   campaignRules: unknown;
+  /**
+   * Naam van de campagne (klant/sponsor). Is die er, dan is de bronvideo
+   * meestal van de klant zelf en geldt de merkveiligheidsregel: geen clip die
+   * de klant, zijn product of zijn eigen video op een fout betrapt.
+   */
+  campaignName?: string | null;
   vault: VaultSnapshot;
   /**
    * Optioneel, voor de signalenlaag (signalen.ts): de energiemeting, de
@@ -105,7 +117,7 @@ export async function generateClipPlan(
       transcript: renderTranscript(input.transcript),
       characterMapJson: JSON.stringify(input.characterMap),
       vaultText: renderVaultForPrompt(input.vault),
-      campaignRulesJson: JSON.stringify(input.campaignRules ?? {}, null, 2),
+      campaignRulesJson: JSON.stringify(input.campaignRules ?? {}, null, 2) + campagneRegel(input.campaignName),
     }),
     schema: schetsPlanSchema,
     toolName: 'lever_schets',
@@ -135,6 +147,7 @@ export async function generateClipPlan(
   // stilte vóór de onthulling, tempo, reacties, vraag→antwoord, dode woorden)
   // en — alleen als de bron lokaal staat — een beeldoordeel op de hook.
   const signalen = await verzamelSignalen(schets.clips, input);
+  const campagneBlok = campagneRegel(input.campaignName);
   const normenTekst = await editNormenVoorPrompt({ platform: input.vault.platform, theme: input.vault.theme }).catch(() => '');
   const bijAnderen = watWerktBijAnderen(input.vault, normenTekst);
 
@@ -144,12 +157,12 @@ export async function generateClipPlan(
 Duur: ${input.durationSeconds ? `${input.durationSeconds} seconden` : 'onbekend'}
 
 === CAMPAGNEREGELS ===
-${JSON.stringify(input.campaignRules ?? {}, null, 2)}
+${JSON.stringify(input.campaignRules ?? {}, null, 2)}${campagneBlok}
 
 === VAULT ===
 ${renderVaultForPrompt(input.vault)}
 
-=== CHARACTER MAP (de narratieve analyse van de hele video, met tijdcodes) ===
+=== CHARACTER MAP (de narratieve analyse van de hele video, met tijdcodes; gebruik per persoon het voornaamwoord dat hier staat) ===
 ${JSON.stringify(input.characterMap)}
 
 === SCHETS (de brede kandidatenset; snoei eerst, werk daarna alleen de overlevers uit) ===
@@ -183,10 +196,19 @@ ${signalenVoorPrompt(signalen) || '(geen meetdata beschikbaar)'}${
   // stuurde).
   const gecapt = pasScrollStopToe(examined);
   if (gecapt > 0) console.log(`[planner] scroll-stop: score van ${gecapt} clip(s) begrensd`);
+  {
+    const veilig = pasMerkveiligheidToe(examined);
+    if (veilig.geschrapt.length) {
+      console.log(`[planner] merkveiligheid: ${veilig.geschrapt.length} clip(s) geschrapt (${veilig.geschrapt.join('; ')})`);
+      examined.clips = veilig.plan.clips;
+    }
+  }
 
   let doctored = examined;
   try {
-    const signalenRapport = rapportVoorPrompt(keurVerhaaldokter(examined));
+    const rapport = keurVerhaaldokter(examined, { campagneNaam: input.campaignName });
+    const signalenRapport = rapportVoorPrompt(rapport);
+    if (rapport.signalen.length) console.log(`[planner] verhaaldokterpoort: ${rapport.signalen.length} signaal/signalen (uitvoerbaarheid, merk, omslag)`);
     // Opnieuw meten op de geëxamineerde shots (die kunnen verschoven zijn); het
     // beeldoordeel reist mee op titel, want dat kost een call en verandert niet.
     const beeldOpTitel = new Map(signalen.filter((s) => s.beeld).map((s) => [s.titel, s.beeld]));
@@ -197,15 +219,20 @@ ${signalenVoorPrompt(signalen) || '(geen meetdata beschikbaar)'}${
       score: clip.score,
       scroll_stop: clip.scroll_stop ?? null,
       verhaallijn: clip.verhaallijn,
+      // Precies wat een kijker krijgt: wat er klinkt (en als ondertitel in
+      // beeld staat) en welke tekst er getekend wordt. De boog moet hieruit
+      // te volgen zijn, niet uit edit_notitie.
+      wat_de_kijker_hoort: gesprokenTekst(clip).slice(0, 1500),
+      wat_de_kijker_leest: renderbareTekst(clip),
       meetdata: signaalRegel({ ...naExamen[i], beeld: beeldOpTitel.get(clip.titel_intern) ?? null }),
       transcript: transcriptRondShots(clip.shots, input.transcript),
     }));
 
     const diff: VerhaaldokterDiff = await structuredCall({
       system: VERHAALDOKTER_SYSTEM + bijgeleerd,
-      user: `Video: ${input.title}
+      user: `Video: ${input.title}${campagneBlok}
 
-=== CHARACTER MAP (met "reveals" — herinterpretaties die de payoff kan gebruiken) ===
+=== CHARACTER MAP (met "reveals" — herinterpretaties die de payoff kan gebruiken; voornaamwoorden per persoon) ===
 ${JSON.stringify(input.characterMap)}
 
 === CLIPS (na het toernooi; per clip de verhaallijn, de score en het brontranscript rond de shots) ===
@@ -222,11 +249,23 @@ ${JSON.stringify(perClip, null, 1)}${signalenRapport}${
     doctored = pasVerhaaldokterToe(examined, diff);
     // De dokter mag de score herzien, maar niet boven wat de opening toelaat.
     pasScrollStopToe(doctored);
+    doctored = pasMerkveiligheidToe(doctored).plan;
   } catch (err) {
     console.warn('[planner] verhaaldokter-pass mislukt, geëxamineerd plan behouden:', (err as Error).message);
   }
 
   return repairPlan(doctored, input);
+}
+
+/**
+ * De harde merkveiligheidsregel als promptblok; leeg zonder campagne.
+ */
+export function campagneRegel(naam?: string | null): string {
+  if (!naam) return '';
+  return `
+
+=== CAMPAGNE: ${naam} (HARDE REGEL) ===
+Deze clips worden gemaakt voor ${naam}; de bronvideo is vrijwel zeker van ${naam} zelf. Geen enkele clip mag ${naam}, zijn product, zijn mensen of zijn eigen video belachelijk maken, tegenspreken of op een fout betrappen — ook niet als het verhaal klopt en ook niet als "eerlijke kritiek". Een clip die daar op leunt krijgt risico "merkonveilig" (en wordt dan geschrapt) of je bouwt hem om naar een invalshoek die de boodschap van ${naam} draagt.`;
 }
 
 /**

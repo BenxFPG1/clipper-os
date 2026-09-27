@@ -288,6 +288,34 @@ export async function tekenKaart(ruweTekst: string, pad: string, stijl?: Huissti
 }
 
 /**
+ * Plankaarten (plan-6.3, `clip.kaarten`) op de tijdlijn: aan het begin van
+ * hun shot — het eerste segment met dat volgnummer; retentiedelen en
+ * sprekerswissels hebben een fractie erachter — en nooit onder de hook.
+ * Uitgerekend op de huidige segmenten, zodat een kaart elke
+ * tijdlijnverschuiving (pauzes weg, aanloop ingekort) volgt.
+ */
+export function planKaartenOpTijdlijn(
+  segmenten: { volgorde: number; start: number; end: number; tease?: boolean }[],
+  kaarten: { shot: number; tekst: string }[],
+  hookTot = 0,
+): { tekst: string; start: number; end: number }[] {
+  const totaal = segmenten.reduce((t, sg) => t + (sg.end - sg.start), 0);
+  const uit: { tekst: string; start: number; end: number }[] = [];
+  for (const k of kaarten) {
+    let cursor = 0;
+    for (const sg of segmenten) {
+      if (Math.floor(sg.volgorde) === k.shot && !sg.tease) {
+        const start = Math.max(hookTot, cursor + 0.2);
+        if (start < totaal - 0.8) uit.push({ tekst: k.tekst, start, end: Math.min(totaal, start + 2.4) });
+        break;
+      }
+      cursor += sg.end - sg.start;
+    }
+  }
+  return uit;
+}
+
+/**
  * Hoe lang de hookkaart in beeld blijft: lang genoeg om te lezen. Een vaste
  * 2,6 s was voor een hook van twaalf woorden te kort en voor drie woorden te
  * lang; de leestijd per woord is de maat.

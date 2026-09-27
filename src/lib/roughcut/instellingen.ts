@@ -120,8 +120,12 @@ const STANDAARD = {
    * achtergrond voor een betrouwbare meting, de marge rond de inhoud, en de
    * maximale inzoom ten opzichte van een 1080p-bron.
    */
-  GRAPHIC_KLEUR_DREMPEL: 40,
+  GRAPHIC_KLEUR_DREMPEL: 36,
   GRAPHIC_MIN_ACHTERGROND: 0.4,
+  /** Randsterkte (Sobel op helderheid, 0..~1400) waarboven een pixel tot tekst of een lijn hoort. */
+  GRAPHIC_RAND_DREMPEL: 160,
+  /** Een klein los element binnen deze fractie van een hoek is een logo/watermerk en mag buiten beeld. */
+  GRAPHIC_HOEK: 0.25,
   GRAPHIC_MARGE: 0.06,
   GRAPHIC_MAX_OPSCHAAL: 3,
 
@@ -136,6 +140,22 @@ const STANDAARD = {
   RENDERBRON_MAX_HOOGTE: 2160,
   RENDERBRON_TIMEOUT: 300,
   RENDERBRON_MIN_CORRELATIE: 0.6,
+
+  /**
+   * Leestijd van graphics: basis plus per leeseenheid (woord, getal), met een
+   * terugval als er niet geteld kon worden en een plafond. Is een graphic in
+   * de bron korter, dan blijft hij staan (laatste frame) terwijl het geluid
+   * doorloopt — hoogstens GRAPHIC_MAX_HOLD, en de spreker nooit langer dan
+   * GRAPHIC_MAX_ONZICHTBAAR weg als er een punchline (payoff/barst) volgt;
+   * van het volgende deelstuk blijft minstens GRAPHIC_MIN_REST over.
+   */
+  GRAPHIC_LEES_BASIS: 1.2,
+  GRAPHIC_LEES_PER_WOORD: 0.25,
+  GRAPHIC_LEES_TERUGVAL_WOORDEN: 4,
+  GRAPHIC_LEES_MAX: 4,
+  GRAPHIC_MAX_HOLD: 2.5,
+  GRAPHIC_MAX_ONZICHTBAAR: 3,
+  GRAPHIC_MIN_REST: 0.8,
 
   /** Opschalen: vanaf deze factor een milde verscherping (lanczos schaalt altijd). */
   OPSCHAAL_VERSCHERP_VANAF: 1.1,

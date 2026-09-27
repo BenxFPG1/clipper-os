@@ -10,6 +10,7 @@ import { basisZoom, type BurnOverlay, type Shot } from './index';
 import { uitsnedeVan } from './kadercontrole';
 import { deelstukken } from './scenes';
 import { inhoudOpBeeld } from './graphics';
+import { leestijdPlan, vastgehoudenOp } from './leestijd';
 import type { Kader } from './kader';
 import type { BronWoord } from './woorden';
 
@@ -311,6 +312,9 @@ export function plaatsRegels(
   }
   const plaatsing: number[] = [];
   const plekken: Plek[] = [];
+  // Tijdens een vastgehouden graphic (leestijd) staat de graphic nog in
+  // beeld, ook al hoort de tijd al bij het volgende deelstuk.
+  const lees = leestijdPlan(segmenten, kader);
   for (const regel of regels) {
     // Het gezicht op een paar momenten binnen de regel: begin, midden, eind.
     let boven = Infinity;
@@ -318,7 +322,12 @@ export function plaatsRegels(
     for (const t of [regel.s + 0.05, (regel.s + regel.e) / 2, regel.e - 0.05]) {
       const i = begin.findIndex((b, k) => t >= b && t < b + (segmenten[k].end - segmenten[k].start));
       if (i < 0) continue;
-      const g = gezichtOpBeeld(segmenten[i], kader, segmenten[i].start + (t - begin[i]));
+      const vast = vastgehoudenOp(lees, t);
+      const g = vast
+        ? vast.inhoud
+          ? inhoudOpBeeld(vast.inhoud)
+          : null
+        : gezichtOpBeeld(segmenten[i], kader, segmenten[i].start + (t - begin[i]));
       if (!g) continue;
       boven = Math.min(boven, g.boven * H);
       onder = Math.max(onder, g.onder * H);

@@ -10,6 +10,7 @@ import { encodePreset, instelling } from './instellingen';
 import { assFilter } from './ondertitels';
 import { deelstukken, type Scene } from './scenes';
 import { inhoudKader } from './graphics';
+import { leesLogregel, leestijdPlan } from './leestijd';
 import { haalRenderSecties, sectiePlan, sectieTijd, sectieVoor, type RenderBron } from './renderbron';
 
 export type Shot = {
@@ -289,6 +290,10 @@ export async function maakRuweMontage(opties: {
     }
   }
   let shotsUitSectie = 0;
+  // Leestijd van graphics: welk deelstuk vastgehouden wordt en welk volgend
+  // deelstuk daarvoor aan zijn begin inlevert (leestijd.ts).
+  const lees = leestijdPlan(gesorteerd, kader);
+  kwaliteit.leestijd = leesLogregel(lees);
 
   gesorteerd.forEach((shot, i) => {
     const duur = shot.end - shot.start;
@@ -374,19 +379,26 @@ export async function maakRuweMontage(opties: {
       '-t', (duur + handleVoor + handleNa).toFixed(3),
       '-i', invoerBestand,
     );
-    if (delen.length === 1) {
+    const aanpassing = delen.map((_, k) => lees.aanpassing.get(`${i}:${k}`) ?? { vasthouden: 0, inkorten: 0 });
+    if (delen.length === 1 && aanpassing[0].vasthouden === 0 && aanpassing[0].inkorten === 0) {
       delenVideo.push(
         `[${i * 2}:v]setpts=PTS-STARTPTS,fps=${fpsUit},${ketenVoor(delen[0])}${effect ? `,${effect}` : ''},setsar=1[v${i}]`,
       );
     } else {
       // Eén invoer, gesplitst en per deelstuk getrimd: het geluid blijft één
       // doorlopende invoer, alleen de beeldketen wisselt op de bronknip.
+      // Leestijd: een graphic houdt zijn laatste frame vast (tpad), het
+      // deelstuk erna begint zoveel later in de bron — zo blijft elk beeld op
+      // zijn eigen brontijd en loopt het geluid ongemoeid door.
       const labels = delen.map((_, k) => `v${i}d${k}`);
       let graaf = `[${i * 2}:v]setpts=PTS-STARTPTS,fps=${fpsUit},split=${delen.length}${labels.map((l) => `[${l}i]`).join('')}`;
       delen.forEach((deel, k) => {
+        const { vasthouden, inkorten } = aanpassing[k];
+        const van = deel.van + inkorten;
+        const vast = vasthouden > 0 ? `,tpad=stop_mode=clone:stop_duration=${vasthouden.toFixed(3)}` : '';
         graaf +=
-          `;[${labels[k]}i]trim=start=${deel.van.toFixed(3)}:end=${deel.tot.toFixed(3)},setpts=PTS-STARTPTS,` +
-          `${ketenVoor(deel)},setsar=1[${labels[k]}]`;
+          `;[${labels[k]}i]trim=start=${van.toFixed(3)}:end=${deel.tot.toFixed(3)},setpts=PTS-STARTPTS,` +
+          `${ketenVoor({ ...deel, van })}${vast},setsar=1[${labels[k]}]`;
       });
       graaf += `;${labels.map((l) => `[${l}]`).join('')}concat=n=${delen.length}:v=1:a=0${effect ? `,${effect}` : ''},setsar=1[v${i}]`;
       delenVideo.push(graaf);
@@ -660,6 +672,8 @@ export type RenderKwaliteit = {
   graphicDelen: number;
   /** Graphic-deelstukken die op hun gemeten inhoud zijn ingezoomd. */
   graphicsIngezoomd: number;
+  /** De leestijd-logregel (leestijd.ts). */
+  leestijd?: string;
   renderbron: {
     secties: { resolutie: string; codec: string; mb: number }[];
     mbGedownload: number;

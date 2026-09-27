@@ -3,7 +3,7 @@ import { resolveBinary } from '../ingest/binaries';
 import { instelling } from './instellingen';
 import type { Kader } from './kader';
 import type { Shot } from './index';
-import { inhoudMeterVia, type Box, type InhoudMeter } from './graphics';
+import { graphicMeterVia, type Box, type GraphicMeter } from './graphics';
 
 /**
  * Kaderkeuze per scène binnen een shot.
@@ -27,10 +27,12 @@ export type Scene = {
   gezicht: boolean | null;
   /** Bij een scène zonder gezicht: de gemeten inhoud van de graphic (graphics.ts); null = geen betrouwbare meting. */
   inhoud?: Box | null;
+  /** Geschat aantal leeseenheden op de graphic (woorden, getallen); bepaalt de leestijd. */
+  leeswoorden?: number | null;
 };
 
 /** Een deelstuk van een shot in shot-tijd (0 = begin van het shot), met het kader dat de render gebruikt. */
-export type Deelstuk = { van: number; tot: number; kader: Kader; gezicht: boolean | null; inhoud?: Box | null };
+export type Deelstuk = { van: number; tot: number; kader: Kader; gezicht: boolean | null; inhoud?: Box | null; leeswoorden?: number | null };
 
 /**
  * Het kader voor een shot als geheel — de regel van vóór de deelstukken: het
@@ -70,6 +72,7 @@ export function deelstukken(shot: Shot, kader: Kader): Deelstuk[] {
       tot: Math.min(duur, s.tot - shot.start),
       gezicht: s.gezicht,
       inhoud: s.inhoud ?? null,
+      leeswoorden: s.leeswoorden ?? null,
     }))
     .sort((a, b) => a.van - b.van);
   // Gaten dichten en de randen op de shotgrenzen: de poort en de
@@ -222,9 +225,9 @@ export async function vulScenes(
   bron: string,
   segmenten: Shot[],
   meter: GezichtMeter,
-  opties: { inhoudMeter?: InhoudMeter } = {},
+  opties: { graphicMeter?: GraphicMeter } = {},
 ): Promise<{ shots: number; persoon: number; graphic: number; ingezoomd: number; metingen: number; overgangen: number; ms: number }> {
-  const inhoudMeter = opties.inhoudMeter ?? inhoudMeterVia(bron);
+  const graphicMeter = opties.graphicMeter ?? graphicMeterVia(bron);
   let ingezoomd = 0;
   const begin = Date.now();
   const stap = instelling('SCENE_STAP');
@@ -277,7 +280,9 @@ export async function vulScenes(
         // die op één frame nog niet volledig in beeld is valt zo niet weg.
         // Wegblijven van de randen: daar loopt de overgang nog.
         const d = scene.tot - scene.van;
-        scene.inhoud = await inhoudMeter([0.25, 0.5, 0.75].map((f) => scene.van + d * f));
+        const meting = await graphicMeter([0.25, 0.5, 0.75].map((f) => scene.van + d * f));
+        scene.inhoud = meting.box;
+        scene.leeswoorden = meting.woorden;
         if (scene.inhoud) ingezoomd++;
       }
       seg.scenes.push(scene);
