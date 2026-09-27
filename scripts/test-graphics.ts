@@ -69,7 +69,7 @@ console.log('leestijd');
   // aan zijn begin in.
   const a: Shot = {
     volgorde: 1, start: 4, end: 7.3, functie: 'setup',
-    scenes: [{ van: 4, tot: 6, gezicht: true }, { van: 6, tot: 7.3, gezicht: false, leeswoorden: 4 }],
+    scenes: [{ van: 4, tot: 6, gezicht: true }, { van: 6, tot: 7.3, gezicht: false, leeswoorden: 4, bevries: 7.2 }],
   };
   const b: Shot = { volgorde: 2, start: 3, end: 5, functie: 'escalatie' };
   const plan = leestijdPlan([a, b], 'vullend');
@@ -81,7 +81,7 @@ console.log('leestijd');
   toets('logregel noemt de verlenging', /1 verlengd \(\+0,9 s → 2,2 s\)/.test(leesLogregel(plan)), leesLogregel(plan));
 
   // Punchline erna: de spreker mag niet langer dan 3 s weg zijn.
-  const lang: Shot = { ...a, end: 8.5, scenes: [{ van: 4, tot: 6, gezicht: true }, { van: 6, tot: 8.5, gezicht: false, leeswoorden: 12 }] };
+  const lang: Shot = { ...a, end: 8.5, scenes: [{ van: 4, tot: 6, gezicht: true }, { van: 6, tot: 8.5, gezicht: false, leeswoorden: 12, bevries: 8.4 }] };
   const punch: Shot = { volgorde: 2, start: 3, end: 6, functie: 'payoff' };
   const p2 = leestijdPlan([lang, punch], 'vullend');
   toets('punchline volgt: vasthouden begrensd op 3 s onzichtbaar', Math.abs(p2.graphics[0].getoond - instelling('GRAPHIC_MAX_ONZICHTBAAR')) < 0.01, JSON.stringify(p2.graphics[0]));
@@ -93,7 +93,7 @@ console.log('leestijd');
   toets('geen ruimte om vast te houden → keuring review', k3.goed === false && /te kort/.test(k3.detail), k3.detail);
 
   // Een graphic die lang genoeg is blijft ongemoeid.
-  const genoeg: Shot = { ...a, end: 9, scenes: [{ van: 4, tot: 6, gezicht: true }, { van: 6, tot: 9, gezicht: false, leeswoorden: 4 }] };
+  const genoeg: Shot = { ...a, end: 9, scenes: [{ van: 4, tot: 6, gezicht: true }, { van: 6, tot: 9, gezicht: false, leeswoorden: 4, bevries: 8.9 }] };
   toets('lang genoeg: geen aanpassing', leestijdPlan([genoeg, b], 'vullend').aanpassing.size === 0);
 }
 

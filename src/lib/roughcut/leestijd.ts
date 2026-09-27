@@ -56,7 +56,7 @@ const isGraphic = (seg: Shot, d: { kader: Kader; gezicht: boolean | null }) =>
 
 /** Het plan voor een hele montage (segmenten in volgorde). Puur rekenwerk. */
 export function leestijdPlan(segmenten: Shot[], kader: Kader): LeesPlan {
-  type Stuk = { shot: number; deel: number; start: number; duur: number; graphic: boolean; woorden: number | null; functie: string; inhoud?: Box | null };
+  type Stuk = { shot: number; deel: number; start: number; duur: number; graphic: boolean; woorden: number | null; functie: string; inhoud?: Box | null; houdbaar: boolean };
   const stukken: Stuk[] = [];
   let cursor = 0;
   segmenten.forEach((seg, i) => {
@@ -70,6 +70,16 @@ export function leestijdPlan(segmenten: Shot[], kader: Kader): LeesPlan {
         woorden: d.leeswoorden ?? null,
         functie: seg.functie,
         inhoud: d.inhoud,
+        // Alleen vasthouden met een gemeten graphic-frame binnen dit stuk.
+        // Zonder dat viel de render terug op het laatste frame van het stuk,
+        // en dat lag bij een overgang al in het camerabeeld: de spreker stond
+        // dan bevroren als postzegel in het passende kader (PLATINA clip 1).
+        // Een heel shot dat als graphic is beoordeeld (geen deelstukken) heeft
+        // geen overgang binnenin; daar is het laatste frame wél de graphic.
+        houdbaar:
+          d.bevries !== undefined
+            ? d.bevries - seg.start >= d.van && d.bevries - seg.start <= d.tot
+            : d.gezicht === null,
       });
     });
     cursor += seg.end - seg.start;
@@ -92,6 +102,7 @@ export function leestijdPlan(segmenten: Shot[], kader: Kader): LeesPlan {
       const volgende = stukken[j + 1];
       if (!volgende) reden = 'laatste beeld van de clip';
       else if (volgende.graphic) reden = 'gevolgd door een andere graphic';
+      else if (!g.houdbaar) reden = 'geen gemeten graphic-frame om vast te houden';
       else {
         const punchline = volgende.functie === 'payoff' || volgende.functie === 'barst';
         const plafond = punchline

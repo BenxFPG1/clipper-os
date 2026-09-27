@@ -477,7 +477,7 @@ async function main() {
       if (existsSync(join(sceneWerk, 'bron.mp4'))) {
         const a: Shot = {
           volgorde: 1, start: 4, end: 7.3, functie: 'setup', focusX: 0.5, focusW: 0.12,
-          scenes: [{ van: 4, tot: 6, gezicht: true }, { van: 6, tot: 7.3, gezicht: false, leeswoorden: 4 }],
+          scenes: [{ van: 4, tot: 6, gezicht: true }, { van: 6, tot: 7.3, gezicht: false, leeswoorden: 4, bevries: 7.2 }],
         };
         const b: Shot = { volgorde: 2, start: 2, end: 4, functie: 'escalatie', focusX: 0.5, focusW: 0.12 };
         const uitLees = join(map, 'leestijd.mp4');
