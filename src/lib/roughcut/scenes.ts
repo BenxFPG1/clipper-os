@@ -343,7 +343,11 @@ export async function vulScenes(
             if (v < instelling('GRAPHIC_MIN_VLAK')) continue;
             if (beste < 0 || v >= (vlakken[beste] ?? 0) - 0.01) beste = k;
           }
-          if (beste >= 0) scene.bevries = tijden[beste];
+          // Alleen een stilstaande graphic is iets om te lezen. Een graphic
+          // die in- of uitschuift (wipe, sectietitel) krijgt geen bevries-frame
+          // en dus geen verlengde leestijd: dat bevroor in PLATINA clip 1 een
+          // halve titel ("… TERM TALK") over een zin over iets anders.
+          if (beste >= 0 && meting.stabiel !== false) scene.bevries = tijden[beste];
         }
       }
       seg.scenes.push(scene);
