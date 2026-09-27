@@ -13,7 +13,7 @@ import { resolveBinary } from '../src/lib/ingest/binaries';
 import { analyseerGraphic, graphicMeterVia, inhoudKader, lijktGraphic, stabieleInhoud } from '../src/lib/roughcut/graphics';
 import { keurGraphicsDetail, type GraphicFout } from '../src/lib/roughcut/keuring';
 import { herstelNaKeuring, zelfherstelStap } from '../src/lib/roughcut/herstel';
-import { deelstukken, vulScenes, type GezichtMeter } from '../src/lib/roughcut/scenes';
+import { deelstukken, splitsOpBeeldsoort, vulScenes, type GezichtMeter } from '../src/lib/roughcut/scenes';
 import { keurGraphics } from '../src/lib/roughcut/keuring';
 import { behandelEindscherm, keurOverlay, overlayUitPixels, vermijdOverlay } from '../src/lib/roughcut/eindscherm';
 import { plakKoppeltekens } from '../src/lib/roughcut/ondertitels';
@@ -275,6 +275,20 @@ async function vervolg() {
     }
   } finally {
     rmSync(map, { recursive: true, force: true });
+  }
+
+  // Wijd camerabeeld zonder gevonden gezicht direct gevolgd door een graphic
+  // (PLATINA clip 1, bron 176–181 s): per meetmoment splitsen, niet het
+  // gemiddelde van de hele run nemen.
+  {
+    const ts = Array.from({ length: 13 }, (_, i) => 176 + i * 0.4);
+    const meter = async (t: number[]) => ({ vlak: t[0] < 178.1 ? 0.44 : 0.8, box: null, stabiel: true, woorden: 0, persoonX: 0.5 }) as never;
+    const runs = await splitsOpBeeldsoort([{ van: 0, tot: 12, gezicht: false }], ts, meter, 0.4, 0.6);
+    toets('run zonder gezicht splitst in camerabeeld + graphic', runs.length === 2, JSON.stringify(runs));
+    toets('grens ligt op de wissel van soort', runs[0]?.tot === 5 && runs[1]?.van === 6, JSON.stringify(runs));
+    const flikker = async (t: number[]) => ({ vlak: Math.abs(t[0] - 178) < 0.1 ? 0.44 : 0.8, box: null, stabiel: true, woorden: 0, persoonX: 0.5 }) as never;
+    const een = await splitsOpBeeldsoort([{ van: 0, tot: 12, gezicht: false }], ts, flikker, 0.4, 0.6);
+    toets('één twijfelframe geeft geen extra wissel', een.length === 1, JSON.stringify(een));
   }
 
   console.log(`\n${gedaan - gefaald}/${gedaan} geslaagd`);

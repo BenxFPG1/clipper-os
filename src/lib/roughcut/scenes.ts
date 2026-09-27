@@ -278,7 +278,7 @@ export async function vulScenes(
       seg.scenes = undefined; // niets gemeten: het kader van de visuele controle blijft
       continue;
     }
-    const runs = strijkGlad(maakRuns(waarden), stap, glad);
+    const runs = await splitsOpBeeldsoort(strijkGlad(maakRuns(waarden), stap, glad), ts, graphicMeter, stap, glad);
     if (runs.length === 1 && runs[0].gezicht) {
       seg.scenes = undefined;
       continue;
@@ -366,6 +366,56 @@ function vulGaten(ruw: (boolean | null)[]): boolean[] | null {
 }
 
 type Run = { van: number; tot: number; gezicht: boolean };
+
+/**
+ * Splitst runs zonder gezicht per meetmoment in 'graphic' en 'camerabeeld'.
+ *
+ * Een wijd studioshot waarin de detector het gezicht mist, direct gevolgd
+ * door een graphic, werd één run zonder gezicht. De meting daarna nam het
+ * gemiddelde over de hele run, en dat leek op een graphic — dus kreeg het
+ * camerabeeld het passende blur-kader (de presentatrice als postzegel, gezien
+ * op clip 1 van de PLATINA-video rond bron 176–181 s). Per meetmoment
+ * beslissen voorkomt dat; korte uitschieters worden gladgestreken zodat één
+ * twijfelframe geen extra kaderwissel oplevert. Het camerabeeld-deel blijft
+ * formeel 'zonder gezicht'; de bestaande meting per scene herkent het daarna
+ * als wijd camerabeeld en kadert het vullend.
+ */
+export async function splitsOpBeeldsoort(
+  runs: Run[],
+  ts: number[],
+  meter: GraphicMeter,
+  stap: number,
+  glad: number,
+): Promise<Run[]> {
+  const uit: Run[] = [];
+  for (const run of runs) {
+    if (run.gezicht || run.tot === run.van) {
+      uit.push(run);
+      continue;
+    }
+    const soort: boolean[] = [];
+    for (let k = run.van; k <= run.tot; k++) soort.push(lijktGraphic(await meter([ts[k]])));
+    // Deelruns op wisseling van soort; te korte deelruns gaan op in de vorige.
+    const delen: { van: number; tot: number; graphic: boolean }[] = [];
+    soort.forEach((g, i) => {
+      const k = run.van + i;
+      const laatste = delen[delen.length - 1];
+      if (laatste && laatste.graphic === g) laatste.tot = k;
+      else delen.push({ van: k, tot: k, graphic: g });
+    });
+    const samen: typeof delen = [];
+    for (const d of delen) {
+      const lengte = (d.tot - d.van + 1) * stap;
+      const vorige = samen[samen.length - 1];
+      // Te kort, of (na het opslokken van een twijfelframe) dezelfde soort als
+      // de vorige: samenvoegen, anders ontstaan er twee runs van één soort.
+      if (vorige && (lengte < glad || vorige.graphic === d.graphic)) vorige.tot = d.tot;
+      else samen.push({ ...d });
+    }
+    for (const d of samen) uit.push({ van: d.van, tot: d.tot, gezicht: false });
+  }
+  return uit;
+}
 
 function maakRuns(w: boolean[]): Run[] {
   const runs: Run[] = [];
