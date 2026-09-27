@@ -12,6 +12,9 @@
  *
  * Draaien: npm run test:render
  */
+// De leestijd-toetsen gebruiken graphics van 1,3 s; de productiedrempel voor
+// 'graphic is een leesmoment' (1,5 s) zou ze allemaal als overgang overslaan.
+process.env.MONTAGE_GRAPHIC_MIN_VOOR_LEESTIJD ??= '1.2';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';

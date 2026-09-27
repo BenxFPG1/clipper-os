@@ -163,8 +163,10 @@ const STANDAARD = {
   GRAPHIC_LEES_MAX: 4,
   GRAPHIC_MAX_HOLD: 2.5,
   // Korter dan dit in de bron is een overgang (wipe, sectietitel), geen
-  // informatie om te lezen: niet verlengen en niet als leesbaarheidsfout tellen.
-  GRAPHIC_MIN_VOOR_LEESTIJD: 1.2,
+  // bedoeld leesmoment: de maker van de bron liet hem zelf maar zo kort staan.
+  // Niet verlengen en niet als leesbaarheidsfout tellen. 1,2 s liet een
+  // sectietitel van precies 1,2 s door (PLATINA clip 1).
+  GRAPHIC_MIN_VOOR_LEESTIJD: 1.5,
   GRAPHIC_MAX_ONZICHTBAAR: 3,
   GRAPHIC_MIN_REST: 0.8,
 
