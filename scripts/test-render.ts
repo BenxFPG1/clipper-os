@@ -34,7 +34,7 @@ import { kaderKeten } from '../src/lib/roughcut/kader';
 import { readFile } from 'node:fs/promises';
 import { createCanvas } from '@napi-rs/canvas';
 import { fontVoor } from '../src/lib/roughcut/tekstkaarten';
-import { inhoudKader, inhoudMeterVia, inhoudOpBeeld, inhoudsboxUitPixels } from '../src/lib/roughcut/graphics';
+import { graphicMeterVia, inhoudKader, inhoudMeterVia, inhoudOpBeeld, inhoudsboxUitPixels } from '../src/lib/roughcut/graphics';
 
 let gefaald = 0;
 let gedaan = 0;
@@ -447,12 +447,12 @@ async function main() {
         }
 
         const stubGeen: GezichtMeter = async (t) => t.map(() => false);
-        const keurGoed = await keurGraphics([shot], 'vullend', stubGeen, inhoudMeterVia(gbron));
+        const keurGoed = await keurGraphics([shot], 'vullend', stubGeen, graphicMeterVia(gbron));
         toets('keuring: ingezoomde graphic binnen beeld', keurGoed.goed === true, keurGoed.detail);
         // Te krap gemeten (alleen het getal): de hermeting vindt de bronregel
         // buiten het gerenderde gebied → fout.
         const krap: Shot = { ...shot, scenes: [{ van: 0, tot: 4, gezicht: false, inhoud: { x0: 0.3, y0: 0.35, x1: 0.7, y1: 0.6 } }] };
-        const keurFout = await keurGraphics([krap], 'vullend', stubGeen, inhoudMeterVia(gbron));
+        const keurFout = await keurGraphics([krap], 'vullend', stubGeen, graphicMeterVia(gbron));
         toets('keuring: inhoud buiten beeld → fout', keurFout.goed === false && /buiten beeld/.test(keurFout.detail), keurFout.detail);
 
         const plek = plaatsRegels([{ s: 1, e: 2, woorden: [{ w: 'min', s: 1, e: 1.4 }, { w: 'negenendertig', s: 1.4, e: 2 }] }], [shot], 'vullend');

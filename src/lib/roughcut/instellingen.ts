@@ -120,6 +120,8 @@ const STANDAARD = {
    * achtergrond voor een betrouwbare meting, de marge rond de inhoud, en de
    * maximale inzoom ten opzichte van een 1080p-bron.
    */
+  /** Een beeld zonder gezicht is pas een graphic als minstens dit aandeel vlak is; anders is het een wijd camerashot. */
+  GRAPHIC_MIN_VLAK: 0.62,
   GRAPHIC_KLEUR_DREMPEL: 36,
   GRAPHIC_MIN_ACHTERGROND: 0.4,
   /** Randsterkte (Sobel op helderheid, 0..~1400) waarboven een pixel tot tekst of een lijn hoort. */
@@ -140,6 +142,8 @@ const STANDAARD = {
   RENDERBRON_MAX_HOOGTE: 2160,
   RENDERBRON_TIMEOUT: 300,
   RENDERBRON_MIN_CORRELATIE: 0.6,
+  /** Zekerheid (0..1) waarboven de apart gemeten beeldoffset van een sectie de geluidsoffset overrulet. */
+  RENDERBRON_BEELD_ZEKERHEID: 0.25,
 
   /**
    * Leestijd van graphics: basis plus per leeseenheid (woord, getal), met een
@@ -156,6 +160,9 @@ const STANDAARD = {
   GRAPHIC_MAX_HOLD: 2.5,
   GRAPHIC_MAX_ONZICHTBAAR: 3,
   GRAPHIC_MIN_REST: 0.8,
+
+  /** Eindscherm: alleen in de laatste zoveel seconden van de bron zoeken naar abonneer-overlays. */
+  EINDSCHERM_VENSTER: 30,
 
   /** Opschalen: vanaf deze factor een milde verscherping (lanczos schaalt altijd). */
   OPSCHAAL_VERSCHERP_VANAF: 1.1,

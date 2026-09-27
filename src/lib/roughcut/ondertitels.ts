@@ -132,6 +132,25 @@ export function woordenOpTijdlijn(segmenten: Shot[], bronWoorden: BronWoord[]): 
     }
     cursor += duur;
   }
+  return plakKoppeltekens(uit);
+}
+
+/**
+ * Woorden met een koppelteken horen bij elkaar. De transcriptie levert
+ * "Zuid-Afrika" soms als "Zuid" + "-Afrika" (of "EV-" + "adoptie"), en dan
+ * begon een ondertitelregel met "-adoptie" — of stond de helft van het woord
+ * op een andere regel. Samenvoegen vóór het groeperen.
+ */
+export function plakKoppeltekens(woorden: OndertitelWoord[]): OndertitelWoord[] {
+  const uit: OndertitelWoord[] = [];
+  for (const w of woorden) {
+    const vorige = uit[uit.length - 1];
+    if (vorige && (w.w.startsWith('-') || vorige.w.endsWith('-')) && w.s - vorige.e < 0.6) {
+      uit[uit.length - 1] = { w: `${vorige.w}${w.w}`.replace(/--/g, '-'), s: vorige.s, e: w.e };
+    } else {
+      uit.push({ ...w });
+    }
+  }
   return uit;
 }
 

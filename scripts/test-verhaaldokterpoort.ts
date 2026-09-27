@@ -7,6 +7,7 @@
  * Draaien: npm run test:verhaaldokter
  */
 import {
+  keurEindstuk,
   keurMerkveiligheid,
   keurUitvoerbaarheid,
   keurVerhaaldokter,
@@ -238,6 +239,15 @@ console.log('uitvoerbaarheid — de boog moet te horen zijn, niet in edit_notiti
   const h = keurUitvoerbaarheid(hersteld);
   toets('hersteld: geen signalen meer', h.length === 0, JSON.stringify(h));
   toets('signalen komen in het rapport voor de verhaaldokter', keurVerhaaldokter(planVan(clip3)).signalen.length >= 3);
+}
+
+console.log('eindstuk van de bron');
+{
+  const laat = basisClip({ shots: [{ volgorde: 1, start: 320, end: 326, functie: 'hook', transcript_fragment: 'x', edit_notitie: '' }, { volgorde: 2, start: 340, end: 350, functie: 'payoff', transcript_fragment: 'y', edit_notitie: '' }] });
+  toets('shot in de laatste 20 s gemeld', /shot 2 valt in de laatste 20 s/.test(keurEindstuk(laat, 353) ?? ''), String(keurEindstuk(laat, 353)));
+  toets('zonder videoduur geen signaal', keurEindstuk(laat, null) === null);
+  toets('vroege shots geen signaal', keurEindstuk(basisClip(), 353) === null);
+  toets('signaal komt in het rapport', keurVerhaaldokter(planVan(laat), { videoDuur: 353 }).signalen.some((x) => /laatste 20 s/.test(x.signaal)));
 }
 
 console.log('merkveiligheid');

@@ -17,7 +17,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { resolveBinary } from '../src/lib/ingest/binaries';
-import { haalRenderSecties, sectiePlan, sectieTijd, sectieVoor, type SectieBestand } from '../src/lib/roughcut/renderbron';
+import { haalRenderSecties, lijnBeeldUit, sectiePlan, sectieTijd, sectieVoor, type SectieBestand } from '../src/lib/roughcut/renderbron';
 import { maakRuweMontage, type Shot } from '../src/lib/roughcut';
 
 let gefaald = 0;
@@ -166,6 +166,41 @@ async function main() {
       const buiten: Shot[] = [{ volgorde: 1, start: 35, end: 38, functie: 'setup', focusX: 0.5, focusW: 0.12 }];
       const r3 = await maakRuweMontage({ sourceUrl: 'lokaal://test', shots: buiten, alGesegmenteerd: true, outputPad: join(map, 'buiten.mp4'), werkmap: werk, kader: 'vullend', renderBron: rb });
       toets('shot buiten de sectie valt terug op de analysebron', r3.kwaliteit.renderbron?.shotsTerugval === 1);
+    }
+
+    console.log('beeld en geluid van een sectie lopen uiteen (DASH: twee losse stromen)');
+    {
+      // Sectie waarvan het beeld 1,5 s eerder in de bron begint dan het
+      // geluid: beeld vanaf 19,8 s, geluid vanaf 21,3 s, samen in één bestand.
+      const scheef = async (sectie: { van: number; tot: number }, pad: string) => {
+        const r = ff([
+          '-ss', (sectie.van - 1.5).toFixed(2), '-i', analyse, '-ss', sectie.van.toFixed(2), '-i', analyse,
+          '-map', '0:v', '-map', '1:a', '-t', (sectie.tot - sectie.van).toFixed(2),
+          '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', '-c:a', 'aac', pad,
+        ]);
+        if (!r.ok) throw new Error(r.uit.slice(-200));
+      };
+      const rbs = await haalRenderSecties({
+        sourceUrl: 'https://voorbeeld.test/video', analyseBron: analyse, plan: [{ van: 21.3, tot: 33.7 }],
+        map: join(werk, 'secties-scheef'), downloader: scheef, log: (m) => console.log(`  (${m})`),
+      });
+      const sc = rbs.secties[0];
+      toets('geluid op 21,3 s uitgelijnd', Boolean(sc) && Math.abs(sc.bronStart - 21.3) < 0.02, JSON.stringify(sc?.bronStart));
+      toets('beeld apart gemeten: 1,5 s eerder, en gecorrigeerd', Boolean(sc) && Math.abs((sc.videoStart ?? 0) - 19.8) < 0.05, JSON.stringify({ video: sc?.videoStart, verschil: sc?.beeldVerschil, zekerheid: sc?.beeldZekerheid }));
+      if (sc) {
+        const shots: Shot[] = [{ volgorde: 1, start: 24.0, end: 27.0, functie: 'setup', focusX: 0.5, focusW: 0.12 }];
+        const uitS = join(map, 'scheef-sectie.mp4');
+        const uitA = join(map, 'scheef-analyse.mp4');
+        await maakRuweMontage({ sourceUrl: 'lokaal://test', shots, alGesegmenteerd: true, outputPad: uitS, werkmap: werk, kader: 'vullend', renderBron: rbs });
+        await maakRuweMontage({ sourceUrl: 'lokaal://test', shots, alGesegmenteerd: true, outputPad: uitA, werkmap: werk, kader: 'vullend' });
+        const d = verschil(await frameGrijs(uitS, 1.5), await frameGrijs(uitA, 1.5));
+        toets('render uit de scheve sectie toont het juiste beeld', d < 3, `verschil ${d.toFixed(2)}`);
+      }
+      // Een stilstaand beeld is niet uit te lijnen: dan geen correctie.
+      const stilPad = join(werk, 'stil.mp4');
+      ff(['-f', 'lavfi', '-i', 'color=c=gray:size=320x180:rate=25:duration=12', '-f', 'lavfi', '-i', 'anullsrc', '-t', '12', '-c:v', 'libx264', '-preset', 'ultrafast', '-c:a', 'aac', stilPad]);
+      const stil = await lijnBeeldUit(stilPad, stilPad, 2);
+      toets('stilstaand beeld: geen zekere beeldmeting', stil === null || stil.zekerheid < 0.25, JSON.stringify(stil));
     }
 
     console.log('terugval bij een mislukte download');

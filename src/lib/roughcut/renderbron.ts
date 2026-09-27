@@ -38,6 +38,17 @@ export type SectieBestand = Sectie & {
   pad: string;
   /** Brontijd die hoort bij t=0 in het bestand (gemeten via de audio). */
   bronStart: number;
+  /**
+   * Brontijd die hoort bij t=0 van het BEELD in het bestand, apart gemeten
+   * (beeld tegen beeld van de analysebron). Bij DASH haalt yt-dlp beeld en
+   * geluid als twee losse stromen, elk vanaf zijn eigen keyframe; loopt dat
+   * uiteen, dan kreeg een graphic het kader van de spreker en andersom.
+   * Ontbreekt het (oude cache), dan gelijk aan bronStart.
+   */
+  videoStart?: number;
+  /** Verschil beeld − geluid (s) en hoe zeker die meting is. */
+  beeldVerschil?: number;
+  beeldZekerheid?: number;
   /** Duur van het bestand (s). */
   duur: number;
   breedte: number;
@@ -84,12 +95,113 @@ export function sectiePlan(
 
 /** De sectie die een brontijdvak volledig bevat (in wat er werkelijk in het bestand staat), of null. */
 export function sectieVoor(secties: SectieBestand[], van: number, tot: number): SectieBestand | null {
-  return secties.find((s) => s.bronStart <= van + 1e-3 && s.bronStart + s.duur >= tot - 1e-3) ?? null;
+  return (
+    secties.find((s) => {
+      const beeld = s.videoStart ?? s.bronStart;
+      const begin = Math.max(s.bronStart, beeld);
+      const eind = Math.min(s.bronStart, beeld) + s.duur;
+      return begin <= van + 1e-3 && eind >= tot - 1e-3;
+    }) ?? null
+  );
 }
 
-/** Waar in het sectiebestand een brontijd staat. */
+/** Waar in het sectiebestand een brontijd staat — voor het geluid. */
 export function sectieTijd(sectie: SectieBestand, bronTijd: number): number {
   return Math.max(0, bronTijd - sectie.bronStart);
+}
+
+/** Waar in het sectiebestand een brontijd staat — voor het beeld (eigen offset). */
+export function sectieBeeldTijd(sectie: SectieBestand, bronTijd: number): number {
+  return Math.max(0, bronTijd - (sectie.videoStart ?? sectie.bronStart));
+}
+
+// ------------------------------------------------------------------ beeld uitlijnen
+
+const MINI_B = 32;
+const MINI_H = 18;
+
+function miniaturen(pad: string, van: number, duur: number, fps: number): Promise<Float32Array[] | null> {
+  return new Promise((klaar) => {
+    const kind = spawn(
+      resolveBinary('ffmpeg'),
+      ['-nostdin', '-hide_banner', '-loglevel', 'error', '-ss', Math.max(0, van).toFixed(3), '-t', duur.toFixed(3), '-i', pad,
+        '-an', '-vf', `fps=${fps},scale=${MINI_B}:${MINI_H}`, '-f', 'rawvideo', '-pix_fmt', 'gray', '-'],
+      { stdio: ['ignore', 'pipe', 'ignore'] },
+    );
+    const delen: Buffer[] = [];
+    kind.stdout.on('data', (d: Buffer) => delen.push(d));
+    kind.on('error', () => klaar(null));
+    kind.on('close', (code) => {
+      if (code !== 0) return klaar(null);
+      const buf = Buffer.concat(delen);
+      const n = MINI_B * MINI_H;
+      const uit: Float32Array[] = [];
+      for (let i = 0; i + n <= buf.length; i += n) {
+        // Genormaliseerd (gemiddelde 0, spreiding 1): een 4K-VP9 en een
+        // 1080p-H.264 van hetzelfde beeld verschillen iets in helderheid en contrast.
+        const f = new Float32Array(n);
+        let m = 0;
+        for (let k = 0; k < n; k++) m += buf[i + k];
+        m /= n;
+        let v = 0;
+        for (let k = 0; k < n; k++) v += (buf[i + k] - m) ** 2;
+        const sd = Math.sqrt(v / n) || 1;
+        for (let k = 0; k < n; k++) f[k] = (buf[i + k] - m) / sd;
+        uit.push(f);
+      }
+      klaar(uit);
+    });
+  });
+}
+
+/**
+ * Het verschil tussen waar het beeld en waar het geluid van een sectie in de
+ * bron beginnen, gemeten door het beeld van de sectie tegen het beeld van de
+ * analysebron te leggen (±4 s rond de audio-offset, op 0,04 s). Zeker genoeg
+ * als het beste verschil duidelijk lager is dan het typische; anders null en
+ * geldt de audio-offset voor beide.
+ */
+export async function lijnBeeldUit(
+  sectiePad: string,
+  analyseBron: string,
+  audioStart: number,
+): Promise<{ verschil: number; zekerheid: number } | null> {
+  const SPEL = 4;
+  // Beide op 25 fps uit hetzelfde filter; de sectie daarna in code per vijfde
+  // frame. Met fps=5 op de sectie zat er een vaste afwijking van een halve
+  // bemonstering (0,1 s) in de meting.
+  const [sectieAlle, analyse] = await Promise.all([
+    miniaturen(sectiePad, 1, 8, 25),
+    miniaturen(analyseBron, Math.max(0, audioStart + 1 - SPEL), 8 + 2 * SPEL, 25),
+  ]);
+  const sectie = sectieAlle?.filter((_, i) => i % 5 === 0) ?? null;
+  if (!sectie || !analyse || sectie.length < 10 || analyse.length < 50) return null;
+  const analyseStart = Math.max(0, audioStart + 1 - SPEL);
+  const scores: { verschil: number; score: number }[] = [];
+  for (let stap = -SPEL * 25; stap <= SPEL * 25; stap++) {
+    const verschil = stap / 25;
+    let som = 0;
+    let n = 0;
+    sectie.forEach((f, k) => {
+      const t = audioStart + verschil + 1 + k * 0.2;
+      const idx = Math.round((t - analyseStart) * 25);
+      const g = analyse[idx];
+      if (!g) return;
+      let d = 0;
+      for (let p = 0; p < f.length; p++) d += Math.abs(f[p] - g[p]);
+      som += d / f.length;
+      n++;
+    });
+    if (n >= sectie.length * 0.8) scores.push({ verschil, score: som / n });
+  }
+  if (scores.length === 0) return null;
+  const beste = scores.reduce((a, b) => (b.score < a.score ? b : a));
+  const gesorteerd = [...scores].map((x) => x.score).sort((a, b) => a - b);
+  const mediaan = gesorteerd[Math.floor(gesorteerd.length / 2)];
+  // Een statisch beeld (een pratend hoofd dat stilzit) geeft overal ongeveer
+  // hetzelfde verschil: dan weten we het niet, en dat zeggen we.
+  const zekerheid = mediaan > 0 ? Math.round(((mediaan - beste.score) / mediaan) * 100) / 100 : 0;
+  return { verschil: Math.round(beste.verschil * 100) / 100, zekerheid };
 }
 
 // ------------------------------------------------------------------ uitlijnen
@@ -287,10 +399,19 @@ export async function haalRenderSecties(opties: {
           '-o', pad,
           opties.sourceUrl,
         ]).then(() => undefined);
-      await Promise.race([
-        download,
-        new Promise<never>((_, weg) => setTimeout(() => weg(new Error(`time-out na ${timeout / 1000} s`)), timeout)),
-      ]);
+      // De timer altijd opruimen: een openstaande timer houdt het proces
+      // (worker, test) nog minuten in leven nadat alles klaar is.
+      let timer: NodeJS.Timeout | undefined;
+      try {
+        await Promise.race([
+          download,
+          new Promise<never>((_, weg) => {
+            timer = setTimeout(() => weg(new Error(`time-out na ${timeout / 1000} s`)), timeout);
+          }),
+        ]);
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
       if (!existsSync(pad)) throw new Error('geen bestand na download');
       const info = await probe(pad);
       if (!info || info.duur <= 0) throw new Error('bestand niet leesbaar');
@@ -300,12 +421,29 @@ export async function haalRenderSecties(opties: {
       }
       const bytes = statSync(pad).size;
       bytesNieuw += bytes;
-      const bestand: SectieBestand = { ...sectie, pad, ...info, bytes, bronStart: uitgelijnd.bronStart, correlatie: uitgelijnd.correlatie };
+      // Het beeld apart uitlijnen: alleen een zekere meting mag de audio-offset
+      // voor het beeld overrulen.
+      const beeld = await lijnBeeldUit(pad, opties.analyseBron, uitgelijnd.bronStart);
+      const beeldTelt = beeld && beeld.zekerheid >= instelling('RENDERBRON_BEELD_ZEKERHEID') && Math.abs(beeld.verschil) >= 0.06;
+      const bestand: SectieBestand = {
+        ...sectie,
+        pad,
+        ...info,
+        bytes,
+        bronStart: uitgelijnd.bronStart,
+        videoStart: beeldTelt ? Math.round((uitgelijnd.bronStart + beeld.verschil) * 1000) / 1000 : uitgelijnd.bronStart,
+        beeldVerschil: beeld?.verschil,
+        beeldZekerheid: beeld?.zekerheid,
+        correlatie: uitgelijnd.correlatie,
+      };
       writeFileSync(metaPad(pad), JSON.stringify(bestand));
       secties.push(bestand);
       log(
         `renderbron: sectie ${sectie.van.toFixed(1)}-${sectie.tot.toFixed(1)} s → ${info.breedte}x${info.hoogte} ${info.codec}, ` +
-          `${(bytes / 1e6).toFixed(1)} MB, begint op ${bestand.bronStart.toFixed(3)} s (correlatie ${uitgelijnd.correlatie})`,
+          `${(bytes / 1e6).toFixed(1)} MB, geluid begint op ${bestand.bronStart.toFixed(3)} s (correlatie ${uitgelijnd.correlatie}), ` +
+          (beeld
+            ? `beeld ${beeld.verschil >= 0 ? '+' : ''}${beeld.verschil.toFixed(2)} s t.o.v. geluid (zekerheid ${beeld.zekerheid}${beeldTelt ? ', gecorrigeerd' : ''})`
+            : 'beeld niet uit te lijnen (geldt de geluidsoffset)'),
       );
     } catch (e) {
       const fout = `sectie ${sectie.van.toFixed(1)}-${sectie.tot.toFixed(1)}: ${(e as Error).message.slice(0, 160)}`;

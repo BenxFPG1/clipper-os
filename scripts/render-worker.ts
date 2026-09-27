@@ -19,7 +19,6 @@ import {
   type BurnOverlay,
 } from '../src/lib/roughcut';
 import {
-  maakTekstkaarten,
   tekenHookKaart,
   tekenKaart,
   hookDuur,
@@ -30,7 +29,9 @@ import {
 } from '../src/lib/roughcut/tekstkaarten';
 import { controleerAssFont, maakOndertitels, type Ondertitels } from '../src/lib/roughcut/ondertitels';
 import { gezichtMeterVia, vulScenes } from '../src/lib/roughcut/scenes';
-import { afwijkendeInstellingen, gebruikteInstellingen } from '../src/lib/roughcut/instellingen';
+import { graphicMeterVia, lijktGraphic } from '../src/lib/roughcut/graphics';
+import { behandelEindscherm, bronDuur, overlayMeterVia, vermijdOverlay } from '../src/lib/roughcut/eindscherm';
+import { afwijkendeInstellingen, gebruikteInstellingen, instelling } from '../src/lib/roughcut/instellingen';
 import { lijnShotsUit } from '../src/lib/roughcut/uitlijnen';
 import { runEditAgent, beslissingenVoorClip, bekendeEffectSlugs, type PlanMeetdata } from '../src/lib/agents/edit';
 
@@ -246,6 +247,8 @@ async function verwerk(job: Job) {
   const bronWoorden = await haalBronWoorden(job.video_id, bronPad, {
     log: (m) => console.log(`  ${m}`),
   });
+  // Lengte van de bron: voor de eindschermcontrole (laatste halve minuut).
+  const bronLengte = bronDuur(bronPad);
 
   // De retentiedoelen van deze campagne: wat top-clips van anderen meetbaar
   // doen (editDoelen), per platform en thema. Eén keer per opdracht.
@@ -664,10 +667,24 @@ async function verwerk(job: Job) {
       const sc = await vulScenes(bronPad, segmenten, gezichtMeterVia(bronPad, pythonMetOpenCV(), 1));
       console.log(
         `     scènes: ${sc.metingen} gezichtsmetingen, ${sc.shots} shot(s) met wissel → ${sc.persoon} deelstuk(ken) met gezicht, ` +
-          `${sc.graphic} zonder (passend; ${sc.ingezoomd} ingezoomd op de inhoud), ${sc.overgangen} overgang(en) op de scènepiek (${(sc.ms / 1000).toFixed(1).replace('.', ',')} s)`,
+          `${sc.graphic} zonder (passend; ${sc.ingezoomd} ingezoomd op de inhoud), ${sc.wijd} wijd camerabeeld zonder gevonden gezicht (vullend), ` +
+          `${sc.overgangen} overgang(en) op de scènepiek (${(sc.ms / 1000).toFixed(1).replace('.', ',')} s)`,
       );
     } catch (e) {
       console.log(`     scènedetectie overgeslagen (${(e as Error).message.slice(0, 70)})`);
+    }
+
+    // Eindscherm: in de laatste halve minuut van de bron staan vaak de
+    // abonneerknoppen van YouTube over de spreker. Kader erboven leggen, of
+    // het shot inkorten tot vóór de overlay (eindscherm.ts).
+    try {
+      const es = await behandelEindscherm(segmenten, { bronDuur: bronLengte, meter: overlayMeterVia(bronPad), bronWoorden });
+      if (es.gemeten > 0) {
+        console.log(`     eindscherm: ${es.gemeten} shot(s) in de laatste ${instellingEindscherm()} s getoetst, ${es.vermeden} vermeden via het kader, ${es.ingekort} ingekort, ${es.niet} niet te vermijden`);
+        for (const r of es.regels) console.log(`       ${r}`);
+      }
+    } catch (e) {
+      console.log(`     eindschermcontrole overgeslagen (${(e as Error).message.slice(0, 70)})`);
     }
 
     // Beslissingen van de edit-agent op de segmenten leggen. Subsegmenten
@@ -750,10 +767,12 @@ async function verwerk(job: Job) {
     let retentieKaarten: Kaart[] = [];
 
     const bouwOverlays = async (): Promise<BurnOverlay[]> => {
-      const kaartSegmenten = segmenten.map((sgm) =>
-        sgm.subKnip ? { ...sgm, edit_notitie: '', beeld_effect: undefined, tekstkaart: null } : sgm,
-      );
-      const overlays: BurnOverlay[] = await maakTekstkaarten(kaartSegmenten as never, kaartMap, `c${nummer}`, stijl);
+      // Tijdsprong- en edit-agentkaarten ("2,5 minuut later") komen niet meer
+      // in de mp4: dat zijn markeringen voor de editor, en op TikTok breken ze
+      // de flow. Ze blijven als marker in het montageplan (en het
+      // Premiere-project). In beeld alleen: hook, contextkaart, plankaarten,
+      // aangehaalde uitvalrisico's en de re-hook.
+      const overlays: BurnOverlay[] = [];
       const totaal = segmenten.reduce((t, sg) => t + (sg.end - sg.start), 0);
 
       // De contextkaart (één regel situering, uit het plan) komt direct na de
@@ -880,10 +899,11 @@ async function verwerk(job: Job) {
         for (const o of oordeel.shots) {
           const seg = segmenten.find((sg) => sg.volgorde === o.volgorde);
           if (!seg || !o.beeldtype) continue;
-          if (o.beeldtype === 'graphic' && seg.beeldtype !== 'graphic') {
+          const type = await bevestigBeeldtype(bronPad, seg, o.beeldtype);
+          if (type === 'graphic' && seg.beeldtype !== 'graphic') {
             console.log(`     kadercontrole shot ${o.volgorde}: graphic in beeld → passend kader (blur) in plaats van uitsnede`);
           }
-          seg.beeldtype = o.beeldtype;
+          seg.beeldtype = type;
         }
 
         const fout = oordeel.shots.filter((o) => !o.goed && o.beeldtype !== 'graphic');
@@ -915,6 +935,9 @@ async function verwerk(job: Job) {
         // mag het gezicht niet alsnog uit beeld schuiven.
         corrigeerKadrering(segmenten);
       }
+      // De kadercorrecties kunnen de uitsnede weer over een eindscherm
+      // schuiven (centreren op het gezicht); de overlay blijft het laatste woord.
+      for (const sg of segmenten) if (sg.overlay) vermijdOverlay(sg);
     }
 
     // DE POORT. Alles hierboven mag van alles vinden; wat hier uitkomt voldoet
@@ -971,6 +994,8 @@ async function verwerk(job: Job) {
                     spoorY: sg.spoorY,
                     beeldtype: sg.beeldtype,
                     tease: sg.tease,
+                    // Tijdsprong-/editorkaart: alleen als marker, niet in beeld.
+                    marker: sg.subKnip ? undefined : sg.tekstkaart ?? undefined,
                     transcript_fragment: (sg as { transcript_fragment?: string }).transcript_fragment,
                   })),
                   // Curve vóór en na, de doelen en elke ingreep: zo is per clip
@@ -1290,7 +1315,7 @@ async function verwerk(job: Job) {
         const oordeel = await controleerKaderVisueel(beelden);
         for (const o of oordeel.shots) {
           const seg = segmenten.find((sg) => sg.volgorde === o.volgorde);
-          if (seg && o.beeldtype) seg.beeldtype = o.beeldtype;
+          if (seg && o.beeldtype) seg.beeldtype = await bevestigBeeldtype(bronPad, seg, o.beeldtype);
         }
         const fout = oordeel.shots.filter((o) => !o.goed && o.beeldtype !== 'graphic');
         if (fout.length === 0) {
@@ -1515,6 +1540,28 @@ async function verwerk(job: Job) {
 
   if (bestanden.length === 0) throw new Error('Niets geüpload; alle clips waren te groot of mislukten.');
   return bestanden;
+}
+
+/**
+ * De visuele kadercontrole zegt soms "graphic" bij een camerabeeld met iets
+ * erop — een eindscherm met abonneerknoppen, een logo, een ondertitel in de
+ * bron. Dan kreeg een pratende spreker het passende blur-kader: een postzegel
+ * tussen twee wazige balken. "Graphic" alleen als het beeld er ook op lijkt
+ * (grotendeels vlak getekend); anders blijft het een persoon.
+ */
+async function bevestigBeeldtype(bronPad: string, seg: Shot, type: NonNullable<Shot['beeldtype']>): Promise<NonNullable<Shot['beeldtype']>> {
+  if (type !== 'graphic') return type;
+  const d = seg.end - seg.start;
+  const meting = await graphicMeterVia(bronPad)([0.25, 0.5, 0.75].map((f) => seg.start + d * f)).catch(() => null);
+  if (meting && !lijktGraphic(meting)) {
+    console.log(`     kadercontrole shot ${seg.volgorde}: zegt graphic, maar het beeld is een camerabeeld (vlak ${meting.vlak.toFixed(2)}) → persoon, vullend`);
+    return 'persoon';
+  }
+  return type;
+}
+
+function instellingEindscherm(): number {
+  return instelling('EINDSCHERM_VENSTER');
 }
 
 /** Bitrate van een gerenderd bestand (totaal en videostroom, bit/s); null als ffprobe het niet weet. */

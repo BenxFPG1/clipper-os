@@ -166,18 +166,13 @@ function tijdlijn(segmenten: Shot[]): { begin: number[]; duur: number } {
   return { begin, duur: cursor };
 }
 
-/** Kaarten die aan een shot hangen, op dezelfde plek als maakTekstkaarten ze zet. */
-function segmentKaarten(segmenten: Shot[]): Kaart[] {
-  const uit: Kaart[] = [];
-  let cursor = 0;
-  for (const seg of segmenten) {
-    const duur = seg.end - seg.start;
-    if (!seg.subKnip && (seg.tekstkaart || seg.beeld_effect === 'tekstkaart')) {
-      uit.push({ start: cursor, end: cursor + Math.min(2.2, Math.max(1.2, duur)), tekst: seg.tekstkaart ?? undefined });
-    }
-    cursor += duur;
-  }
-  return uit;
+/**
+ * Kaarten die aan een shot hangen (tekstkaart van de edit-agent) worden niet
+ * meer in de clip gezet — het zijn markeringen voor de editor — en tellen dus
+ * niet als beeldwissel of tekst in beeld.
+ */
+function segmentKaarten(_segmenten: Shot[]): Kaart[] {
+  return [];
 }
 
 const ZICHTBARE_EFFECTEN = new Set(['punch_in', 'snelle_zoom', 'shake', 'flits_wit', 'zwart_frame', 'freeze_frame']);

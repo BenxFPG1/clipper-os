@@ -47,9 +47,14 @@ function overlap(a: string, b: string): number {
   return gedeeld / wa.size;
 }
 
-export function keurVerhaaldokter(plan: ClipPlan, context: { campagneNaam?: string | null } = {}): VerhaaldokterRapport {
+export function keurVerhaaldokter(
+  plan: ClipPlan,
+  context: { campagneNaam?: string | null; videoDuur?: number | null } = {},
+): VerhaaldokterRapport {
   const signalen: VerhaaldokterSignaal[] = [];
   plan.clips.forEach((clip, i) => {
+    const eind = keurEindstuk(clip, context.videoDuur);
+    if (eind) signalen.push({ clipIndex: i, titel: clip.titel_intern, signaal: eind });
     for (const signaal of keurUitvoerbaarheid(clip)) signalen.push({ clipIndex: i, titel: clip.titel_intern, signaal });
     for (const signaal of keurMerkveiligheid(clip, context.campagneNaam)) signalen.push({ clipIndex: i, titel: clip.titel_intern, signaal });
   });
@@ -177,6 +182,23 @@ export function keurUitvoerbaarheid(clip: Clip): string[] {
     }
   }
   return uit;
+}
+
+/** Hoeveel seconden aan het eind van de bron "eindscherm-gebied" zijn. */
+export const EINDSTUK_SECONDEN = 20;
+
+/**
+ * In de laatste seconden van een YouTube-video staat vaak het eindscherm:
+ * abonneerknoppen en videotegels over de spreker. Een shot daarvandaan kan
+ * alleen als het onmisbaar is — de renderer probeert de overlay dan weg te
+ * kadreren, maar dat lukt niet altijd.
+ */
+export function keurEindstuk(clip: Pick<Clip, 'shots'>, videoDuur?: number | null): string | null {
+  if (!videoDuur) return null;
+  const grens = videoDuur - EINDSTUK_SECONDEN;
+  const laat = clip.shots.filter((s) => s.end > grens);
+  if (laat.length === 0) return null;
+  return `shot ${laat.map((s) => s.volgorde).join(', ')} valt in de laatste ${EINDSTUK_SECONDEN} s van de bron (eindscherm/abonneerknoppen) — alleen houden als het onmisbaar is, anders een ander fragment`;
 }
 
 // ------------------------------------------------------------ merkveiligheid

@@ -81,7 +81,52 @@ export function inhoudsboxUitPixels(rgb: Buffer | Uint8Array, w: number, h: numb
  * woorden, een groot getal of een balk is één eenheid. Grof, maar het gaat
  * om de leestijd, niet om de tekst.
  */
-export function analyseerGraphic(rgb: Buffer | Uint8Array, w: number, h: number): { box: Box | null; woorden: number | null } {
+export type GraphicAnalyse = {
+  box: Box | null;
+  woorden: number | null;
+  glad?: number;
+  /**
+   * Aandeel écht vlakke plekken (lokale spreiding in helderheid < 1,5 op
+   * 480x270). Een graphic is grotendeels vlak getekend; een camerabeeld heeft
+   * overal ruis en textuur. Gemeten: graphics ≥ 0,77, studio-opnames ≤ 0,46.
+   */
+  vlak: number;
+};
+
+/** Lijkt dit beeld op een graphic? "Geen gezicht" alleen is niet genoeg: een wijd camerashot heeft ook geen (gevonden) gezicht. */
+export function lijktGraphic(a: { vlak: number } | null | undefined): boolean {
+  return Boolean(a) && (a as { vlak: number }).vlak >= instelling('GRAPHIC_MIN_VLAK');
+}
+
+function vlakheid(rgb: Buffer | Uint8Array, w: number, h: number): number {
+  let vlak = 0;
+  let tel = 0;
+  for (let y = 2; y < h - 2; y += 2) {
+    for (let x = 2; x < w - 2; x += 2) {
+      let s = 0;
+      let s2 = 0;
+      for (let dy = -2; dy <= 2; dy++) {
+        for (let dx = -2; dx <= 2; dx++) {
+          const p = ((y + dy) * w + x + dx) * 3;
+          const l = 0.299 * rgb[p] + 0.587 * rgb[p + 1] + 0.114 * rgb[p + 2];
+          s += l;
+          s2 += l * l;
+        }
+      }
+      const sd = Math.sqrt(Math.max(0, s2 / 25 - (s / 25) ** 2));
+      if (sd < 1.5) vlak++;
+      tel++;
+    }
+  }
+  return tel ? vlak / tel : 0;
+}
+
+export function analyseerGraphic(rgb: Buffer | Uint8Array, w: number, h: number): GraphicAnalyse {
+  const vlak = vlakheid(rgb, w, h);
+  return { ...analyseerInhoud(rgb, w, h), vlak };
+}
+
+function analyseerInhoud(rgb: Buffer | Uint8Array, w: number, h: number): { box: Box | null; woorden: number | null; glad?: number } {
   const drempel = instelling('GRAPHIC_KLEUR_DREMPEL');
   const n = w * h;
   const kanalen = [0, 1, 2].map((c) => {
@@ -217,7 +262,8 @@ export function analyseerGraphic(rgb: Buffer | Uint8Array, w: number, h: number)
     if (inHoek && (bx1 - bx0) * (by1 - by0) < 0.02) return false;
     return true;
   });
-  if (echt.length === 0) return { box: null, woorden: 0 };
+  const glad = 1 - inhoud / n;
+  if (echt.length === 0) return { box: null, woorden: 0, glad };
   const woorden = echt.reduce((t, c) => {
     const bw = c.x1 - c.x0 + 1;
     const bh = c.y1 - c.y0 + 1;
@@ -229,8 +275,8 @@ export function analyseerGraphic(rgb: Buffer | Uint8Array, w: number, h: number)
     x1: (Math.max(...echt.map((c) => c.x1)) + 1) / w,
     y1: (Math.max(...echt.map((c) => c.y1)) + 1) / h,
   };
-  if ((box.x1 - box.x0) * (box.y1 - box.y0) > 0.92) return { box: null, woorden };
-  return { box, woorden };
+  if ((box.x1 - box.x0) * (box.y1 - box.y0) > 0.92) return { box: null, woorden, glad };
+  return { box, woorden, glad };
 }
 
 /** De kleinste box die beide omvat; null blijft null (één onbetrouwbare meting maakt het geheel onbetrouwbaar). */
@@ -248,21 +294,56 @@ export function unie(boxen: (Box | null)[]): Box | null {
 /** Meet de inhoudsbox op een reeks brontijden en neemt de unie: animatie die op één frame nog niet in beeld is valt zo niet weg. */
 export type InhoudMeter = (tijden: number[]) => Promise<Box | null>;
 
-/** Box (unie) plus het grootste aantal leeseenheden over de frames: een animatie die tekst laat verschijnen telt volledig. */
-export type GraphicMeter = (tijden: number[]) => Promise<{ box: Box | null; woorden: number | null }>;
+/**
+ * Box (unie) plus het grootste aantal leeseenheden over de frames (een
+ * animatie die tekst laat verschijnen telt volledig), de mediane vlakheid, en
+ * — voor een camerabeeld zonder gevonden gezicht — waar het beeld beweegt
+ * (horizontaal zwaartepunt van het verschil tussen de frames): de beste
+ * schatting van waar de persoon staat.
+ */
+export type GraphicMeting = { box: Box | null; woorden: number | null; vlak: number; persoonX: number | null };
+export type GraphicMeter = (tijden: number[]) => Promise<GraphicMeting>;
 
 export function graphicMeterVia(bron: string): GraphicMeter {
   return async (tijden) => {
     const boxen: (Box | null)[] = [];
     const woorden: number[] = [];
+    const vlak: number[] = [];
+    const frames: Buffer[] = [];
     for (const t of tijden) {
       const rgb = await frameRgb(bron, t);
-      const a = rgb && rgb.length === MEET_B * MEET_H * 3 ? analyseerGraphic(rgb, MEET_B, MEET_H) : { box: null, woorden: null };
+      const geldig = rgb && rgb.length === MEET_B * MEET_H * 3;
+      const a = geldig ? analyseerGraphic(rgb, MEET_B, MEET_H) : { box: null, woorden: null, vlak: 0 };
+      if (geldig) frames.push(rgb);
       boxen.push(a.box);
       if (a.woorden !== null) woorden.push(a.woorden);
+      vlak.push(a.vlak);
     }
-    return { box: unie(boxen), woorden: woorden.length ? Math.max(...woorden) : null };
+    const mediaanVlak = [...vlak].sort((a, b) => a - b)[Math.floor(vlak.length / 2)] ?? 0;
+    return { box: unie(boxen), woorden: woorden.length ? Math.max(...woorden) : null, vlak: mediaanVlak, persoonX: bewegingX(frames) };
   };
+}
+
+/** Horizontaal zwaartepunt van wat er tussen de frames beweegt; null als er (bijna) niets beweegt. */
+export function bewegingX(frames: Buffer[]): number | null {
+  if (frames.length < 2) return null;
+  let som = 0;
+  let gewicht = 0;
+  for (let f = 1; f < frames.length; f++) {
+    const a = frames[f - 1];
+    const b = frames[f];
+    for (let y = 0; y < MEET_H; y += 2) {
+      for (let x = 0; x < MEET_B; x += 2) {
+        const p = (y * MEET_B + x) * 3;
+        const d = Math.abs(a[p] - b[p]) + Math.abs(a[p + 1] - b[p + 1]) + Math.abs(a[p + 2] - b[p + 2]);
+        if (d > 45) {
+          som += (x / MEET_B) * d;
+          gewicht += d;
+        }
+      }
+    }
+  }
+  return gewicht > 2000 ? Math.round((som / gewicht) * 1000) / 1000 : null;
 }
 
 export function inhoudMeterVia(bron: string): InhoudMeter {

@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 export const SCHEMA_VERSION = '1.0';
 export const PROMPT_VERSION_CHARACTER_MAP = 'charmap-3.2';
-export const PROMPT_VERSION_PLAN = 'plan-6.3';
+export const PROMPT_VERSION_PLAN = 'plan-6.4';
 
 // ------------------------------------------------------- stap 1: character map
 export const sleutelmomentSchema = z.object({

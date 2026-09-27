@@ -6,9 +6,16 @@
  * Draaien: npm run test:graphics
  */
 import { spawnSync } from 'node:child_process';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { resolveBinary } from '../src/lib/ingest/binaries';
-import { analyseerGraphic, inhoudKader } from '../src/lib/roughcut/graphics';
+import { analyseerGraphic, graphicMeterVia, inhoudKader, lijktGraphic } from '../src/lib/roughcut/graphics';
+import { deelstukken, vulScenes, type GezichtMeter } from '../src/lib/roughcut/scenes';
+import { keurGraphics } from '../src/lib/roughcut/keuring';
+import { behandelEindscherm, keurOverlay, overlayUitPixels, vermijdOverlay } from '../src/lib/roughcut/eindscherm';
+import { plakKoppeltekens } from '../src/lib/roughcut/ondertitels';
+import { pythonMetOpenCV } from '../src/lib/python';
 import { keurLeesbaar, leesLogregel, leestijd, leestijdPlan } from '../src/lib/roughcut/leestijd';
 import { instelling } from '../src/lib/roughcut/instellingen';
 import type { Shot } from '../src/lib/roughcut';
@@ -88,5 +95,99 @@ console.log('leestijd');
   toets('lang genoeg: geen aanpassing', leestijdPlan([genoeg, b], 'vullend').aanpassing.size === 0);
 }
 
-console.log(`\n${gedaan - gefaald}/${gedaan} geslaagd`);
-if (gefaald > 0) process.exit(1);
+async function vervolg() {
+  const fix = (n: string) => join(process.cwd(), 'scripts', 'fixtures', n);
+  const map = mkdtempSync(join(tmpdir(), 'clipper-test-graphics-'));
+  const video = (jpg: string, naam: string) => {
+    const uit = join(map, naam);
+    spawnSync(resolveBinary('ffmpeg'), ['-v', 'error', '-y', '-loop', '1', '-i', jpg, '-t', '4', '-r', '25', '-vf', 'scale=1920:1080', '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', uit]);
+    return uit;
+  };
+  try {
+    console.log('graphic of camerabeeld? (vlakheid)');
+    for (const n of ['graphic-voorraden.jpg', 'graphic-39.jpg']) {
+      const a = analyseerGraphic(pixels(fix(n)), 480, 270);
+      toets(`${n} lijkt een graphic`, lijktGraphic(a), `vlak ${a.vlak.toFixed(2)}`);
+    }
+    for (const n of ['wijd-studio.jpg', 'wijd-studio-2.jpg', 'eindscherm.jpg']) {
+      const a = analyseerGraphic(pixels(fix(n)), 480, 270);
+      toets(`${n} is een camerabeeld, geen graphic`, !lijktGraphic(a), `vlak ${a.vlak.toFixed(2)}`);
+    }
+
+    console.log('geen gezicht gevonden + camerabeeld = wijd shot, vullend');
+    {
+      const studio = video(fix('wijd-studio.jpg'), 'studio.mp4');
+      const graphic = video(fix('graphic-39.jpg'), 'graphic.mp4');
+      const geenGezicht: GezichtMeter = async (t) => t.map(() => false);
+      const wijd: Shot = { volgorde: 1, start: 0.1, end: 3.9, functie: 'setup' };
+      const r1 = await vulScenes(studio, [wijd], geenGezicht);
+      toets('camerabeeld zonder gezicht wordt als wijd shot herkend', r1.wijd === 1 && r1.graphic === 0, JSON.stringify(r1));
+      toets('en krijgt het vullende kader (geen postzegel)', deelstukken(wijd, 'vullend').every((d) => d.kader === 'vullend'), JSON.stringify(deelstukken(wijd, 'vullend')));
+      const g: Shot = { volgorde: 1, start: 0.1, end: 3.9, functie: 'setup' };
+      const r2 = await vulScenes(graphic, [g], geenGezicht);
+      toets('echte graphic blijft graphic (passend)', r2.graphic === 1 && deelstukken(g, 'vullend')[0].kader === 'blur', JSON.stringify(r2));
+      const keurWijd = await keurGraphics([{ volgorde: 1, start: 0.1, end: 3.9, functie: 'setup' }], 'vullend', geenGezicht, graphicMeterVia(studio));
+      toets('keuring: vullend wijd camerabeeld zonder gezicht is goed', keurWijd.goed === true && /1 wijd/.test(keurWijd.detail), keurWijd.detail);
+      const keurFout = await keurGraphics([{ volgorde: 1, start: 0.1, end: 3.9, functie: 'setup' }], 'vullend', geenGezicht, graphicMeterVia(graphic));
+      toets('keuring: vullende graphic blijft fout', keurFout.goed === false, keurFout.detail);
+    }
+
+    console.log('klein gezicht in een heel wijd shot (gezichten.py)');
+    {
+      const heel = video(fix('heel-wijd.jpg'), 'heelwijd.mp4');
+      const py = pythonMetOpenCV();
+      const r = spawnSync(py.cmd, [...py.voor, 'scripts/gezichten.py', heel, '[1.0, 2.0]', '1'], { encoding: 'utf8' });
+      const regel = (r.stdout ?? '').split('\n').reverse().find((x) => x.trim().startsWith('['));
+      const m = regel ? (JSON.parse(regel) as ({ breedte: number } | null)[]) : [];
+      toets('gezicht van ~4% beeldbreedte gevonden', m.length === 2 && m.every((x) => x && x.breedte < 0.06), regel?.slice(0, 120) ?? r.stderr?.slice(-200));
+    }
+
+    console.log('eindscherm');
+    {
+      const rgb = spawnSync(resolveBinary('ffmpeg'), ['-v', 'error', '-i', fix('eindscherm.jpg'), '-vf', 'scale=320:180', '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-'], { maxBuffer: 1e8 }).stdout;
+      const o = overlayUitPixels(rgb, 320, 180);
+      toets('abonneerknoppen gevonden in de onderste helft', o !== null && o.y0 > 0.6 && o.x0 < 0.4 && o.x1 > 0.6, JSON.stringify(o));
+      for (const n of ['wijd-studio.jpg', 'graphic-39.jpg']) {
+        const px = spawnSync(resolveBinary('ffmpeg'), ['-v', 'error', '-i', fix(n), '-vf', 'scale=320:180', '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-'], { maxBuffer: 1e8 }).stdout;
+        toets(`${n}: geen valse overlay (rood haar, oranje graphic)`, overlayUitPixels(px, 320, 180) === null);
+      }
+      if (o) {
+        const seg: Shot = { volgorde: 6, start: 330, end: 333, functie: 'button', focusX: 0.5, focusW: 0.13, gezicht: { x: 0.5, breedte: 0.13, top: 0.21, hoogte: 0.3 }, overlay: o };
+        toets('zonder ingreep: keuring ziet de overlay in beeld', keurOverlay([seg], 'vullend').goed === false, keurOverlay([seg], 'vullend').detail);
+        toets('kader boven de overlay gelegd', vermijdOverlay(seg), JSON.stringify(seg));
+        toets('daarna: overlay buiten beeld, keuring goed', keurOverlay([seg], 'vullend').goed === true, `${keurOverlay([seg], 'vullend').detail} zoom ${seg.zoom} focusY ${seg.focusY}`);
+        toets('gezicht blijft in beeld', (seg.focusY ?? 0) - 1 / (2 * (seg.zoom ?? 1)) <= 0.21 && (seg.focusY ?? 0) + 1 / (2 * (seg.zoom ?? 1)) >= 0.51);
+        // Kin in de overlay: niet weg te kadreren → inkorten tot vóór de overlay.
+        const laag: Shot = { volgorde: 6, start: 330, end: 338, functie: 'button', focusX: 0.5, gezicht: { x: 0.5, breedte: 0.13, top: 0.4, hoogte: 0.4 } };
+        const meter = async (t: number[]) => t.map((x) => (x >= 334 ? o : null));
+        const woorden = Array.from({ length: 20 }, (_, i) => ({ w: `w${i}`, s: 330 + i * 0.4, e: 330 + i * 0.4 + 0.3 }));
+        const es = await behandelEindscherm([laag], { bronDuur: 353, meter, bronWoorden: woorden });
+        toets('niet weg te kadreren → ingekort tot vóór de overlay', es.ingekort === 1 && laag.end < 334 && laag.end > 332, JSON.stringify({ es, eind: laag.end }));
+        const vroeg: Shot = { volgorde: 1, start: 100, end: 110, functie: 'setup' };
+        const es2 = await behandelEindscherm([vroeg], { bronDuur: 353, meter: async (t) => t.map(() => o) });
+        toets('shots buiten de laatste 30 s worden niet getoetst', es2.gemeten === 0);
+      }
+    }
+
+    console.log('ondertitels: koppeltekens bij elkaar');
+    {
+      const w = plakKoppeltekens([
+        { w: 'Zuid', s: 0, e: 0.3 }, { w: '-Afrika.', s: 0.3, e: 0.7 },
+        { w: 'EV-', s: 1, e: 1.2 }, { w: 'adoptie', s: 1.2, e: 1.6 }, { w: 'groeit', s: 1.7, e: 2 },
+      ]);
+      toets('"Zuid" + "-Afrika." → "Zuid-Afrika."', w[0].w === 'Zuid-Afrika.' && w[0].e === 0.7, JSON.stringify(w));
+      toets('"EV-" + "adoptie" → "EV-adoptie"', w[1].w === 'EV-adoptie', JSON.stringify(w));
+      toets('gewone woorden blijven los', w.length === 3 && w[2].w === 'groeit');
+    }
+  } finally {
+    rmSync(map, { recursive: true, force: true });
+  }
+
+  console.log(`\n${gedaan - gefaald}/${gedaan} geslaagd`);
+  if (gefaald > 0) process.exit(1);
+}
+
+vervolg().catch((e) => {
+  console.error(e);
+  process.exit(1);
+});

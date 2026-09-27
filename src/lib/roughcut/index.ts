@@ -11,7 +11,7 @@ import { assFilter } from './ondertitels';
 import { deelstukken, type Scene } from './scenes';
 import { inhoudKader } from './graphics';
 import { leesLogregel, leestijdPlan } from './leestijd';
-import { haalRenderSecties, sectiePlan, sectieTijd, sectieVoor, type RenderBron } from './renderbron';
+import { haalRenderSecties, sectieBeeldTijd, sectiePlan, sectieTijd, sectieVoor, type RenderBron } from './renderbron';
 
 export type Shot = {
   volgorde: number;
@@ -123,6 +123,8 @@ export type Shot = {
    * graphic, dan wisselt het kader op precies die bronknip (scenes.ts).
    */
   scenes?: Scene[];
+  /** Gemeten eindscherm-/abonneeroverlay (genormaliseerd, eindscherm.ts); het kader houdt die buiten beeld. */
+  overlay?: { x0: number; y0: number; x1: number; y1: number };
 };
 
 export type BurnOverlay = {
@@ -306,6 +308,7 @@ export async function maakRuweMontage(opties: {
     if (sectie) shotsUitSectie++;
     const invoerBestand = sectie?.pad ?? bronBestand;
     const bronTijd = (t: number) => (sectie ? sectieTijd(sectie, t) : t);
+    const beeldTijd = (t: number) => (sectie ? sectieBeeldTijd(sectie, t) : t);
     const bronHoogte = sectie?.hoogte ?? bronInfo?.hoogte ?? 1080;
     // Heeft de kadercontrole een zoom vastgesteld, dan wint die: hij is
     // getoetst tegen het werkelijke gezichtsvak. Anders de zoom die het shot
@@ -355,7 +358,9 @@ export async function maakRuweMontage(opties: {
       return (
         knip +
         kaderKeten(deel.kader, {
-          focusX: focusNaarX(shot.focus, focusInPaneel),
+          // Een wijd shot zonder gemeten gezicht: de geschatte persoonsplek
+          // (uit beweging) als er geen gemeten focus is.
+          focusX: focusNaarX(shot.focus, focusInPaneel ?? deel.persoonX ?? undefined),
           focusExpr: spoorDeel ? (spoorExpressie(spoorDeel) ?? undefined) : undefined,
           zoom,
           focusY: shot.focusY,
@@ -373,7 +378,7 @@ export async function maakRuweMontage(opties: {
     // Alleen aan de kanten waar een naad zit: het begin van de clip en het
     // einde blijven exact staan, zodat de totale lengte gelijk blijft aan de
     // som van de shots en beeld en geluid synchroon blijven.
-    invoer.push('-ss', bronTijd(shot.start).toFixed(3), '-t', duur.toFixed(3), '-i', invoerBestand);
+    invoer.push('-ss', beeldTijd(shot.start).toFixed(3), '-t', duur.toFixed(3), '-i', invoerBestand);
     invoer.push(
       '-ss', bronTijd(Math.max(0, shot.start - handleVoor)).toFixed(3),
       '-t', (duur + handleVoor + handleNa).toFixed(3),

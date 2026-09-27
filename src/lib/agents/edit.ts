@@ -9,7 +9,7 @@ import { EFFECTEN } from '../vault/effecten';
 import { geleerdeKennis } from '../vault/kennis';
 import { editNormenVoorPrompt, type NormContext } from '../vault/normen';
 
-export const EDIT_PROMPT_VERSIE = 'edit-1.3';
+export const EDIT_PROMPT_VERSIE = 'edit-1.4';
 
 /**
  * Wat de render werkelijk kan uitvoeren. De effectenvault beschrijft ook
@@ -100,7 +100,7 @@ Werk de zeven stappen af in volgorde en denk per shot:
 - Wie moet de kijker zien: de spreker of de reactie? De gezichtsdetectie kadreert standaard op wie er praat; "auto" is dus de norm. Per shot krijg je de meting mee (personen in beeld, hoe ver de spreker beweegt, waar hij staat). Kies alleen expliciet links/midden/rechts als er méér dan één persoon in beeld staat én de reactie van de ander sterker is dan de spreker — bij één persoon wordt een eigen focus genegeerd.
 - Kies alleen ingrepen uit de effectenvault hieronder: die lijst is precies wat de render kan uitvoeren. Een slug die er niet in staat wordt genegeerd.
 - Verdient dit shot een ingreep, of redt het zich? Hoogstens twee ingrepen per shot; een ingreep zonder functie kost aandacht.
-- Is dit een tijdsprong? Dan verplicht een tekstkaart met de sprong erop.
+- Is dit een tijdsprong? Zet dan een tekstkaart met de sprong erop als markering voor de editor (Premiere); in de clip zelf komt die kaart niet — de kijker merkt de sprong aan de knip.
 - "plankaarten" staan al vast (de verhaallijn heeft ze nodig) en worden getekend bij hun shot: zet op die shots geen eigen tekstkaart.
 - Kader: verticaal beeld hoort gevuld. "vullend" is de norm; "blur" alleen als de uitsnede echt iets belangrijks afsnijdt (twee mensen naast elkaar, tekst in beeld). Zwarte balken bestaan niet.
 - Waar valt de muziek weg? Op de payoff of een vragende beat — dat is het moment dat je groot maakt.

@@ -12,9 +12,10 @@ import { basisZoom } from './index';
 import { instelling } from './instellingen';
 import type { Shot } from './index';
 import { deelstukken, gezichtMeterVia, type GezichtMeter } from './scenes';
-import { boxBinnen, inhoudKader, inhoudMeterVia, type InhoudMeter } from './graphics';
+import { boxBinnen, graphicMeterVia, inhoudKader, lijktGraphic, type GraphicMeter } from './graphics';
 import type { Kader } from './kader';
 import { keurLeesbaar } from './leestijd';
+import { keurOverlay } from './eindscherm';
 
 /** Breedte/hoogte van een normale bron. */
 const BRON_VERHOUDING = 16 / 9;
@@ -314,7 +315,7 @@ export async function keurGraphics(
   segmenten: Shot[],
   kader: Kader,
   meter: GezichtMeter,
-  inhoudMeter?: InhoudMeter,
+  graphicMeter?: GraphicMeter,
 ): Promise<KeuringRegel> {
   const naam = 'graphics passend';
   const toetsen: { volgorde: number; van: number; tot: number; tijden: number[] }[] = [];
@@ -326,10 +327,10 @@ export async function keurGraphics(
   let ingezoomd = 0;
   for (const seg of segmenten) {
     for (const d of deelstukken(seg, kader)) {
-      if (d.kader !== 'blur' || !d.inhoud || !inhoudMeter) continue;
+      if (d.kader !== 'blur' || !d.inhoud || !graphicMeter) continue;
       ingezoomd++;
       const lengte = d.tot - d.van;
-      const opnieuw = await inhoudMeter([0.15, 0.6, 0.9].map((f) => seg.start + d.van + lengte * f));
+      const opnieuw = (await graphicMeter([0.1, 0.5, 0.9, 0.98].map((f) => seg.start + d.van + lengte * f))).box;
       if (opnieuw && !boxBinnen(opnieuw, inhoudKader(d.inhoud).r)) {
         inhoudFouten.push(`shot ${seg.volgorde} ${(seg.start + d.van).toFixed(1)}s: graphic-inhoud valt buiten beeld na inzoomen`);
       }
@@ -353,10 +354,18 @@ export async function keurGraphics(
   if (uitslag.every((u) => u === null)) return { naam, goed: null, detail: 'gezichtsmeting mislukt; niet te toetsen' };
   const fouten: string[] = [...inhoudFouten];
   let i = 0;
+  let wijd = 0;
   for (const t of toetsen) {
     const eigen = uitslag.slice(i, i + t.tijden.length);
     i += t.tijden.length;
     if (eigen.length > 0 && eigen.every((u) => u === false)) {
+      // Geen gezicht is nog geen graphic: een wijd camerashot hoort juist
+      // vullend. Alleen fout als het beeld ook op een graphic lijkt.
+      const beeld = graphicMeter ? await graphicMeter(t.tijden) : null;
+      if (beeld && !lijktGraphic(beeld)) {
+        wijd++;
+        continue;
+      }
       fouten.push(`shot ${t.volgorde} ${t.van.toFixed(1)}-${t.tot.toFixed(1)}s: geen gezicht maar vullend gekadreerd`);
     }
   }
@@ -365,7 +374,7 @@ export async function keurGraphics(
     goed: fouten.length === 0,
     detail:
       fouten.length === 0
-        ? `${toetsen.length} vullende deelstukken met gezicht, ${graphicDelen} passend (blur), ${ingezoomd} ingezoomd op de inhoud, niets buiten beeld`
+        ? `${toetsen.length} vullende deelstukken (${wijd} wijd camerabeeld zonder gevonden gezicht), ${graphicDelen} passend (blur), ${ingezoomd} ingezoomd op de inhoud, niets buiten beeld`
         : fouten.slice(0, 5).join('; '),
   };
 }
@@ -486,8 +495,8 @@ export async function keurMontage(
     kader?: Kader;
     /** Gezichtsmeter voor "graphics passend"; standaard gezichten.py op de bron. */
     gezichtMeter?: GezichtMeter;
-    /** Inhoudsmeter voor ingezoomde graphics; standaard ffmpeg op de bron. */
-    inhoudMeter?: InhoudMeter;
+    /** Graphic-meter (inhoud, vlakheid) voor ingezoomde graphics en wijde shots; standaard ffmpeg op de bron. */
+    graphicMeter?: GraphicMeter;
   } = {},
 ): Promise<Keuringsrapport> {
   const regels: KeuringRegel[] = [
@@ -498,14 +507,14 @@ export async function keurMontage(
     ...(await keurScript(montagePad, segmenten)),
     await keurNaden(montagePad, segmenten, bronWoorden),
     ...(opties.retentie ? [opties.retentie] : []),
-    ...(opties.kader ? [keurLeesbaar(segmenten, opties.kader)] : []),
+    ...(opties.kader ? [keurLeesbaar(segmenten, opties.kader), keurOverlay(segmenten, opties.kader)] : []),
     ...(opties.kader && (opties.gezichtMeter || opties.bronPad)
       ? [
           await keurGraphics(
             segmenten,
             opties.kader,
             opties.gezichtMeter ?? gezichtMeterVia(opties.bronPad as string, opties.python ?? { cmd: 'python3', voor: [] }),
-            opties.inhoudMeter ?? (opties.bronPad ? inhoudMeterVia(opties.bronPad) : undefined),
+            opties.graphicMeter ?? (opties.bronPad ? graphicMeterVia(opties.bronPad) : undefined),
           ),
         ]
       : []),

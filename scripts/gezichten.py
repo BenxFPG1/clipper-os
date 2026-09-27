@@ -64,7 +64,30 @@ if yunet is None:
 
 
 def detecteer(frame):
-    """Gezichten als (x, y, w, h) in pixels, plus de mondzone als die bekend is."""
+    """Gezichten als (x, y, w, h) in pixels, plus de mondzone als die bekend is.
+
+    Vindt de eerste ronde niets, dan nog één keer op een twee keer vergroot
+    beeld: YuNet mist gezichten onder ~30 px, en in een wijde studio-opname is
+    het gezicht van de spreker precies zo klein. Zonder die tweede ronde werd
+    een wijd shot "geen gezicht" en daarmee ten onrechte een graphic.
+    """
+    gevonden = detecteer_eenmaal(frame)
+    if gevonden or frame.shape[1] > 2400:
+        return gevonden
+    groot = cv2.resize(frame, None, fx=2.0, fy=2.0, interpolation=cv2.INTER_CUBIC)
+    terug = []
+    for ((x, y, w, h), mond, kijkt, ooghoogte, visueel) in detecteer_eenmaal(groot):
+        terug.append((
+            (x // 2, y // 2, max(1, w // 2), max(1, h // 2)),
+            tuple(v // 2 for v in mond) if mond else None,
+            kijkt,
+            ooghoogte / 2 if ooghoogte is not None else None,
+            visueel / 2 if visueel is not None else None,
+        ))
+    return terug
+
+
+def detecteer_eenmaal(frame):
     if yunet is not None:
         h, b = frame.shape[:2]
         yunet.setInputSize((b, h))
@@ -213,7 +236,10 @@ uit = []
 for t in tijden:
     frames = []
     for k in range(MONSTERS):
-        moment = max(0.0, float(t) - SPREIDING + (2 * SPREIDING) * k / max(1, MONSTERS - 1))
+        # Eén frame per tijdstip: precies op het tijdstip. De spreidingsformule
+        # gaf met één monster het begin van het venster (t − 0,5 s), zodat de
+        # dichte scan (scenes.ts) elke overgang een halve seconde te vroeg zag.
+        moment = float(t) if MONSTERS == 1 else max(0.0, float(t) - SPREIDING + (2 * SPREIDING) * k / max(1, MONSTERS - 1))
         cap.set(cv2.CAP_PROP_POS_MSEC, moment * 1000)
         ok, frame = cap.read()
         if ok:

@@ -206,7 +206,7 @@ ${signalenVoorPrompt(signalen) || '(geen meetdata beschikbaar)'}${
 
   let doctored = examined;
   try {
-    const rapport = keurVerhaaldokter(examined, { campagneNaam: input.campaignName });
+    const rapport = keurVerhaaldokter(examined, { campagneNaam: input.campaignName, videoDuur: input.durationSeconds });
     const signalenRapport = rapportVoorPrompt(rapport);
     if (rapport.signalen.length) console.log(`[planner] verhaaldokterpoort: ${rapport.signalen.length} signaal/signalen (uitvoerbaarheid, merk, omslag)`);
     // Opnieuw meten op de geëxamineerde shots (die kunnen verschoven zijn); het

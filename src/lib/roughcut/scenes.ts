@@ -3,7 +3,7 @@ import { resolveBinary } from '../ingest/binaries';
 import { instelling } from './instellingen';
 import type { Kader } from './kader';
 import type { Shot } from './index';
-import { graphicMeterVia, type Box, type GraphicMeter } from './graphics';
+import { graphicMeterVia, lijktGraphic, type Box, type GraphicMeter } from './graphics';
 
 /**
  * Kaderkeuze per scène binnen een shot.
@@ -29,10 +29,23 @@ export type Scene = {
   inhoud?: Box | null;
   /** Geschat aantal leeseenheden op de graphic (woorden, getallen); bepaalt de leestijd. */
   leeswoorden?: number | null;
+  /** Geen gezicht gevonden maar wél een camerabeeld (wijd shot): kader vullend op de persoon. */
+  wijd?: boolean;
+  /** Geschatte horizontale plek van de persoon (uit beweging) als er geen gezicht is gemeten. */
+  persoonX?: number | null;
 };
 
 /** Een deelstuk van een shot in shot-tijd (0 = begin van het shot), met het kader dat de render gebruikt. */
-export type Deelstuk = { van: number; tot: number; kader: Kader; gezicht: boolean | null; inhoud?: Box | null; leeswoorden?: number | null };
+export type Deelstuk = {
+  van: number;
+  tot: number;
+  kader: Kader;
+  gezicht: boolean | null;
+  inhoud?: Box | null;
+  leeswoorden?: number | null;
+  /** Geschatte persoonsplek in een wijd shot zonder gemeten gezicht. */
+  persoonX?: number | null;
+};
 
 /**
  * Het kader voor een shot als geheel — de regel van vóór de deelstukken: het
@@ -73,6 +86,7 @@ export function deelstukken(shot: Shot, kader: Kader): Deelstuk[] {
       gezicht: s.gezicht,
       inhoud: s.inhoud ?? null,
       leeswoorden: s.leeswoorden ?? null,
+      persoonX: s.persoonX ?? null,
     }))
     .sort((a, b) => a.van - b.van);
   // Gaten dichten en de randen op de shotgrenzen: de poort en de
@@ -226,9 +240,10 @@ export async function vulScenes(
   segmenten: Shot[],
   meter: GezichtMeter,
   opties: { graphicMeter?: GraphicMeter } = {},
-): Promise<{ shots: number; persoon: number; graphic: number; ingezoomd: number; metingen: number; overgangen: number; ms: number }> {
+): Promise<{ shots: number; persoon: number; graphic: number; ingezoomd: number; wijd: number; metingen: number; overgangen: number; ms: number }> {
   const graphicMeter = opties.graphicMeter ?? graphicMeterVia(bron);
   let ingezoomd = 0;
+  let wijd = 0;
   const begin = Date.now();
   const stap = instelling('SCENE_STAP');
   const glad = instelling('SCENE_GAT_GLAD');
@@ -276,21 +291,42 @@ export async function vulScenes(
     for (const [r, run] of runs.entries()) {
       const scene: Scene = { van: randen[r], tot: randen[r + 1], gezicht: run.gezicht };
       if (!run.gezicht) {
-        // De inhoud van de graphic op drie momenten, als unie: een animatie
-        // die op één frame nog niet volledig in beeld is valt zo niet weg.
-        // Wegblijven van de randen: daar loopt de overgang nog.
+        // De inhoud van de graphic op vijf momenten tot vlak voor het eind, als
+        // unie: een animatie die pas later tekst laat verschijnen ("< 3" kwam
+        // na de balk) valt zo niet weg — en het laatste frame is ook het frame
+        // dat bij een verlengde leestijd blijft staan.
         const d = scene.tot - scene.van;
-        const meting = await graphicMeter([0.25, 0.5, 0.75].map((f) => scene.van + d * f));
-        scene.inhoud = meting.box;
-        scene.leeswoorden = meting.woorden;
-        if (scene.inhoud) ingezoomd++;
+        const meting = await graphicMeter([0.15, 0.35, 0.55, 0.75, 0.95].map((f) => scene.van + d * f));
+        if (!lijktGraphic(meting)) {
+          // Geen gezicht gevonden, maar ook geen graphic: een camerabeeld
+          // (een wijd studioshot, iemand van opzij). Dat hoort vullend op de
+          // persoon, niet als postzegel tussen twee wazige balken.
+          scene.gezicht = true;
+          scene.wijd = true;
+          scene.persoonX = meting.persoonX;
+          wijd++;
+        } else {
+          scene.inhoud = meting.box;
+          scene.leeswoorden = meting.woorden;
+          if (scene.inhoud) ingezoomd++;
+        }
       }
       seg.scenes.push(scene);
     }
     shots++;
-    for (const run of runs) run.gezicht ? persoon++ : graphic++;
+    for (const sc of seg.scenes) sc.gezicht ? persoon++ : graphic++;
+    // Bleek elke run zonder gezicht een camerabeeld, dan is er geen graphic in
+    // dit shot: geen deelstukken nodig, wel de geschatte plek als die er is.
+    if (seg.scenes.every((sc) => sc.gezicht)) {
+      if (seg.focusX === undefined) {
+        const x = seg.scenes.find((sc) => typeof sc.persoonX === 'number')?.persoonX;
+        if (typeof x === 'number') seg.focusX = x;
+      }
+      seg.scenes = undefined;
+      shots--;
+    }
   }
-  return { shots, persoon, graphic, ingezoomd, metingen: alle.length, overgangen, ms: Date.now() - begin };
+  return { shots, persoon, graphic, ingezoomd, wijd, metingen: alle.length, overgangen, ms: Date.now() - begin };
 }
 
 /** Lege metingen opvullen met de dichtstbijzijnde buur; null als er helemaal niets gemeten is. */
