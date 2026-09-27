@@ -347,7 +347,12 @@ export async function vulScenes(
           // die in- of uitschuift (wipe, sectietitel) krijgt geen bevries-frame
           // en dus geen verlengde leestijd: dat bevroor in PLATINA clip 1 een
           // halve titel ("… TERM TALK") over een zin over iets anders.
-          if (beste >= 0 && meting.stabiel !== false) scene.bevries = tijden[beste];
+          // En inhoud die tegen de linker- of rechterrand van de bron aanligt
+          // is nog aan het in- of uitschuiven (of loopt eruit): ook niet
+          // vasthouden. Zo'n sectietitel ("… TERM TALK") meet als stilstaand
+          // omdat alleen de achtergrond beweegt.
+          const tegenRand = meting.box ? meting.box.x0 < 0.02 || meting.box.x1 > 0.98 : false;
+          if (beste >= 0 && meting.stabiel !== false && !tegenRand) scene.bevries = tijden[beste];
         }
       }
       seg.scenes.push(scene);
