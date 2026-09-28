@@ -184,6 +184,9 @@ const STANDAARD = {
   // Niet verlengen en niet als leesbaarheidsfout tellen. 1,2 s liet een
   // sectietitel van precies 1,2 s door (PLATINA clip 1).
   GRAPHIC_MIN_VOOR_LEESTIJD: 1.5,
+  // Aandeel van de leestijd dat een graphic minstens in beeld moet zijn om als
+  // leesbaar te gelden in de keuring.
+  GRAPHIC_LEES_GENOEG: 0.8,
   GRAPHIC_MAX_ONZICHTBAAR: 3,
   GRAPHIC_MIN_REST: 0.8,
 

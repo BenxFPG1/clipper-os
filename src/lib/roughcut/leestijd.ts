@@ -226,7 +226,12 @@ export function keurLeesbaar(segmenten: Shot[], kader: Kader): KeuringRegel {
   // Ook een begrensde blokvertraging is een bewuste keuze: het beeld loopt
   // dan al tot drie seconden achter op het geluid.
   const bewust = (r?: string) => /^(punchline|blok: vertraging begrensd|vasthouden begrensd)/.test(r ?? '');
-  const fout = kort.filter((x) => !bewust(x.reden));
+  // De leestijd is een ruime bovengrens (tot 4 s); een graphic die er
+  // minstens 80% van krijgt is leesbaar. Alleen daaronder is het een fout.
+  // (PLATINA clip 3: drie graphics op 3,2–3,4 van 4,0 s, beperkt doordat de
+  // spreker erna niet meer kon inleveren — goed te lezen.)
+  const genoeg = (x: { getoond: number; nodig: number }) => x.getoond >= instelling('GRAPHIC_LEES_GENOEG') * x.nodig;
+  const fout = kort.filter((x) => !bewust(x.reden) && !genoeg(x));
   const n = (x: number) => x.toFixed(1).replace('.', ',');
   return {
     naam,
