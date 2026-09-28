@@ -63,7 +63,7 @@ const isGraphic = (seg: Shot, d: { kader: Kader; gezicht: boolean | null }) =>
 
 /** Het plan voor een hele montage (segmenten in volgorde). Puur rekenwerk. */
 export function leestijdPlan(segmenten: Shot[], kader: Kader): LeesPlan {
-  type Stuk = { shot: number; deel: number; start: number; duur: number; graphic: boolean; woorden: number | null; functie: string; inhoud?: Box | null; houdbaar: boolean; geenBevries?: string };
+  type Stuk = { shot: number; deel: number; start: number; duur: number; graphic: boolean; woorden: number | null; functie: string; inhoud?: Box | null; houdbaar: boolean; geenBevries?: string; herkomst: string };
   const stukken: Stuk[] = [];
   let cursor = 0;
   segmenten.forEach((seg, i) => {
@@ -78,6 +78,11 @@ export function leestijdPlan(segmenten: Shot[], kader: Kader): LeesPlan {
         functie: seg.functie,
         inhoud: d.inhoud,
         geenBevries: d.geenBevries,
+        // Waar dit stuk vandaan komt, voor de logregel: zonder dit was niet te
+        // zien waaróm een graphic geen vasthoudframe had.
+        herkomst:
+          `shot ${seg.volgorde} bron ${(seg.start + d.van).toFixed(1)}–${(seg.start + d.tot).toFixed(1)} s, ` +
+          (seg.scenes?.length ? `scène (gezicht ${d.gezicht})` : `heel shot (beeldtype ${seg.beeldtype ?? '—'})`),
         // Alleen vasthouden met een gemeten graphic-frame binnen dit stuk.
         // Zonder dat viel de render terug op het laatste frame van het stuk,
         // en dat lag bij een overgang al in het camerabeeld: de spreker stond
@@ -121,7 +126,7 @@ export function leestijdPlan(segmenten: Shot[], kader: Kader): LeesPlan {
       return { g, nodig, tekort: tekort > 0.05 ? tekort : 0, telt: true, reden: undefined as string | undefined };
     });
     for (const t of tekorten) if (t.tekort > 0 && !t.g.houdbaar) {
-      t.reden = `geen gemeten graphic-frame om vast te houden${t.g.geenBevries ? `: ${t.g.geenBevries}` : ''}`;
+      t.reden = `geen gemeten graphic-frame om vast te houden${t.g.geenBevries ? `: ${t.g.geenBevries}` : ''} [${t.g.herkomst}]`;
       t.tekort = 0;
       (t as { geenFrame?: boolean }).geenFrame = true;
     }
