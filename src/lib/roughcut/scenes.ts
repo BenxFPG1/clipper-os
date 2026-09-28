@@ -100,9 +100,18 @@ export function deelstukken(shot: Shot, kader: Kader): Deelstuk[] {
       // liggen al tussen het laatste graphic-meetmoment en het eerste gezicht.
       // Zonder deze terugval kregen twee graphics in PLATINA clip 3 nooit
       // leestijd, via een pad waarop de meting het frame niet had gezet.
-      bevries:
-        s.bevries ??
-        (s.gezicht === false && !s.wijd && !s.geenBevries ? s.van + 0.7 * (s.tot - s.van) : undefined),
+      //
+      // Scènes staan in absolute brontijd en overleven latere grensverschui-
+      // vingen (poort, retentie); het gemeten frame kan daardoor búíten het
+      // huidige shot vallen. Ligt het niet in het stuk dat overblijft, dan de
+      // 70%-terugval op dát stuk.
+      bevries: (() => {
+        const van = Math.max(shot.start, s.van);
+        const tot = Math.min(shot.end, s.tot);
+        if (s.bevries !== undefined && s.bevries >= van && s.bevries <= tot) return s.bevries;
+        if (s.gezicht === false && !s.wijd && !s.geenBevries && tot > van) return van + 0.7 * (tot - van);
+        return undefined;
+      })(),
       geenBevries: s.geenBevries,
     }))
     .sort((a, b) => a.van - b.van);
