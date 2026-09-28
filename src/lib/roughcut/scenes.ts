@@ -281,11 +281,13 @@ export async function vulScenes(
     const ts = perSeg[i];
     const ruw = uitslag.slice(cursor, cursor + ts.length);
     cursor += ts.length;
-    const waarden = vulGaten(ruw);
-    if (!waarden) {
-      seg.scenes = undefined; // niets gemeten: het kader van de visuele controle blijft
-      continue;
-    }
+    // Leverde de gezichtsdetectie voor dit shot helemaal niets op, dan niet
+    // meer blind het oordeel van de visuele controle volgen: behandel het als
+    // 'geen gezicht gevonden', zodat de vlakheidsmeting per moment beslist
+    // tussen graphic (met inhoud, leeswoorden en vasthoudframe) en camerabeeld
+    // (vullend). Zonder dit kregen twee graphics in PLATINA clip 3 nooit een
+    // leestijd-frame — ze kwamen niet eens langs de graphic-meting.
+    const waarden = vulGaten(ruw) ?? ts.map(() => false);
     const runs = await splitsOpBeeldsoort(strijkGlad(maakRuns(waarden), stap, glad), ts, graphicMeter, stap, glad);
     if (runs.length === 1 && runs[0].gezicht) {
       seg.scenes = undefined;
