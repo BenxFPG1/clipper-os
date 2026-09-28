@@ -94,7 +94,15 @@ export function deelstukken(shot: Shot, kader: Kader): Deelstuk[] {
       inhoud: s.inhoud ?? null,
       leeswoorden: s.leeswoorden ?? null,
       persoonX: s.persoonX ?? null,
-      bevries: s.bevries,
+      // Een graphic-scène zonder gemeten vasthoudframe én zonder reden om er
+      // geen te nemen (niet bewegend, niet tegen de rand) krijgt het moment op
+      // 70% van de scène. Dat ligt altijd binnen de graphic: de scènegrenzen
+      // liggen al tussen het laatste graphic-meetmoment en het eerste gezicht.
+      // Zonder deze terugval kregen twee graphics in PLATINA clip 3 nooit
+      // leestijd, via een pad waarop de meting het frame niet had gezet.
+      bevries:
+        s.bevries ??
+        (s.gezicht === false && !s.wijd && !s.geenBevries ? s.van + 0.7 * (s.tot - s.van) : undefined),
       geenBevries: s.geenBevries,
     }))
     .sort((a, b) => a.van - b.van);
