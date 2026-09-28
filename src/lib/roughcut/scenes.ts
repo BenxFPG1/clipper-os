@@ -3,7 +3,7 @@ import { resolveBinary } from '../ingest/binaries';
 import { instelling } from './instellingen';
 import type { Kader } from './kader';
 import type { Shot } from './index';
-import { graphicMeterVia, lijktGraphic, type Box, type GraphicMeter } from './graphics';
+import { graphicMeterVia, lijktGraphic, oppervlak, unie, type Box, type GraphicMeter, type GraphicMeting } from './graphics';
 
 /**
  * Kaderkeuze per scène binnen een shot.
@@ -340,23 +340,8 @@ export async function vulScenes(
           // passende kader (PLATINA clip 1, 18–21 s). Het vlakste frame is
           // het frame waarop de graphic het volledigst in beeld staat; bij
           // gelijke vlakheid wint het latere (meer ingeanimeerde) frame.
-          const vlakken = meting.vlakken ?? [];
-          let beste = -1;
-          for (let k = 0; k < tijden.length; k++) {
-            const v = vlakken[k] ?? 0;
-            if (v < instelling('GRAPHIC_MIN_VLAK')) continue;
-            if (beste < 0 || v >= (vlakken[beste] ?? 0) - 0.01) beste = k;
-          }
-          // Alleen een stilstaande graphic is iets om te lezen. Een graphic
-          // die in- of uitschuift (wipe, sectietitel) krijgt geen bevries-frame
-          // en dus geen verlengde leestijd: dat bevroor in PLATINA clip 1 een
-          // halve titel ("… TERM TALK") over een zin over iets anders.
-          // En inhoud die tegen de linker- of rechterrand van de bron aanligt
-          // is nog aan het in- of uitschuiven (of loopt eruit): ook niet
-          // vasthouden. Zo'n sectietitel ("… TERM TALK") meet als stilstaand
-          // omdat alleen de achtergrond beweegt.
-          const tegenRand = meting.box ? meting.box.x0 < 0.02 || meting.box.x1 > 0.98 : false;
-          if (beste >= 0 && meting.stabiel !== false && !tegenRand) scene.bevries = tijden[beste];
+          const bevries = kiesBevries(tijden, meting);
+          if (bevries !== undefined) scene.bevries = bevries;
         }
       };
     for (const [r, run] of runs.entries()) {
@@ -401,6 +386,56 @@ function vulGaten(ruw: (boolean | null)[]): boolean[] | null {
   for (let i = 1; i < uit.length; i++) if (uit[i] === null) uit[i] = uit[i - 1];
   for (let i = uit.length - 2; i >= 0; i--) if (uit[i] === null) uit[i] = uit[i + 1];
   return uit as boolean[];
+}
+
+
+/**
+ * Het frame dat bij een verlengde leestijd blijft staan, of undefined als
+ * deze graphic niet vastgehouden mag worden. Puur rekenwerk op de meting.
+ *
+ * Voorkeur: het duidelijkste (vlakste) frame van een stilstaande graphic.
+ * Een graphic die in- of uitschuift of tegen de bronrand ligt krijgt niets
+ * (bevroor anders een halve sectietitel, PLATINA clip 1). Een graphic die
+ * zich opbouwt krijgt zijn eindstand (PLATINA clip 3).
+ */
+export function kiesBevries(tijden: number[], meting: GraphicMeting): number | undefined {
+  const vlakken = meting.vlakken ?? [];
+  let beste = -1;
+  for (let k = 0; k < tijden.length; k++) {
+    const v = vlakken[k] ?? 0;
+    if (v < instelling('GRAPHIC_MIN_VLAK')) continue;
+    if (beste < 0 || v >= (vlakken[beste] ?? 0) - 0.01) beste = k;
+  }
+  // Alleen een stilstaande graphic is iets om te lezen. Een graphic
+  // die in- of uitschuift (wipe, sectietitel) krijgt geen bevries-frame
+  // en dus geen verlengde leestijd: dat bevroor in PLATINA clip 1 een
+  // halve titel ("… TERM TALK") over een zin over iets anders.
+  // En inhoud die tegen de linker- of rechterrand van de bron aanligt
+  // is nog aan het in- of uitschuiven (of loopt eruit): ook niet
+  // vasthouden. Zo'n sectietitel ("… TERM TALK") meet als stilstaand
+  // omdat alleen de achtergrond beweegt.
+  const tegenRand = meting.box ? meting.box.x0 < 0.02 || meting.box.x1 > 0.98 : false;
+  //
+  // Uitzondering: een graphic die zich OPBOUWT ("1 zeldzaam", dan "2
+  // onmisbaar", dan "3 kwetsbaar") is niet stilstaand, maar zijn
+  // eindstand bevat alle inhoud en is precies wat je wilt lezen. Het
+  // vlakste frame is daar juist het leegste; dus het laatste
+  // graphic-moment, mits die eindbox (vrijwel) de hele unie dekt.
+  const boxen = meting.boxen ?? [];
+  let laatsteGraphic = -1;
+  for (let k = tijden.length - 1; k >= 0; k--) {
+    if ((vlakken[k] ?? 0) >= instelling('GRAPHIC_MIN_VLAK') && boxen[k]) {
+      laatsteGraphic = k;
+      break;
+    }
+  }
+  const u = unie(boxen);
+  const eind = laatsteGraphic >= 0 ? boxen[laatsteGraphic] : null;
+  const opbouw =
+    meting.stabiel === false && !!u && !!eind && oppervlak(eind) / Math.max(1e-6, oppervlak(u)) >= 0.9;
+  if (!tegenRand && beste >= 0 && meting.stabiel !== false) return tijden[beste];
+  if (!tegenRand && opbouw) return tijden[laatsteGraphic];
+  return undefined;
 }
 
 type Run = { van: number; tot: number; gezicht: boolean };

@@ -16,7 +16,7 @@ import { resolveBinary } from '../src/lib/ingest/binaries';
 import { analyseerGraphic, graphicMeterVia, inhoudKader, lijktGraphic, stabieleInhoud } from '../src/lib/roughcut/graphics';
 import { keurGraphicsDetail, type GraphicFout } from '../src/lib/roughcut/keuring';
 import { herstelNaKeuring, zelfherstelStap } from '../src/lib/roughcut/herstel';
-import { deelstukken, splitsOpBeeldsoort, vulScenes, type GezichtMeter } from '../src/lib/roughcut/scenes';
+import { deelstukken, kiesBevries, splitsOpBeeldsoort, vulScenes, type GezichtMeter } from '../src/lib/roughcut/scenes';
 import { keurGraphics } from '../src/lib/roughcut/keuring';
 import { behandelEindscherm, keurOverlay, overlayUitPixels, vermijdOverlay } from '../src/lib/roughcut/eindscherm';
 import { plakKoppeltekens } from '../src/lib/roughcut/ondertitels';
@@ -324,6 +324,29 @@ async function vervolg() {
     const flikker = async (t: number[]) => ({ vlak: Math.abs(t[0] - 178) < 0.1 ? 0.44 : 0.8, box: null, stabiel: true, woorden: 0, persoonX: 0.5 }) as never;
     const een = await splitsOpBeeldsoort([{ van: 0, tot: 12, gezicht: false }], ts, flikker, 0.4, 0.6);
     toets('één twijfelframe geeft geen extra wissel', een.length === 1, JSON.stringify(een));
+  }
+
+  // Opbouwende graphic (PLATINA clip 3: "1 zeldzaam", "2 onmisbaar", "3
+  // kwetsbaar"): niet stilstaand, maar de eindstand bevat alles → die wordt
+  // het bevries-frame, niet het vlakste (= leegste) begin.
+  {
+    const tijden = [10.4, 11.2, 12.0, 12.8, 13.6];
+    const boxen = [
+      { x0: 0.1, y0: 0.3, x1: 0.35, y1: 0.7 },
+      { x0: 0.1, y0: 0.3, x1: 0.35, y1: 0.7 },
+      { x0: 0.1, y0: 0.3, x1: 0.6, y1: 0.7 },
+      { x0: 0.1, y0: 0.3, x1: 0.9, y1: 0.7 },
+      { x0: 0.1, y0: 0.3, x1: 0.9, y1: 0.7 },
+    ];
+    const vlakken = [0.9, 0.88, 0.85, 0.82, 0.82];
+    const opbouw = kiesBevries(tijden, { box: boxen[4], woorden: 6, vlak: 0.85, persoonX: null, boxen, vlakken, stabiel: false });
+    toets('opbouwende graphic krijgt de eindstand als bevries-frame', opbouw === 13.6, String(opbouw));
+    const wegschuivend = kiesBevries(tijden, { box: { x0: 0.1, y0: 0.3, x1: 0.9, y1: 0.7 }, woorden: 6, vlak: 0.85, persoonX: null, boxen: [...boxen].reverse(), vlakken, stabiel: false });
+    toets('graphic die krimpt/wegschuift krijgt niets', wegschuivend === undefined, String(wegschuivend));
+    const stil = kiesBevries(tijden, { box: boxen[4], woorden: 6, vlak: 0.85, persoonX: null, boxen: boxen.map(() => boxen[4]), vlakken, stabiel: true });
+    toets('stilstaande graphic: het vlakste frame', stil === 10.4, String(stil));
+    const rand = kiesBevries(tijden, { box: { x0: 0.0, y0: 0.3, x1: 0.95, y1: 0.7 }, woorden: 3, vlak: 0.85, persoonX: null, boxen, vlakken, stabiel: true });
+    toets('inhoud tegen de bronrand: niets', rand === undefined, String(rand));
   }
 
   console.log(`\n${gedaan - gefaald}/${gedaan} geslaagd`);

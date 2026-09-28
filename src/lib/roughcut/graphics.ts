@@ -317,7 +317,7 @@ export type GraphicMeting = {
   stabiel?: boolean;
 };
 
-const oppervlak = (b: Box) => Math.max(0, b.x1 - b.x0) * Math.max(0, b.y1 - b.y0);
+export const oppervlak = (b: Box) => Math.max(0, b.x1 - b.x0) * Math.max(0, b.y1 - b.y0);
 
 /** Zijn alle boxen er, en beslaan de eerste én de laatste elk het grootste deel van de unie? */
 export function stabieleInhoud(boxen: (Box | null)[]): boolean {
