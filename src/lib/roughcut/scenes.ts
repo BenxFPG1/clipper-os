@@ -114,7 +114,10 @@ export function deelstukken(shot: Shot, kader: Kader): Deelstuk[] {
     const vorige = samen[samen.length - 1];
     // Samenvoegen alleen bij hetzelfde kader én dezelfde graphic-kadrering:
     // twee graphics na elkaar met een andere inhoud houden elk hun eigen inzoom.
-    if (vorige && vorige.kader === s.kader && JSON.stringify(vorige.inhoud ?? null) === JSON.stringify(s.inhoud ?? null)) {
+    // Twee verschillende graphics (twee scènes zonder gezicht) blijven twee
+    // deelstukken, ook met hetzelfde kader: elk heeft zijn eigen leestijd.
+    const tweeGraphics = vorige?.gezicht === false && s.gezicht === false;
+    if (vorige && !tweeGraphics && vorige.kader === s.kader && JSON.stringify(vorige.inhoud ?? null) === JSON.stringify(s.inhoud ?? null)) {
       vorige.tot = s.tot;
       if (vorige.gezicht !== s.gezicht) vorige.gezicht = vorige.gezicht || s.gezicht;
     } else samen.push({ ...s });
@@ -245,11 +248,12 @@ export async function vulScenes(
   segmenten: Shot[],
   meter: GezichtMeter,
   opties: { graphicMeter?: GraphicMeter } = {},
-): Promise<{ shots: number; persoon: number; graphic: number; ingezoomd: number; wijd: number; animerend: number; metingen: number; overgangen: number; ms: number }> {
+): Promise<{ shots: number; persoon: number; graphic: number; ingezoomd: number; wijd: number; animerend: number; graphicSplitsingen: number; metingen: number; overgangen: number; ms: number }> {
   const graphicMeter = opties.graphicMeter ?? graphicMeterVia(bron);
   let ingezoomd = 0;
   let wijd = 0;
   let animerend = 0;
+  let graphicSplitsingen = 0;
   const begin = Date.now();
   const stap = instelling('SCENE_STAP');
   const glad = instelling('SCENE_GAT_GLAD');
@@ -298,9 +302,9 @@ export async function vulScenes(
     }
     const randen = [seg.start, ...grenzen, seg.end];
     seg.scenes = [];
-    for (const [r, run] of runs.entries()) {
-      const scene: Scene = { van: randen[r], tot: randen[r + 1], gezicht: run.gezicht };
-      if (!run.gezicht) {
+    // Meet één graphic-scène: camerabeeld of graphic, inhoud, leeswoorden en
+    // het vast te houden frame.
+    const meetGraphic = async (scene: Scene) => {
         // De inhoud van de graphic op vijf momenten tot vlak voor het eind, als
         // unie: een animatie die pas later tekst laat verschijnen ("< 3" kwam
         // na de balk) valt zo niet weg — en het laatste frame is ook het frame
@@ -354,9 +358,26 @@ export async function vulScenes(
           const tegenRand = meting.box ? meting.box.x0 < 0.02 || meting.box.x1 > 0.98 : false;
           if (beste >= 0 && meting.stabiel !== false && !tegenRand) scene.bevries = tijden[beste];
         }
+      };
+    for (const [r, run] of runs.entries()) {
+      if (run.gezicht) {
+        seg.scenes.push({ van: randen[r], tot: randen[r + 1], gezicht: true });
+        continue;
       }
-      seg.scenes.push(scene);
+      // Meerdere graphics direct na elkaar zitten in één run zonder gezicht.
+      // Ze worden gesplitst op de scènepieken ertussen, zodat elke graphic
+      // zijn eigen leestijd, inhoud en vasthoudframe krijgt (leestijd.ts
+      // behandelt ze daarna als blok).
+      const wissels = await graphicWissels(bron, randen[r], randen[r + 1]);
+      const grenzenRun = [randen[r], ...wissels, randen[r + 1]];
+      for (let k = 0; k + 1 < grenzenRun.length; k++) {
+        const scene: Scene = { van: grenzenRun[k], tot: grenzenRun[k + 1], gezicht: false };
+        await meetGraphic(scene);
+        seg.scenes.push(scene);
+      }
+      if (wissels.length) graphicSplitsingen += wissels.length;
     }
+
     shots++;
     for (const sc of seg.scenes) sc.gezicht ? persoon++ : graphic++;
     // Bleek elke run zonder gezicht een camerabeeld, dan is er geen graphic in
@@ -370,7 +391,7 @@ export async function vulScenes(
       shots--;
     }
   }
-  return { shots, persoon, graphic, ingezoomd, wijd, animerend, metingen: alle.length, overgangen, ms: Date.now() - begin };
+  return { shots, persoon, graphic, ingezoomd, wijd, animerend, graphicSplitsingen, metingen: alle.length, overgangen, ms: Date.now() - begin };
 }
 
 /** Lege metingen opvullen met de dichtstbijzijnde buur; null als er helemaal niets gemeten is. */
@@ -397,6 +418,72 @@ type Run = { van: number; tot: number; gezicht: boolean };
  * formeel 'zonder gezicht'; de bestaande meting per scene herkent het daarna
  * als wijd camerabeeld en kadert het vullend.
  */
+/**
+ * Waar in een stuk zonder gezicht de ene graphic overgaat in de volgende.
+ *
+ * Geen scènescore-drempel: twee graphics in dezelfde huisstijl (zelfde
+ * oranje vlak, andere tekst) geven maar een kleine score, en een inanimerende
+ * graphic veel kleine. Wel: het stuk op 5 beelden per seconde bekijken, de
+ * stilstaande stukken (plateaus) zoeken, en twee opeenvolgende plateaus
+ * waarvan de inhoud duidelijk verschilt als twee graphics zien — de grens op
+ * het frame met de grootste verandering ertussen.
+ */
+export async function graphicWissels(bron: string, van: number, tot: number): Promise<number[]> {
+  const minAfstand = instelling('SCENE_GRAPHIC_MIN_AFSTAND');
+  if (tot - van < 2 * minAfstand) return [];
+  const B = 96;
+  const H = 54;
+  const FPS = 5;
+  const buf = await new Promise<Buffer>((klaar) => {
+    const kind = spawn(
+      resolveBinary('ffmpeg'),
+      ['-nostdin', '-hide_banner', '-loglevel', 'error', '-ss', van.toFixed(3), '-t', (tot - van).toFixed(3), '-i', bron, '-an',
+        '-vf', `fps=${FPS},scale=${B}:${H}`, '-f', 'rawvideo', '-pix_fmt', 'gray', '-'],
+      { stdio: ['ignore', 'pipe', 'ignore'] },
+    );
+    const delen: Buffer[] = [];
+    kind.stdout.on('data', (d: Buffer) => delen.push(d));
+    kind.on('error', () => klaar(Buffer.alloc(0)));
+    kind.on('close', () => klaar(Buffer.concat(delen)));
+  });
+  const n = B * H;
+  const frames: Buffer[] = [];
+  for (let i = 0; i + n <= buf.length; i += n) frames.push(buf.subarray(i, i + n));
+  if (frames.length < 4) return [];
+  const verschil = (a: Buffer, b: Buffer) => {
+    let s = 0;
+    for (let k = 0; k < n; k++) s += Math.abs(a[k] - b[k]);
+    return s / n;
+  };
+  const d = frames.slice(1).map((f, k) => verschil(frames[k], f));
+  const stil = instelling('SCENE_GRAPHIC_STIL');
+  // Plateaus: aaneengesloten stilstand van minstens 3 frames (0,6 s).
+  const plateaus: { van: number; tot: number }[] = [];
+  let begin = -1;
+  for (let k = 0; k <= d.length; k++) {
+    const isStil = k < d.length && d[k] < stil;
+    if (isStil && begin < 0) begin = k;
+    if (!isStil && begin >= 0) {
+      if (k - begin >= 2) plateaus.push({ van: begin, tot: k }); // frames begin..k
+      begin = -1;
+    }
+  }
+  const wissels: number[] = [];
+  for (let p = 0; p + 1 < plateaus.length; p++) {
+    const A = frames[plateaus[p].tot];
+    const Bf = frames[plateaus[p + 1].van];
+    if (verschil(A, Bf) < instelling('SCENE_GRAPHIC_ANDERS')) continue; // dezelfde graphic, even bewogen
+    // De grens op de grootste verandering tussen de twee plateaus.
+    let beste = plateaus[p].tot;
+    for (let k = plateaus[p].tot; k < plateaus[p + 1].van; k++) if (d[k] > d[beste]) beste = k;
+    const t = van + (beste + 1) / FPS;
+    if (t - van >= minAfstand && tot - t >= minAfstand && wissels.every((w) => Math.abs(w - t) >= minAfstand)) {
+      wissels.push(Math.round(t * 1000) / 1000);
+    }
+  }
+  return wissels;
+}
+
 export async function splitsOpBeeldsoort(
   runs: Run[],
   ts: number[],

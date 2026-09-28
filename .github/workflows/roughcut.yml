@@ -82,6 +82,14 @@ jobs:
           key: pip-roughcut-${{ runner.os }}
 
       # Gezichtsdetectie voor het kadreren van de verticale uitsnede.
+      # Whisper-modellen (small voor de hele video, large-v3-turbo voor de
+      # ondertitelbereiken) tussen runs bewaren: large-v3-turbo is ~1,6 GB en
+      # downloaden kost anders elke run een minuut.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-whisper-${{ runner.os }}-v1
+
       - name: Installeer OpenCV en faster-whisper
         run: pip3 install --quiet "opencv-python-headless<5" "numpy<2.3" faster-whisper
 

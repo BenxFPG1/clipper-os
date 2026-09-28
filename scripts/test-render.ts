@@ -30,7 +30,8 @@ import { keurRetentie, pasRetentieToe } from '../src/lib/roughcut/retentie';
 import { poort } from '../src/lib/roughcut/poort';
 import { keurKnippen } from '../src/lib/roughcut/keuring';
 import { STANDAARD_DOELEN } from '../src/lib/vault/normen';
-import { deelstukken, detecteerSceneKnippen, strijkGlad, vulScenes, type GezichtMeter } from '../src/lib/roughcut/scenes';
+import { deelstukken, detecteerSceneKnippen, graphicWissels, strijkGlad, vulScenes, type GezichtMeter } from '../src/lib/roughcut/scenes';
+import { leestijdPlan } from '../src/lib/roughcut/leestijd';
 import { keurGraphics } from '../src/lib/roughcut/keuring';
 import { plaatsRegels, ondertitelMaat, gezichtOpBeeld, fontKlopt } from '../src/lib/roughcut/ondertitels';
 import { kaderKeten } from '../src/lib/roughcut/kader';
@@ -536,6 +537,73 @@ async function main() {
         toets('tijdens het vasthouden staat de graphic (oranje), niet de spreker', px[0] > 200 && px[1] > 80 && px[1] < 160 && px[2] < 60, `rgb ${px[0]},${px[1]},${px[2]}`);
       } catch (e) {
         toets('render met vasthoudframe slaagt', false, (e as Error).message.slice(-400));
+      }
+    }
+
+    // 12. Drie graphics direct na elkaar (elk 1,8 s, veel tekst) en dan een
+    //     spreker. Het blok leent van de spreker: elke graphic blijft langer
+    //     staan, de latere komen later in beeld, de spreker levert de som in.
+    console.log('leestijd: blok van drie graphics, dan de spreker');
+    {
+      const blokWerk = join(map, 'blokwerk');
+      const fsp = await import('node:fs/promises');
+      await fsp.mkdir(blokWerk, { recursive: true });
+      fontVoor(null);
+      const kleuren = ['#1f4e9e', '#1e7a3a', '#8a1f7a'];
+      const delen: string[] = [];
+      for (const [i, kleur] of kleuren.entries()) {
+        const doek = createCanvas(1280, 720);
+        const c = doek.getContext('2d');
+        c.fillStyle = kleur;
+        c.fillRect(0, 0, 1280, 720);
+        c.fillStyle = '#ffffff';
+        c.font = '44px "Archivo Black"';
+        c.textAlign = 'center';
+        for (let r = 0; r < 5; r++) c.fillText(`REGEL ${r + 1} VAN GRAPHIC ${i + 1} MET TEKST`, 640, 200 + r * 80);
+        const png = join(blokWerk, `g${i}.png`);
+        await fsp.writeFile(png, doek.toBuffer('image/png'));
+        const mp4 = join(blokWerk, `g${i}.mp4`);
+        ff(['-loop', '1', '-i', png, '-t', '1.8', '-r', '25', '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', mp4]);
+        delen.push(mp4);
+      }
+      const spreker = join(blokWerk, 'spreker.mp4');
+      ff(['-f', 'lavfi', '-i', 'testsrc=size=1280x720:rate=25:duration=6', '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', spreker]);
+      const blokBron = join(blokWerk, 'bron.mp4');
+      const gen = ff([
+        ...[...delen, spreker].flatMap((d) => ['-i', d]),
+        '-f', 'lavfi', '-i', 'sine=frequency=220:duration=11.4',
+        '-filter_complex', '[0:v][1:v][2:v][3:v]concat=n=4:v=1:a=0[v]', '-map', '[v]', '-map', '4:a',
+        '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', blokBron,
+      ]);
+      toets('bron met drie graphics + spreker gegenereerd', gen.ok, gen.uit.slice(-200));
+      const wissels = await graphicWissels(blokBron, 0, 5.4);
+      toets('graphic-wissels op 1,8 en 3,6 s gevonden', wissels.length === 2 && Math.abs(wissels[0] - 1.8) < 0.1 && Math.abs(wissels[1] - 3.6) < 0.1, JSON.stringify(wissels));
+      const shot: Shot = { volgorde: 1, start: 0, end: 11.4, functie: 'setup', focusX: 0.5, focusW: 0.12 };
+      const sc = await vulScenes(blokBron, [shot], async (t) => t.map((x) => x >= 5.4));
+      toets('drie graphic-scènes en één spreker-scène', (shot.scenes ?? []).filter((x) => x.gezicht === false).length === 3 && sc.graphicSplitsingen === 2, JSON.stringify({ sc, scenes: shot.scenes }));
+      const plan = leestijdPlan([shot], 'vullend');
+      toets('blok van drie, alle drie verlengd', plan.graphics.length === 3 && plan.graphics.every((g) => g.blok === 3 && g.vasthouden > 0), JSON.stringify(plan.graphics.map((g) => [g.duur, g.nodig, g.vasthouden, g.woorden])));
+      const uitBlok = join(map, 'blok.mp4');
+      try {
+        await maakRuweMontage({ sourceUrl: 'lokaal://test', shots: [shot], alGesegmenteerd: true, outputPad: uitBlok, werkmap: blokWerk, kader: 'vullend' });
+        const p = probe(uitBlok);
+        toets('lengte blijft 11,4 s (geluid ongewijzigd)', Math.abs(p.duur - 11.4) < 0.2, `${p.duur}s`);
+        const kleurOp = async (t: number) => {
+          const f = join(map, `blok-${t}.raw`);
+          ff(['-ss', t.toFixed(2), '-i', uitBlok, '-frames:v', '1', '-vf', 'crop=40:40:1020:950,scale=1:1', '-f', 'rawvideo', '-pix_fmt', 'rgb24', f]);
+          const px = await readFile(f);
+          return [px[0], px[1], px[2]];
+        };
+        const g2 = plan.graphics[1];
+        const t2 = g2.beeldStart + 0.2;
+        const kleurG2 = await kleurOp(t2);
+        // Op t2 staat in de bron al graphic 3 (paars) als t2 > 3,6; in beeld hoort nog graphic 2 (groen).
+        toets(`graphic 2 is opgeschoven: op ${t2.toFixed(1)} s groen in beeld`, kleurG2[1] > kleurG2[0] && kleurG2[1] > kleurG2[2], `rgb ${kleurG2}`);
+        const eindBlok = plan.graphics[2].beeldStart + plan.graphics[2].getoond;
+        const na = await kleurOp(eindBlok + 0.5);
+        toets('na het blok weer de spreker (geen graphickleur)', !(na[1] > na[0] + 30 && na[1] > na[2] + 30) && !(na[2] > na[1] + 30 && na[0] > na[1] + 30), `rgb ${na}`);
+      } catch (e) {
+        toets('render van het blok slaagt', false, (e as Error).message.slice(-400));
       }
     }
 

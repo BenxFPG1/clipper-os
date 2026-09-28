@@ -334,3 +334,20 @@ export function pasVisueleCorrectieToe(
       return null;
   }
 }
+
+/**
+ * Past het kader bij deze zoom nog: staat het gemeten gezicht (met marge)
+ * binnen de uitsnede, en valt een gemeten eindscherm-overlay erbuiten? Voor
+ * het terugzetten van retentiewissels (retentie.ts herstelWissels).
+ */
+export function kaderPastBijZoom(seg: Shot, zoom: number): boolean {
+  const paneelBreed = seg.paneel ? seg.paneel[1] - seg.paneel[0] : 1;
+  const verhouding = BRON_VERHOUDING * paneelBreed;
+  const fx = seg.focusX !== undefined ? (seg.paneel ? (seg.focusX - seg.paneel[0]) / paneelBreed : seg.focusX) : 0.5;
+  const u = uitsnedeVan(fx, zoom, seg.focusY ?? 0.5, verhouding);
+  if (seg.overlay && u.y1 > seg.overlay.y0 - 0.005) return false;
+  const g = seg.gezicht;
+  if (!g) return true;
+  const inPaneel = seg.paneel ? { ...g, x: (g.x - seg.paneel[0]) / paneelBreed, breedte: g.breedte / paneelBreed } : g;
+  return gezichtPast(inPaneel, u);
+}

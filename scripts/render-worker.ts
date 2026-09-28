@@ -41,6 +41,7 @@ import { kiesHuisstijl } from '../src/lib/agents/huisstijl';
 import { controleerKaderVisueel } from '../src/lib/agents/kadercheck';
 import {
   corrigeerKadrering,
+  kaderPastBijZoom,
   maakControlebeelden,
   pasVisueleCorrectieToe,
 } from '../src/lib/roughcut/kadercontrole';
@@ -56,7 +57,9 @@ import { haalBronWoorden, vindFragment } from '../src/lib/roughcut/woorden';
 import { poort, verzetGrens } from '../src/lib/roughcut/poort';
 import { keurGraphicsDetail, keurMontage, type Keuringsrapport } from '../src/lib/roughcut/keuring';
 import { zelfherstelStap } from '../src/lib/roughcut/herstel';
+import { corrigeerWoorden, verfijnWoorden } from '../src/lib/roughcut/ondertitelwoorden';
 import {
+  herstelWissels,
   keurRetentie,
   meetRetentie,
   pasRetentieToe,
@@ -153,7 +156,7 @@ async function verwerk(job: Job) {
 
   const { data: videoRij } = await supabase
     .from('videos')
-    .select('transcript, stiltes')
+    .select('transcript, stiltes, character_map')
     .eq('id', job.video_id)
     .single();
 
@@ -183,6 +186,7 @@ async function verwerk(job: Job) {
     uitval_risicos?: { seconde: number; waarom: string; fix: string }[];
     /** Kaarten die de verhaallijn nodig heeft, verankerd aan een shot (plan-6.3). */
     kaarten?: { shot: number; tekst: string }[];
+    verhaallijn?: { belofte?: string; payoff?: string; omslag?: string };
     kader?: 'staand' | 'vullend' | 'blur' | 'origineel';
     muziek?: string;
   }[];
@@ -1047,6 +1051,46 @@ async function verwerk(job: Job) {
       }
     }
 
+    // De ondertitelwoorden: de gebruikte bereiken opnieuw met een groter model,
+    // en daarna één correctiepas op herkenningsfouten. De tijden (en dus poort,
+    // knippen en keuring) blijven op de hele-video-woorden.
+    let ondertitelWoorden = bronWoorden;
+    if (bronWoorden && stijl.ondertitels !== false) {
+      try {
+        const v = await verfijnWoorden({ videoId: job.video_id, bronPad, segmenten, bronWoorden });
+        const n = (x: number) => x.toFixed(0);
+        console.log(
+          `     ondertitelwoorden: ${v.bereiken.length} bereik(en), ${n(v.audioSeconden)} s nieuw getranscribeerd in ${n(v.ms / 1000)} s — ` +
+            v.bereiken.map((b) => `${b.van.toFixed(0)}-${b.tot.toFixed(0)} s ${b.bron === 'terugval' ? `small (${b.reden})` : `${b.model}${b.bron === 'cache' ? ' uit cache' : ''}`}`).join(', ') +
+            (v.ms > 120_000 ? ' ⚠ boven 2 min: overweeg WHISPER_ONDERTITEL_MODEL=medium' : ''),
+        );
+        const inClip = v.woorden
+          .map((w, i) => ({ w, i }))
+          .filter(({ w }) => segmenten.some((sg) => (w.s + w.e) / 2 >= sg.start - 0.05 && (w.s + w.e) / 2 <= sg.end + 0.05));
+        const namen = (((videoRij?.character_map as { personen?: { naam?: string }[] } | null)?.personen ?? []).map((p) => p.naam).filter(Boolean)) as string[];
+        const c = await corrigeerWoorden(
+          inClip.map((x) => x.w),
+          {
+            titel: video.title,
+            campagne: await campagneNaam(supabase, job.video_id),
+            namen,
+            verhaallijn: [clip.verhaallijn?.belofte, clip.verhaallijn?.payoff].filter(Boolean).join(' — ') || null,
+            fragmenten: clip.shots.map((sh) => (sh as { transcript_fragment?: string }).transcript_fragment ?? '').filter(Boolean),
+          },
+        );
+        const samen = [...v.woorden];
+        inClip.forEach((x, k) => (samen[x.i] = c.woorden[k]));
+        ondertitelWoorden = samen;
+        console.log(
+          c.fout
+            ? `     ondertitels: correctiepas mislukt (${c.fout}); ongecorrigeerd`
+            : `     ondertitels: ${c.toegepast.length} woord(en) gecorrigeerd${c.toegepast.length ? ` (${c.toegepast.map((t) => `${t.van}→${t.naar}`).join(', ')})` : ''}`,
+        );
+      } catch (e) {
+        console.log(`     ondertitelwoorden: verfijnen overgeslagen (${(e as Error).message.slice(0, 80)}); 'small'-woorden`);
+      }
+    }
+
     let montage!: Awaited<ReturnType<typeof maakRuweMontage>>;
     // Een herrender (correctieronde) hergebruikt de gecachte secties; tel de
     // megabytes over alle rondes, anders staat er na een tweede ronde "0 MB".
@@ -1064,7 +1108,8 @@ async function verwerk(job: Job) {
     // gerepareerd heeft. De poging-lus krijgt daarvoor ruimte bovenop zijn
     // eigen correctierondes.
     let herstelRonde = 0;
-    const MAX_POGINGEN = 4 + instelling('ZELFHERSTEL_RONDES');
+    const MAX_POGINGEN = 5 + instelling('ZELFHERSTEL_RONDES');
+    let retentieHersteld = false;
     for (let poging = 1; poging <= MAX_POGINGEN; poging++) {
     // De poort staat vóór élke render, niet alleen vóór de eerste. De
     // correctielussen hieronder (aanloop, ontbrekend fragment, beeldcontrole)
@@ -1092,13 +1137,22 @@ async function verwerk(job: Job) {
         segmenten.push(...her.segmenten);
       }
     }
+    // Kaderwissels van de retentie-editor die een latere kadercorrectie
+    // (uitzoomen voor het hoofd, eindscherm-uitsnede) heeft gladgestreken,
+    // weer terugzetten — binnen wat het kader toelaat.
+    {
+      const w = herstelWissels(segmenten, kaderPastBijZoom);
+      if (w.hersteld || w.niet) {
+        console.log(`     retentie: ${w.hersteld} kaderwissel(s) teruggezet na kadercorrectie${w.niet ? `, ${w.niet} niet mogelijk binnen het kader` : ''}`);
+      }
+    }
     // Ondertitels op woordniveau uit de brontranscriptie — per poging opnieuw,
     // want de segmenten kunnen nog verschuiven. Uit te zetten per campagne
     // (huisstijl.ondertitels = false).
     ondertitels = null;
     if (bronWoorden && stijl.ondertitels !== false) {
       try {
-        ondertitels = await maakOndertitels(segmenten, bronWoorden, kaartMap, `c${nummer}`, stijl, {
+        ondertitels = await maakOndertitels(segmenten, ondertitelWoorden ?? bronWoorden, kaartMap, `c${nummer}`, stijl, {
           kader: (editClip?.kader ?? clip.kader ?? 'vullend') as Kader,
         });
         console.log(
@@ -1380,6 +1434,31 @@ async function verwerk(job: Job) {
       console.log(`     zelfherstel overgeslagen (${(e as Error).message.slice(0, 70)})`);
     }
 
+    // Zelfherstel, retentie: blijft er na alle correcties een te groot gat
+    // zonder beeldwissel over, dan de retentie-editor opnieuw op de huidige
+    // segmenten en één keer herrenderen.
+    if (doelen && !retentieHersteld && poging < MAX_POGINGEN) {
+      try {
+        const ctx = { bronWoorden, doelen, kaarten: retentieKaarten, ondertitels: Boolean(ondertitels) };
+        const oordeel = keurRetentie(meetRetentie(segmenten, ctx), doelen, { ondertitels: Boolean(ondertitels) });
+        if (oordeel.goed === false) {
+          retentieHersteld = true;
+          const opnieuw = pasRetentieToe(segmenten, { ...ctx, hookTot, rehookRegels: [] });
+          const echt = opnieuw.ingrepen.filter((g) => g.soort !== 'overgeslagen');
+          console.log(`     zelfherstel retentie: ${oordeel.detail} → ${echt.length ? opnieuw.logregel : 'geen ingreep mogelijk'}`);
+          if (echt.length) {
+            segmenten.length = 0;
+            segmenten.push(...opnieuw.segmenten);
+            corrigeerKadrering(segmenten);
+            for (const sg of segmenten) if (sg.overlay) vermijdOverlay(sg);
+            continue;
+          }
+        }
+      } catch (e) {
+        console.log(`     zelfherstel retentie overgeslagen (${(e as Error).message.slice(0, 70)})`);
+      }
+    }
+
     break;
     }
 
@@ -1598,6 +1677,18 @@ async function bevestigBeeldtype(bronPad: string, seg: Shot, type: NonNullable<S
 
 function instellingEindscherm(): number {
   return instelling('EINDSCHERM_VENSTER');
+}
+
+/** Naam van de campagne achter deze video (context voor de ondertitelcorrectie); null als onbekend. */
+async function campagneNaam(supabase: ReturnType<typeof db>, videoId: string): Promise<string | null> {
+  try {
+    const { data: v } = await supabase.from('videos').select('campaign_id').eq('id', videoId).single();
+    if (!v?.campaign_id) return null;
+    const { data: c } = await supabase.from('campaigns').select('name').eq('id', v.campaign_id).single();
+    return (c?.name as string | undefined) ?? null;
+  } catch {
+    return null;
+  }
 }
 
 /** Bitrate van een gerenderd bestand (totaal en videostroom, bit/s); null als ffprobe het niet weet. */

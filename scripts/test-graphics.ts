@@ -100,6 +100,38 @@ console.log('leestijd');
   toets('lang genoeg: geen aanpassing', leestijdPlan([genoeg, b], 'vullend').aanpassing.size === 0);
 }
 
+console.log('leestijd: graphics direct achter elkaar (blok)');
+{
+  // Drie graphics van 1,8 s (8 woorden → 3,2 s nodig, tekort 1,4 s elk) en
+  // dan een spreker. Samen 4,2 s tekort, blokplafond 3 s: 1,0 s per graphic.
+  const g = (van: number) => ({ van, tot: van + 1.8, gezicht: false as const, leeswoorden: 8, bevries: van + 1.2 });
+  const a: Shot = { volgorde: 1, start: 0, end: 5.4, functie: 'setup', scenes: [g(0), g(1.8), g(3.6)] };
+  const b: Shot = { volgorde: 2, start: 20, end: 26, functie: 'escalatie' };
+  const plan = leestijdPlan([a, b], 'vullend');
+  toets('drie graphics in één blok', plan.graphics.length === 3 && plan.graphics.every((x) => x.blok === 3), JSON.stringify(plan.graphics));
+  toets('naar rato verdeeld: 1,0 s per graphic (plafond 3 s)', plan.graphics.every((x) => Math.abs(x.vasthouden - 1.0) < 0.01), JSON.stringify(plan.graphics.map((x) => x.vasthouden)));
+  toets('de spreker erna levert de som in (3,0 s)', Math.abs((plan.aanpassing.get('1:0')?.inkorten ?? 0) - 3.0) < 0.01, JSON.stringify([...plan.aanpassing]));
+  toets('latere graphics komen later in beeld', Math.abs(plan.graphics[1].beeldStart - 2.8) < 0.01 && Math.abs(plan.graphics[2].beeldStart - 5.6) < 0.01, JSON.stringify(plan.graphics.map((x) => x.beeldStart)));
+  toets('begrensde blokvertraging is een bewuste keuze in de keuring', keurLeesbaar([a, b], 'vullend').goed === true, keurLeesbaar([a, b], 'vullend').detail);
+  toets('logregel noemt het blok', /blok van 3/.test(leesLogregel(plan)), leesLogregel(plan));
+
+  // Past ruim: geen verdeling, elk zijn eigen tekort.
+  const kort = (van: number) => ({ van, tot: van + 1.8, gezicht: false as const, leeswoorden: 4, bevries: van + 1.2 });
+  const a2: Shot = { ...a, scenes: [kort(0), kort(1.8), kort(3.6)] };
+  const p2 = leestijdPlan([a2, b], 'vullend');
+  toets('tekort past: elk zijn eigen 0,4 s', p2.graphics.every((x) => Math.abs(x.vasthouden - 0.4) < 0.01) && Math.abs((p2.aanpassing.get('1:0')?.inkorten ?? 0) - 1.2) < 0.01, JSON.stringify(p2.graphics.map((x) => x.vasthouden)));
+
+  // Blok aan het eind van de clip: niets om van te lenen.
+  const p3 = leestijdPlan([a], 'vullend');
+  toets('blok aan het eind: niet verlengd', p3.aanpassing.size === 0 && p3.graphics.every((x) => x.reden === 'laatste beeld van de clip'), JSON.stringify(p3.graphics));
+
+  // Spreker erna te kort: de ruimte begrenst, en dat is wél een review.
+  const kortNa: Shot = { volgorde: 2, start: 20, end: 21.5, functie: 'escalatie' };
+  const p4 = leestijdPlan([a, kortNa], 'vullend');
+  toets('spreker na het blok houdt minstens GRAPHIC_MIN_REST', Math.abs((p4.aanpassing.get('1:0')?.inkorten ?? 0) - (1.5 - instelling('GRAPHIC_MIN_REST'))) < 0.02, JSON.stringify([...p4.aanpassing]));
+  toets('te korte spreker na het blok → keuring review', keurLeesbaar([a, kortNa], 'vullend').goed === false);
+}
+
 async function vervolg() {
   const fix = (n: string) => join(process.cwd(), 'scripts', 'fixtures', n);
   const map = mkdtempSync(join(tmpdir(), 'clipper-test-graphics-'));

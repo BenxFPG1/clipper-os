@@ -85,6 +85,12 @@ const STANDAARD = {
    * telefoon onleesbaar; 60-70 is wat top-clips doen.
    */
   ONDERTITEL_KAPHOOGTE: 64,
+  /**
+   * Tijdsbudget (s) per clip voor het opnieuw transcriberen van de gebruikte
+   * bereiken met het grotere model (ondertitelwoorden.ts). Wat er niet in
+   * past, houdt de 'small'-woorden.
+   */
+  ONDERTITEL_MODEL_BUDGET: 150,
   ONDERTITEL_RAND: 7,
   ONDERTITEL_SCHADUW: 3,
   /** Maximale regelbreedte in px; een langere regel wordt smaller geschaald in plaats van afgebroken. */
@@ -110,6 +116,15 @@ const STANDAARD = {
    * SCENE_PIEK_MIN geen piek: het midden).
    */
   SCENE_STAP: 0.4,
+  /**
+   * Wissel van de ene graphic naar de volgende (scenes.ts graphicWissels):
+   * beeldverschil (0..255, 96x54 grijs) waaronder een frame stilstaat, het
+   * verschil tussen twee stilstaande stukken waarboven het twee graphics zijn,
+   * en de minimale afstand (s) tussen wissels en tot de randen.
+   */
+  SCENE_GRAPHIC_STIL: 1.5,
+  SCENE_GRAPHIC_ANDERS: 6,
+  SCENE_GRAPHIC_MIN_AFSTAND: 0.8,
   SCENE_GAT_GLAD: 0.6,
   SCENE_OVERGANG_MARGE: 0.5,
   SCENE_PIEK_MIN: 0.02,
@@ -162,6 +177,8 @@ const STANDAARD = {
   GRAPHIC_LEES_TERUGVAL_WOORDEN: 4,
   GRAPHIC_LEES_MAX: 4,
   GRAPHIC_MAX_HOLD: 2.5,
+  /** Een blok graphics direct na elkaar mag samen hoogstens zoveel vertraging oplopen (beeld achter op geluid). */
+  GRAPHIC_MAX_BLOK_VERTRAGING: 3,
   // Korter dan dit in de bron is een overgang (wipe, sectietitel), geen
   // bedoeld leesmoment: de maker van de bron liet hem zelf maar zo kort staan.
   // Niet verlengen en niet als leesbaarheidsfout tellen. 1,2 s liet een

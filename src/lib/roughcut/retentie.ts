@@ -448,19 +448,22 @@ function wisselZoom(basis: number, k: number): number | undefined {
  * houdt het scriptfragment, de effecten en de kaart van het shot — de andere
  * delen zijn voortzettingen, geen nieuwe shots.
  */
-function knipInDelen(seg: Shot, snedes: Snede[]): Shot[] {
+function knipInDelen(seg: Shot, snedes: Snede[], ruimte = 0.5): Shot[] {
   if (snedes.length === 0) return [seg];
   const gesorteerd = [...snedes].sort((a, b) => a.x - b.x);
   const basis = seg.zoom ?? basisZoom(seg);
   // Volgnummers ná het shot maar vóór een eventuele sprekerswissel-helft
   // (volgorde + 0,5): een lang shot kan tientallen delen krijgen, en een
   // botsend volgnummer laat de poort en de keuring het verkeerde deel pakken.
-  const stap = 0.4 / Math.max(40, gesorteerd.length + 1);
+  // `ruimte`: tot het volgnummer van het volgende segment. Draait de
+  // retentie-editor opnieuw op al gesplitste segmenten (zelfherstel), dan
+  // ligt dat volgende nummer soms maar 0,01 verder.
+  const stap = Math.min(0.4 / Math.max(40, gesorteerd.length + 1), (ruimte * 0.8) / (gesorteerd.length + 1));
   const delen: Shot[] = [];
   for (let k = 0; k <= gesorteerd.length; k++) {
     const van = k === 0 ? seg.start : gesorteerd[k - 1].y;
     const tot = k === gesorteerd.length ? seg.end : gesorteerd[k].x;
-    const deel: Shot = { ...seg, volgorde: rond(seg.volgorde + k * stap, 4), exact: false };
+    const deel: Shot = { ...seg, volgorde: rond(seg.volgorde + k * stap, 6), exact: false };
     if (k > 0) {
       verzetGrens(deel, { start: van });
       deel.strakBegin = true;
@@ -497,7 +500,9 @@ function bouwDelen(segmenten: Shot[], snedes: Map<number, Snede[]>): { delen: Sh
   const delen: Shot[] = [];
   const oorsprong: number[] = [];
   segmenten.forEach((seg, i) => {
-    for (const d of knipInDelen(seg, snedes.get(i) ?? [])) {
+    const volgendNr = segmenten.slice(i + 1).map((x) => x.volgorde).filter((v) => v > seg.volgorde).sort((a, b) => a - b)[0];
+    const ruimte = volgendNr !== undefined ? volgendNr - seg.volgorde : 0.5;
+    for (const d of knipInDelen(seg, snedes.get(i) ?? [], Math.min(0.5, ruimte))) {
       delen.push(d);
       oorsprong.push(i);
     }
@@ -764,4 +769,52 @@ export function samenvatVoorEditAgent(meting: RetentieMeting): string {
     );
   }
   return delen.join(' | ');
+}
+
+/**
+ * Kaderwissels van de retentie-editor terugzetten die een latere stap heeft
+ * gladgestreken.
+ *
+ * Na de retentie-editor komen nog de kadercorrectie (zoomt uit als het hoofd
+ * niet past), de eindscherm-kadrering (legt de uitsnede boven de
+ * abonneerknoppen) en de visuele controle. Elk daarvan kon de zoom van twee
+ * aansluitende retentiedelen gelijk trekken — en dan was de wissel weg: in
+ * PLATINA clip 1 bleef zo 5,5 s zonder beeldwissel over, terwijl de
+ * retentie-editor het gat had gedicht. Hier, vlak voor de render, krijgt elke
+ * strakke naad weer zijn zoomverschil: het tweede deel een punch-in als het
+ * hoofd dan nog past (en een eindscherm buiten beeld blijft), anders het
+ * eerste deel iets wijder. Kan geen van beide, dan blijft het zo en meldt de
+ * keuring het gat.
+ */
+export function herstelWissels(
+  segmenten: Shot[],
+  past: (seg: Shot, zoom: number) => boolean,
+): { hersteld: number; niet: number } {
+  const bump = instelling('ZOOM_NAADBUMP');
+  const minVerschil = instelling('ZOOM_NAAD_MIN_VERSCHIL');
+  const max = instelling('ZOOM_MAX');
+  let hersteld = 0;
+  let niet = 0;
+  for (let i = 1; i < segmenten.length; i++) {
+    const a = segmenten[i - 1];
+    const b = segmenten[i];
+    if (!b.strakBegin || Math.abs(b.start - a.end) > 0.05) continue;
+    const za = a.zoom ?? basisZoom(a);
+    const zb = b.zoom ?? basisZoom(b);
+    if (Math.abs(za - zb) >= minVerschil - 1e-6) continue;
+    const omhoog = Math.round(Math.min(max, Math.max(za, zb) + bump) * 1000) / 1000;
+    if (omhoog - za >= minVerschil - 1e-6 && past(b, omhoog)) {
+      b.zoom = omhoog;
+      hersteld++;
+      continue;
+    }
+    const omlaag = Math.round(Math.max(1, za - bump) * 1000) / 1000;
+    if (zb - omlaag >= minVerschil - 1e-6 && past(a, omlaag)) {
+      a.zoom = omlaag;
+      hersteld++;
+      continue;
+    }
+    niet++;
+  }
+  return { hersteld, niet };
 }

@@ -8,7 +8,7 @@
  * Draaien: npm run test:retentie
  */
 import { STANDAARD_DOELEN, type EditDoelen } from '../src/lib/vault/normen';
-import { keurRetentie, meetRetentie, pasRetentieToe, samenvatVoorEditAgent, wisselMomenten } from '../src/lib/roughcut/retentie';
+import { herstelWissels, keurRetentie, meetRetentie, pasRetentieToe, samenvatVoorEditAgent, wisselMomenten } from '../src/lib/roughcut/retentie';
 import { poort, woordOnder } from '../src/lib/roughcut/poort';
 import { keurKnippen, keurOverlap, keurFragmenten } from '../src/lib/roughcut/keuring';
 import { instelling } from '../src/lib/roughcut/instellingen';
@@ -231,6 +231,33 @@ console.log('keuring en re-hook');
   toets('re-hook overlapt de hookkaart niet', uit.rehook !== null && uit.rehook.start >= hookTot);
   const zonderRegel = pasRetentieToe([setup, payoff], { bronWoorden: woorden, doelen, kaarten: [{ start: 0, end: hookTot }], hookTot });
   toets('zonder regel geen re-hook', zonderRegel.rehook === null);
+}
+
+console.log('kaderwissels terugzetten na een kadercorrectie');
+{
+  const a: Shot = { ...shot(5, 324, 329.48), zoom: 1.47, strakEind: true };
+  const b: Shot = { ...shot(5.01, 329.48, 330.4), zoom: 1.47, strakBegin: true, subKnip: true };
+  const r = herstelWissels([a, b], () => true);
+  toets('gladgestreken naad krijgt weer een punch-in', r.hersteld === 1 && Math.abs((b.zoom ?? 0) - 1.59) < 0.001, JSON.stringify({ r, a: a.zoom, b: b.zoom }));
+  const c: Shot = { ...b, zoom: 1.47 };
+  const r2 = herstelWissels([a, c], (sg, z) => sg === a || z <= 1.47);
+  toets('punch-in past niet (hoofd/eindscherm) → het eerste deel iets wijder', r2.hersteld === 1 && Math.abs((a.zoom ?? 0) - 1.35) < 0.001, JSON.stringify({ r2, a: a.zoom }));
+  const d: Shot = { ...b, zoom: 1.0 };
+  const e: Shot = { ...a, zoom: 1.0 };
+  const r3 = herstelWissels([e, d], () => false);
+  toets('kan geen van beide → gemeld, niets veranderd', r3.niet === 1 && d.zoom === 1.0 && e.zoom === 1.0);
+  const los: Shot = { ...shot(6, 400, 404), zoom: 1.2 };
+  toets('een gewone naad (geen retentiedeel) blijft ongemoeid', herstelWissels([a, los], () => true).hersteld === 0);
+}
+
+console.log('opnieuw draaien op al gesplitste segmenten: unieke volgnummers');
+{
+  const woorden = spraak(900, 60, { 5: 0.8, 20: 0.8, 40: 0.8 });
+  const eerst = pasRetentieToe([shot(5, 899.9, woorden[59].e + 0.1), shot(6, 1000, 1004)], { bronWoorden: woorden, doelen });
+  const tweede = pasRetentieToe(eerst.segmenten, { bronWoorden: woorden, doelen: { ...doelen, maxSecondenZonderVisueleVerandering: 1.5 } });
+  const nrs = tweede.segmenten.map((sg) => sg.volgorde);
+  toets('alle volgnummers uniek', new Set(nrs).size === nrs.length, nrs.join(','));
+  toets('en oplopend in montagevolgorde', nrs.every((n, i) => i === 0 || n > nrs[i - 1]), nrs.join(','));
 }
 
 console.log(`\n${gedaan - gefaald}/${gedaan} geslaagd`);

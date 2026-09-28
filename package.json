@@ -26,6 +26,7 @@
     "test:signalen": "tsx scripts/test-signalen.ts",
     "test:renderbron": "tsx scripts/test-renderbron.ts",
     "test:graphics": "tsx scripts/test-graphics.ts",
+    "test:ondertitelwoorden": "tsx scripts/test-ondertitelwoorden.ts",
     "test:trends": "tsx scripts/test-trends.ts",
     "test:normen": "tsx scripts/test-normen.ts",
     "eval:smaak": "tsx scripts/eval-smaak.ts"
