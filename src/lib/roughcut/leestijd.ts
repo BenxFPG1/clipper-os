@@ -63,7 +63,7 @@ const isGraphic = (seg: Shot, d: { kader: Kader; gezicht: boolean | null }) =>
 
 /** Het plan voor een hele montage (segmenten in volgorde). Puur rekenwerk. */
 export function leestijdPlan(segmenten: Shot[], kader: Kader): LeesPlan {
-  type Stuk = { shot: number; deel: number; start: number; duur: number; graphic: boolean; woorden: number | null; functie: string; inhoud?: Box | null; houdbaar: boolean };
+  type Stuk = { shot: number; deel: number; start: number; duur: number; graphic: boolean; woorden: number | null; functie: string; inhoud?: Box | null; houdbaar: boolean; geenBevries?: string };
   const stukken: Stuk[] = [];
   let cursor = 0;
   segmenten.forEach((seg, i) => {
@@ -77,6 +77,7 @@ export function leestijdPlan(segmenten: Shot[], kader: Kader): LeesPlan {
         woorden: d.leeswoorden ?? null,
         functie: seg.functie,
         inhoud: d.inhoud,
+        geenBevries: d.geenBevries,
         // Alleen vasthouden met een gemeten graphic-frame binnen dit stuk.
         // Zonder dat viel de render terug op het laatste frame van het stuk,
         // en dat lag bij een overgang al in het camerabeeld: de spreker stond
@@ -120,7 +121,7 @@ export function leestijdPlan(segmenten: Shot[], kader: Kader): LeesPlan {
       return { g, nodig, tekort: tekort > 0.05 ? tekort : 0, telt: true, reden: undefined as string | undefined };
     });
     for (const t of tekorten) if (t.tekort > 0 && !t.g.houdbaar) {
-      t.reden = 'geen gemeten graphic-frame om vast te houden';
+      t.reden = `geen gemeten graphic-frame om vast te houden${t.g.geenBevries ? `: ${t.g.geenBevries}` : ''}`;
       t.tekort = 0;
       (t as { geenFrame?: boolean }).geenFrame = true;
     }

@@ -345,8 +345,10 @@ async function vervolg() {
     toets('graphic die krimpt/wegschuift krijgt niets', wegschuivend === undefined, String(wegschuivend));
     const stil = kiesBevries(tijden, { box: boxen[4], woorden: 6, vlak: 0.85, persoonX: null, boxen: boxen.map(() => boxen[4]), vlakken, stabiel: true });
     toets('stilstaande graphic: het vlakste frame', stil === 10.4, String(stil));
-    const rand = kiesBevries(tijden, { box: { x0: 0.0, y0: 0.3, x1: 0.95, y1: 0.7 }, woorden: 3, vlak: 0.85, persoonX: null, boxen, vlakken, stabiel: true });
-    toets('inhoud tegen de bronrand: niets', rand === undefined, String(rand));
+    const randStil = kiesBevries(tijden, { box: { x0: 0.0, y0: 0.3, x1: 0.99, y1: 0.7 }, woorden: 9, vlak: 0.85, persoonX: null, boxen, vlakken, stabiel: true });
+    toets('stilstaande graphic van rand tot rand mag wél (drie kolommen)', randStil === 10.4, String(randStil));
+    const randBewegend = kiesBevries(tijden, { box: { x0: 0.0, y0: 0.3, x1: 0.99, y1: 0.7 }, woorden: 3, vlak: 0.85, persoonX: null, boxen, vlakken, stabiel: false });
+    toets('bewegende inhoud tegen de bronrand: niets', randBewegend === undefined, String(randBewegend));
   }
 
   console.log(`\n${gedaan - gefaald}/${gedaan} geslaagd`);

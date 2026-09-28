@@ -35,6 +35,8 @@ export type Scene = {
   persoonX?: number | null;
   /** Brontijd van het frame dat bij een verlengde leestijd blijft staan. */
   bevries?: number;
+  /** Waarom er geen bevries-frame is (alleen voor de logregel). */
+  geenBevries?: string;
 };
 
 /** Een deelstuk van een shot in shot-tijd (0 = begin van het shot), met het kader dat de render gebruikt. */
@@ -49,6 +51,7 @@ export type Deelstuk = {
   persoonX?: number | null;
   /** Brontijd (absoluut) van het vast te houden frame bij een verlengde leestijd. */
   bevries?: number;
+  geenBevries?: string;
 };
 
 /**
@@ -92,6 +95,7 @@ export function deelstukken(shot: Shot, kader: Kader): Deelstuk[] {
       leeswoorden: s.leeswoorden ?? null,
       persoonX: s.persoonX ?? null,
       bevries: s.bevries,
+      geenBevries: s.geenBevries,
     }))
     .sort((a, b) => a.van - b.van);
   // Gaten dichten en de randen op de shotgrenzen: de poort en de
@@ -342,6 +346,7 @@ export async function vulScenes(
           // gelijke vlakheid wint het latere (meer ingeanimeerde) frame.
           const bevries = kiesBevries(tijden, meting);
           if (bevries !== undefined) scene.bevries = bevries;
+          else scene.geenBevries = waaromGeenBevries(tijden, meting);
         }
       };
     for (const [r, run] of runs.entries()) {
@@ -433,9 +438,23 @@ export function kiesBevries(tijden: number[], meting: GraphicMeting): number | u
   const eind = laatsteGraphic >= 0 ? boxen[laatsteGraphic] : null;
   const opbouw =
     meting.stabiel === false && !!u && !!eind && oppervlak(eind) / Math.max(1e-6, oppervlak(u)) >= 0.9;
-  if (!tegenRand && beste >= 0 && meting.stabiel !== false) return tijden[beste];
+  // De randregel geldt alleen voor bewegende inhoud: een stilstaande
+  // graphic die van rand tot rand loopt (drie kolommen, PLATINA clip 3) is
+  // gewoon leesbaar. De schuivende sectietitel waarvoor de regel kwam, valt
+  // al af op zijn korte bronduur (GRAPHIC_MIN_VOOR_LEESTIJD).
+  if (beste >= 0 && meting.stabiel !== false) return tijden[beste];
   if (!tegenRand && opbouw) return tijden[laatsteGraphic];
   return undefined;
+}
+
+/** Waarom kiesBevries niets gaf — voor de logregel, zodat CI het zegt i.p.v. dat we gokken. */
+export function waaromGeenBevries(tijden: number[], meting: GraphicMeting): string {
+  const vlakken = meting.vlakken ?? [];
+  if (!vlakken.some((v) => v >= instelling('GRAPHIC_MIN_VLAK'))) return 'geen enkel meetmoment ziet eruit als graphic';
+  const b = meting.box;
+  const rand = b ? b.x0 < 0.02 || b.x1 > 0.98 : false;
+  if (meting.stabiel === false) return rand ? 'bewegend en tegen de bronrand' : 'bewegend, eindstand dekt de inhoud niet (geen opbouw)';
+  return 'onbekend';
 }
 
 type Run = { van: number; tot: number; gezicht: boolean };
