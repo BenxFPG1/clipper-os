@@ -28,7 +28,7 @@ import {
   type Huisstijl,
 } from '../src/lib/roughcut/tekstkaarten';
 import { controleerAssFont, maakOndertitels, type Ondertitels } from '../src/lib/roughcut/ondertitels';
-import { gezichtMeterVia, vulScenes } from '../src/lib/roughcut/scenes';
+import { gezichtMeterVia, kiesBevries, vulScenes, waaromGeenBevries } from '../src/lib/roughcut/scenes';
 import { graphicMeterVia, lijktGraphic } from '../src/lib/roughcut/graphics';
 import { behandelEindscherm, bronDuur, keurOverlayDetail, overlayMeterVia, vermijdOverlay } from '../src/lib/roughcut/eindscherm';
 import { afwijkendeInstellingen, gebruikteInstellingen, instelling } from '../src/lib/roughcut/instellingen';
@@ -1671,6 +1671,31 @@ async function bevestigBeeldtype(bronPad: string, seg: Shot, type: NonNullable<S
   if (meting && !lijktGraphic(meting)) {
     console.log(`     kadercontrole shot ${seg.volgorde}: zegt graphic, maar het beeld is een camerabeeld (vlak ${meting.vlak.toFixed(2)}) → persoon, vullend`);
     return 'persoon';
+  }
+  // Bevestigd als graphic, maar zonder scènes (de gezichtsmeting vond er een
+  // gezicht of niets): dan kreeg dit shot nooit een inhoudsbox, leeswoorden of
+  // vasthoudframe, en dus nooit leestijd (twee graphics in PLATINA clip 3).
+  // Meet het hier alsnog als één graphic-scène over het hele shot.
+  if (!seg.scenes || seg.scenes.length === 0) {
+    const tijden = [0.1, 0.3, 0.5, 0.7, 0.9].map((f) => seg.start + d * f).concat(Math.max(seg.start, seg.end - 0.06));
+    const volle = await graphicMeterVia(bronPad)(tijden).catch(() => null);
+    if (volle && lijktGraphic(volle)) {
+      const bevries = kiesBevries(tijden, volle);
+      seg.scenes = [
+        {
+          van: seg.start,
+          tot: seg.end,
+          gezicht: false,
+          inhoud: volle.stabiel ? volle.box : null,
+          leeswoorden: volle.woorden,
+          ...(bevries !== undefined ? { bevries } : { geenBevries: waaromGeenBevries(tijden, volle) }),
+        },
+      ];
+      console.log(
+        `     kadercontrole shot ${seg.volgorde}: graphic over het hele shot gemeten` +
+          (bevries !== undefined ? ` (vasthoudframe ${bevries.toFixed(2)} s)` : ` (geen vasthoudframe: ${waaromGeenBevries(tijden, volle)})`),
+      );
+    }
   }
   return type;
 }
