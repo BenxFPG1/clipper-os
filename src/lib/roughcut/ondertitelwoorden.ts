@@ -51,7 +51,10 @@ export const transcribeerViaAlign: Transcribeer = (wav, model, timeoutMs) =>
     });
     kind.on('close', (code) => {
       clearTimeout(timer);
-      if (code !== 0) return fout(new Error(`align.py exit ${code}: ${stderr.slice(-160)}`));
+      // De laatste regel van een Python-traceback is de eigenlijke fout; de
+      // staart van stderr was een rij ^^^^ en een halve bestandsnaam.
+      const laatste = stderr.trim().split('\n').filter((r) => r.trim() && !/^\s*\^+\s*$/.test(r)).pop() ?? '';
+      if (code !== 0) return fout(new Error(`align.py exit ${code}: ${laatste.trim().slice(0, 200)}`));
       try {
         klaar(JSON.parse(stdout.trim().split('\n').pop() ?? '[]') as BronWoord[]);
       } catch (e) {
@@ -193,7 +196,7 @@ const correctieSchema = z.object({
   correcties: z.array(
     z.object({
       index: z.number().int().min(0),
-      woord: z.string().describe('Het juiste woord, precies één woord (koppelteken mag), zonder spaties.'),
+      woord: z.string().describe('Het juiste woord; hoogstens drie woorden als de herkenning twee woorden aan elkaar plakte ("duurtraloesje" → "duurste horloge").'),
     }),
   ),
 });
@@ -219,29 +222,46 @@ const kaal = (w: string) => w.replace(/[.,!?;:"'“”„()]+$/g, '').replace(/^
  * wijzigen, geen herschrijvingen (lengte blijft in de buurt), leestekens van
  * het origineel blijven staan. Tijden blijven exact.
  */
-export function pasCorrectiesToe(woorden: BronWoord[], correcties: Correctie[]): { woorden: BronWoord[]; toegepast: { van: string; naar: string }[] } {
+export function pasCorrectiesToe(
+  woorden: BronWoord[],
+  correcties: Correctie[],
+): { woorden: BronWoord[]; toegepast: { van: string; naar: string }[]; afgewezen: { van: string; naar: string; waarom: string }[] } {
   const uit = woorden.map((w) => ({ ...w }));
   const toegepast: { van: string; naar: string }[] = [];
+  const afgewezen: { van: string; naar: string; waarom: string }[] = [];
   const gezien = new Set<number>();
   for (const c of correcties) {
     if (gezien.has(c.index) || c.index < 0 || c.index >= uit.length) continue;
     gezien.add(c.index);
     const oud = uit[c.index].w;
-    const nieuwKaal = kaal(c.woord.trim());
+    // Hoogstens drie woorden: soms is één herkenningsfout eigenlijk twee
+    // woorden ("duurtraloesje" → "duurste horloge"). De tijd wordt later
+    // over de delen verdeeld (woordenOpTijdlijn).
+    const nieuwKaal = c.woord.trim().split(/\s+/).map(kaal).filter(Boolean).join(' ');
     const oudKaal = kaal(oud);
-    if (!nieuwKaal || /\s/.test(nieuwKaal) || nieuwKaal.length > 40) continue;
+    const weg = (waarom: string) => afgewezen.push({ van: oudKaal, naar: nieuwKaal, waarom });
+    if (!nieuwKaal || nieuwKaal.split(' ').length > 3 || nieuwKaal.length > 40) {
+      weg('meer dan drie woorden of te lang');
+      continue;
+    }
     if (nieuwKaal.toLowerCase() === oudKaal.toLowerCase()) continue;
     // Getallen blijven van de spreker: een "correctie" van 2920 naar 2.920
     // of van 39 naar 90 is geen herkenningsfout maar een wijziging.
-    if (/\d/.test(oudKaal) || /\d/.test(nieuwKaal)) continue;
-    const verhouding = nieuwKaal.length / Math.max(1, oudKaal.length);
-    if (verhouding > 3 || verhouding < 0.34) continue;
+    if (/\d/.test(oudKaal) || /\d/.test(nieuwKaal)) {
+      weg('getal');
+      continue;
+    }
+    const verhouding = nieuwKaal.replace(/ /g, '').length / Math.max(1, oudKaal.length);
+    if (verhouding > 3 || verhouding < 0.34) {
+      weg('lengte wijkt te veel af');
+      continue;
+    }
     const voor = oud.match(/^["'“„(]+/)?.[0] ?? '';
     const na = oud.match(/[.,!?;:"'“”„()]+$/)?.[0] ?? '';
     uit[c.index].w = `${voor}${nieuwKaal}${na}`;
     toegepast.push({ van: oudKaal, naar: nieuwKaal });
   }
-  return { woorden: uit, toegepast };
+  return { woorden: uit, toegepast, afgewezen };
 }
 
 export type CorrectieCall = (system: string, user: string) => Promise<{ correcties: Correctie[] }>;
@@ -268,11 +288,11 @@ export async function corrigeerWoorden(
   woorden: BronWoord[],
   context: CorrectieContext,
   call: CorrectieCall = standaardCall,
-): Promise<{ woorden: BronWoord[]; toegepast: { van: string; naar: string }[]; fout?: string }> {
+): Promise<{ woorden: BronWoord[]; toegepast: { van: string; naar: string }[]; afgewezen?: { van: string; naar: string; waarom: string }[]; voorgesteld?: number; fout?: string }> {
   if (woorden.length === 0) return { woorden, toegepast: [] };
   const system = `Je controleert automatische ondertitels (spraakherkenning, Nederlands) op herkenningsfouten. Je krijgt de woorden genummerd, plus context over de video.
 
-Corrigeer ALLEEN duidelijke herkenningsfouten: een woord dat zo niet gezegd kan zijn en waarvan uit de context vaststaat wat het wel was ("enimetaal" → "edelmetaal", een verkeerd geschreven eigennaam die in de context staat). Eén woord voor één woord. Staan er ondertitels van de video zelf bij, dan zijn die leidend voor de spelling van namen, bijnamen en straattaal.
+Corrigeer ALLEEN duidelijke herkenningsfouten: een woord dat zo niet gezegd kan zijn en waarvan uit de context vaststaat wat het wel was ("enimetaal" → "edelmetaal", een verkeerd geschreven eigennaam die in de context staat). Eén woord voor één woord; alleen als de herkenning twee woorden aan elkaar plakte mag het er twee of drie worden ("duurtraloesje" → "duurste horloge"). Staan er ondertitels van de video zelf bij, dan zijn die leidend voor de spelling van namen, bijnamen en straattaal — tenzij ze zelf duidelijk automatisch en verhaspeld zijn; dan geldt de context.
 
 Niet doen: herschrijven, stijl of grammatica verbeteren, woorden toevoegen of weglaten, spreektaal netjes maken, getallen veranderen. Twijfel je, dan laat je het staan. Geen fout gevonden: een lege lijst.`;
   const regels = [
@@ -289,8 +309,8 @@ Ondertitelwoorden (index:woord):
 ${woorden.map((w, i) => `${i}:${w.w}`).join(' ')}`;
   try {
     const r = await call(system, user);
-    const { woorden: uit, toegepast } = pasCorrectiesToe(woorden, r.correcties ?? []);
-    return { woorden: uit, toegepast };
+    const { woorden: uit, toegepast, afgewezen } = pasCorrectiesToe(woorden, r.correcties ?? []);
+    return { woorden: uit, toegepast, afgewezen, voorgesteld: (r.correcties ?? []).length };
   } catch (e) {
     return { woorden, toegepast: [], fout: (e as Error).message.slice(0, 100) };
   }

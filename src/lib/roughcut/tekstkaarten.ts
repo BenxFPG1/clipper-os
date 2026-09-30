@@ -445,3 +445,6 @@ export async function kaartenMap(basis: string): Promise<string> {
   await mkdir(map, { recursive: true });
   return map;
 }
+
+
+export { editorTekst } from './editortekst';

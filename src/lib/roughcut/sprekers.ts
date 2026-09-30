@@ -269,7 +269,12 @@ export type SprekerKader = {
  * actieve spreker, en splitsen waar de spreker of het camerastandpunt
  * wisselt. Muteert `seg`; de extra delen komen in `delen` (na seg).
  */
-export function pasSprekersToe(seg: Shot, stukkenAlle: SprekerStuk[], woorden: BronWoord[] | null): SprekerKader {
+export function pasSprekersToe(
+  seg: Shot,
+  stukkenAlle: SprekerStuk[],
+  woorden: BronWoord[] | null,
+  opties: { volgendeVolgorde?: number } = {},
+): SprekerKader {
   const minDeel = instelling('SPREKER_MIN_DEEL');
   const stukken = stukkenAlle
     .filter((s) => s.tot > seg.start + 0.01 && s.van < seg.end - 0.01)
@@ -380,6 +385,15 @@ export function pasSprekersToe(seg: Shot, stukkenAlle: SprekerStuk[], woorden: B
     }
   };
 
+  // Volgnummers strikt tussen dit shot en het volgende: de render sorteert
+  // op volgnummer. Met volgorde + i/(n+1) belandde een deel van shot 2,5
+  // voorbij shot 3 — beeld én ondertitels op de verkeerde plek.
+  const ruimte = (opties.volgendeVolgorde ?? seg.volgorde + 1) - seg.volgorde;
+  const stap = Math.min(0.01, (ruimte * 0.8) / (delen.length + 1));
+  // De uitgangstoestand vóór het eerste deel zijn kader krijgt: een deel
+  // zonder gevonden persoon (een graphic, een beeld zonder gezicht) mag niet
+  // het kader van de spreker uit het eerste deel erven.
+  const origineel: Shot = { ...seg };
   const uit: Shot[] = [];
   delen.forEach((d, i) => {
     if (i === 0) {
@@ -393,8 +407,9 @@ export function pasSprekersToe(seg: Shot, stukkenAlle: SprekerStuk[], woorden: B
       return;
     }
     const deel: Shot = {
-      ...seg,
-      volgorde: seg.volgorde + i / (delen.length + 1),
+      ...origineel,
+      sprekerBepaald: undefined,
+      volgorde: Math.round((seg.volgorde + i * stap) * 1e6) / 1e6,
       start: d.van,
       end: d.tot,
       // Het anker hoort bij het hele fragment; een deel begint midden erin.

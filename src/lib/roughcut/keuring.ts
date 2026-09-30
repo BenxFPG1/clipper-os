@@ -16,7 +16,7 @@ import { boxBinnen, graphicMeterVia, inhoudKader, lijktGraphic, type Box, type G
 import type { Kader } from './kader';
 import { keurLeesbaar } from './leestijd';
 import { keurOverlay } from './eindscherm';
-import { keurOndertitelPlek, type Plek } from './ondertitels';
+import { keurOndertitelOverlap, keurOndertitelPlek, type OndertitelRegel, type Plek } from './ondertitels';
 
 /** Breedte/hoogte van een normale bron. */
 const BRON_VERHOUDING = 16 / 9;
@@ -83,17 +83,28 @@ export function keurKnippen(segmenten: Shot[], bronWoorden: BronWoord[] | null):
   }
 
   const fouten: string[] = [];
-  for (const seg of segmenten) {
-    const s = woordOnder(bronWoorden, seg.start);
+  // In renderorde; een doorlopende naad (vorige eindigt exact waar deze
+  // begint: camerawissel of kaderwissel) is geen knip in het geluid.
+  const volg = [...segmenten].sort((a, b) => a.volgorde - b.volgorde);
+  let doorlopend = 0;
+  for (const [i, seg] of volg.entries()) {
+    const naadVoor = i > 0 && Math.abs(volg[i - 1].end - seg.start) < 0.005;
+    const naadNa = i + 1 < volg.length && Math.abs(volg[i + 1].start - seg.end) < 0.005;
+    if (naadNa) doorlopend++;
+    const s = naadVoor ? null : woordOnder(bronWoorden, seg.start);
     if (s) fouten.push(`shot ${seg.volgorde} start in "${s.w}"`);
-    const e = woordOnder(bronWoorden, seg.end);
+    const e = naadNa ? null : woordOnder(bronWoorden, seg.end);
     if (e) fouten.push(`shot ${seg.volgorde} eind in "${e.w}"`);
   }
+  const grof = bronWoorden.some((w) => (w as { grof?: boolean }).grof);
 
   return {
     naam: 'knippen op woordgrenzen',
     goed: fouten.length === 0,
-    detail: fouten.length === 0 ? `${segmenten.length * 2} grenzen, geen enkele in een woord` : fouten.join('; '),
+    detail:
+      (fouten.length === 0 ? `${segmenten.length * 2} grenzen, geen enkele in een woord` : fouten.join('; ')) +
+      (doorlopend ? ` (${doorlopend} doorlopende naad/naden niet getoetst: geluid loopt door)` : '') +
+      (grof ? ' — let op: deels grove woordtijden, toets minder precies' : ''),
   };
 }
 
@@ -559,6 +570,8 @@ export async function keurMontage(
     graphicMeter?: GraphicMeter;
     /** Waar de ondertitelregels terechtkwamen (ondertitels.ts); voedt "ondertitel over gezicht". */
     ondertitelPlekken?: Record<Plek, number> | null;
+    /** De ondertitelregels zoals ze gebrand zijn; voedt "ondertitels overlappen niet". */
+    ondertitelRegels?: OndertitelRegel[] | null;
     /**
      * Al gemeten "graphics passend" (het zelfherstel meet hem op precies deze
      * segmenten): hergebruiken in plaats van alles opnieuw te meten.
@@ -576,6 +589,7 @@ export async function keurMontage(
     ...(opties.retentie ? [opties.retentie] : []),
     ...(opties.kader ? [keurLeesbaar(segmenten, opties.kader), keurOverlay(segmenten, opties.kader)] : []),
     ...(opties.ondertitelPlekken !== undefined ? [keurOndertitelPlek(opties.ondertitelPlekken)] : []),
+    ...(opties.ondertitelRegels !== undefined ? [keurOndertitelOverlap(opties.ondertitelRegels)] : []),
     ...(opties.graphicsRegel ? [opties.graphicsRegel] : []),
     ...(!opties.graphicsRegel && opties.kader && (opties.gezichtMeter || opties.bronPad)
       ? [

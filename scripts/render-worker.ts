@@ -26,6 +26,7 @@ import {
   kleurUitThumbnail,
   kaartenMap,
   planKaartenOpTijdlijn,
+  editorTekst,
   type Huisstijl,
 } from '../src/lib/roughcut/tekstkaarten';
 import { controleerAssFont, maakOndertitels, type Ondertitels } from '../src/lib/roughcut/ondertitels';
@@ -410,6 +411,35 @@ async function verwerk(job: Job) {
     const lokaal = join(werkmap, naam);
 
     console.log(`  clip ${nummer}: ${clip.titel_intern}`);
+
+    // Kaarten zijn tekst voor de kijker. Staat er een aanwijzing voor de
+    // editor in ("Hier opende deze clip mee", "cold open", "2 minuten
+    // later"), dan wordt die niet getekend maar als marker bewaard.
+    const kaartMarkers: { shot?: number; tekst: string; waarom: string }[] = [];
+    if (clip.kaarten?.length) {
+      clip.kaarten = clip.kaarten.filter((k) => {
+        const waarom = editorTekst(k.tekst);
+        if (waarom) kaartMarkers.push({ shot: k.shot, tekst: k.tekst, waarom });
+        return !waarom;
+      });
+    }
+    if (clip.context_kaart && editorTekst(clip.context_kaart)) {
+      kaartMarkers.push({ tekst: clip.context_kaart, waarom: editorTekst(clip.context_kaart)! });
+      clip.context_kaart = null;
+    }
+    if (clip.uitval_risicos?.length) {
+      for (const r of clip.uitval_risicos) {
+        const regel = kaartRegelUit(r.fix);
+        const waarom = regel ? editorTekst(regel) : null;
+        if (waarom) {
+          kaartMarkers.push({ tekst: regel!, waarom });
+          r.fix = '';
+        }
+      }
+    }
+    for (const m of kaartMarkers) {
+      console.log(`     kaart "${m.tekst}" niet getekend (${m.waarom}): editor-aanwijzing, als marker bewaard`);
+    }
 
     // De grenzen komen uit de brontranscriptie: elk fragment wordt in de
     // volledige tekst opgezocht en de knip valt exact tussen het laatste woord
@@ -898,7 +928,7 @@ async function verwerk(job: Job) {
       const rehookRegels = [
         (editClip as { rehook?: string | null } | null)?.rehook ?? null,
         ...(clip.uitval_risicos ?? []).map((r) => kaartRegelUit(r.fix)),
-      ].filter((r): r is string => Boolean(r) && !geplaatst.has(r as string));
+      ].filter((r): r is string => Boolean(r) && !geplaatst.has(r as string) && !editorTekst(r));
       try {
         retentie = pasRetentieToe(segmenten, {
           bronWoorden,
@@ -1033,6 +1063,8 @@ async function verwerk(job: Job) {
                 ...(bestaandPlan.clips ?? {}),
                 [String(nummer)]: {
                   vastgelegd_at: new Date().toISOString(),
+                  // Kaarten met een aanwijzing voor de editor: niet in beeld, wel hier.
+                  ...(kaartMarkers.length ? { kaart_markers: kaartMarkers } : {}),
                   segmenten: segmenten.map((sg) => ({
                     volgorde: sg.volgorde,
                     start: sg.start,
@@ -1133,7 +1165,9 @@ async function verwerk(job: Job) {
         console.log(
           c.fout
             ? `     ondertitels: correctiepas mislukt (${c.fout}); ongecorrigeerd`
-            : `     ondertitels: ${c.toegepast.length} woord(en) gecorrigeerd${captionsVoor(segmenten) ? ' (captions van de video als context)' : ''}${c.toegepast.length ? ` (${c.toegepast.map((t) => `${t.van}→${t.naar}`).join(', ')})` : ''}`,
+            : `     ondertitels: ${c.voorgesteld ?? 0} correctie(s) voorgesteld, ${c.toegepast.length} toegepast${captionsVoor(segmenten) ? ' (captions van de video als context)' : ' (geen captions als context)'}` +
+                `${c.toegepast.length ? ` (${c.toegepast.map((t) => `${t.van}→${t.naar}`).join(', ')})` : ''}` +
+                `${c.afgewezen?.length ? `; afgewezen: ${c.afgewezen.map((t) => `${t.van}→${t.naar} [${t.waarom}]`).join(', ')}` : ''}`,
         );
       } catch (e) {
         console.log(`     ondertitelwoorden: verfijnen overgeslagen (${(e as Error).message.slice(0, 80)}); 'small'-woorden`);
@@ -1708,6 +1742,7 @@ async function verwerk(job: Job) {
         retentie: retentieEind && doelen ? keurRetentie(retentieEind, doelen, { ondertitels: Boolean(ondertitels) }) : undefined,
         kader: (editClip?.kader ?? clip.kader ?? 'vullend') as Kader,
         ondertitelPlekken: ondertitels?.stijl.plekken ?? null,
+        ondertitelRegels: ondertitels?.regels ?? null,
         graphicsRegel: laatsteGraphicsKeuring && laatsteGraphicsKeuring.sleutel === segmentSleutel(segmenten) ? laatsteGraphicsKeuring.regel : undefined,
       });
       tijd.keuring = (Date.now() - tKeuring) / 1000;
@@ -2401,10 +2436,16 @@ async function pasActieveSprekerToe(bronPad: string, segmenten: Shot[], woorden:
     if (!meerdere && m.knippen.length === 0) continue;
     const spraak = await spraakEnergie(bronPad, m.van, m.tot, m.stap).catch(() => [] as number[]);
     const stukken = actieveSprekers(m, spraak, { woorden });
-    const r = pasSprekersToe(seg, stukken, woorden);
+    const volgende = Math.min(...segmenten.map((x) => x.volgorde).filter((v) => v > seg.volgorde), seg.volgorde + 1);
+    const r = pasSprekersToe(seg, stukken, woorden, { volgendeVolgorde: volgende });
     const plek = segmenten.indexOf(seg);
     segmenten.splice(plek, 1, ...r.delen);
     toegepast++;
+    // Delen zonder gevonden persoon (een graphic, een beeld zonder gezicht):
+    // hun eigen gewone meting, zodat de scènedetectie ze later als graphic
+    // kan herkennen in plaats van het kader van de spreker te erven.
+    const zonderSpreker = r.delen.length > 1 ? r.delen.filter((d) => !d.sprekerBepaald) : [];
+    if (zonderSpreker.length) await vulGezichtsFocus(bronPad, zonderSpreker);
     for (const w of r.wissels) wisselTijden.push(`${w.t.toFixed(1)} s ${w.soort}`);
   }
   if (toegepast === 0) {

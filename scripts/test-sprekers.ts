@@ -88,6 +88,14 @@ async function main() {
     toets('delen gemarkeerd (oude meting blijft eraf)', r.delen.every((d) => d.sprekerBepaald === true));
     toets('gezichtsvak van de spreker, niet van de ander', r.delen[0].gezicht?.x === 0.3 && r.delen[0].gezicht?.hoogte === 0.16);
     toets('tweede deel erft geen effect of sfx', r.delen[1].beeld_effect === 'geen' && r.delen[1].sfx === 'geen');
+
+    // Na de knip een graphic zonder persoon: dat deel erft het sprekerkader niet.
+    const st2 = actieveSprekers({ van: 0, tot: 6, stap: STAP, personen: [A, B], knippen: [3] }, spraakVan(0, 6, () => true));
+    const seg2 = shot(0.5, 5.5);
+    const r2 = pasSprekersToe(seg2, st2, null);
+    toets('deel zonder persoon: geen sprekerkader, oorspronkelijke focus', r2.delen.length === 2 && r2.delen[0].sprekerBepaald === true && !r2.delen[1].sprekerBepaald && r2.delen[1].focusX === 0.5, JSON.stringify(r2.delen.map((d) => [d.start, d.focusX, d.sprekerBepaald])));
+    const r3 = pasSprekersToe({ ...shot(0.5, 5.5), volgorde: 2.5 }, st, null, { volgendeVolgorde: 3 });
+    toets('volgnummers blijven vóór het volgende shot', r3.delen.every((d) => d.volgorde >= 2.5 && d.volgorde < 3) && r3.delen.every((d, i) => i === 0 || d.volgorde > r3.delen[i - 1].volgorde), r3.delen.map((d) => d.volgorde).join(','));
   }
 
   console.log('sprekerwissel binnen één standpunt: knip op woordgrens, anders pan');
@@ -150,7 +158,10 @@ async function main() {
         '-loop', '1', '-t', '1.2', '-i', 'scripts/fixtures/wijd-studio.jpg',
         '-loop', '1', '-t', '1.2', '-i', 'scripts/fixtures/wijd-studio.jpg',
         // Tweede "camera": hetzelfde beeld gespiegeld, dus de persoon staat aan de andere kant.
-        '-filter_complex', '[0]scale=1920:1080,setsar=1,fps=25[a];[1]scale=1920:1080,setsar=1,hflip,fps=25[b];[a][b]concat=n=2:v=1[v]',
+        // Een langzame camerabeweging (crop die opschuift): een echt beeld
+        // staat nooit pixelstil, een afbeelding in een graphic wel.
+        '-filter_complex',
+        "[0]scale=2000:1125,setsar=1,fps=25,crop=1920:1080:'40+t*60':20[a];[1]scale=2000:1125,setsar=1,hflip,fps=25,crop=1920:1080:'40+t*60':20[b];[a][b]concat=n=2:v=1[v]",
         '-map', '[v]', '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', bron,
       ]);
       toets('testbron gemaakt', g.status === 0, String(g.stderr).slice(-200));
@@ -172,11 +183,15 @@ async function main() {
         const p0 = m[0]?.personen.find((p) => p.scene === 0);
         const p1 = m[0]?.personen.find((p) => p.scene === 1);
         toets('na de knip een nieuw spoor op de gespiegelde plek', Boolean(p0 && p1 && Math.abs(p1.x - (1 - p0.x)) < 0.05), `${p0?.x} / ${p1?.x}`);
-        // Stilstaand beeld: vrijwel nul (de eerste frames na een keyframe
-        // van een snelle encode wijken nog wat af, vandaar de mediaan).
+        // Zonder praten blijft de mondbeweging ver onder spreekniveau (gemeten 5–12 bij sprekers), ook als de camera beweegt.
         const mond = (m[0]?.personen ?? []).flatMap((p) => p.monsters.map((x) => x[2])).filter((x): x is number => x !== null).sort((x, y) => x - y);
         const med = mond[Math.floor(mond.length / 2)] ?? 99;
-        toets('stilstaand beeld: mondbeweging vrijwel nul', med < 0.2, `mediaan ${med}`);
+        toets('niemand praat: mondbeweging ver onder spreekniveau (camera beweegt)', med < 3, `mediaan ${med}`);
+        // Een pixelstil gezicht (bankbiljet in een graphic, poster aan de muur) is geen persoon.
+        const stil = join(map, 'stil.mp4');
+        spawnSync(resolveBinary('ffmpeg'), ['-v', 'error', '-y', '-loop', '1', '-t', '2', '-i', 'scripts/fixtures/wijd-studio.jpg', '-vf', 'scale=1920:1080,setsar=1,fps=25', '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', stil]);
+        const ms = await meetSprekers(stil, [{ van: 0, tot: 2 }], pythonMetOpenCV());
+        toets('pixelstil gezicht (afbeelding) telt niet als persoon', ms[0]?.personen.length === 0, JSON.stringify(ms[0]?.personen.map((p) => p.x)));
         toets('monsters op 0,1 s', (m[0]?.personen[0]?.monsters.length ?? 0) >= 8);
       }
     } finally {

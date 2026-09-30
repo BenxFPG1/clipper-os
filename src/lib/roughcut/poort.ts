@@ -121,8 +121,14 @@ export function poort(
 
   // Regel 1: geen knip middenin een woord.
   if (bronWoorden && bronWoorden.length > 0) {
-    for (const seg of uit) {
-      const bijStart = woordOnder(bronWoorden, seg.start);
+    for (const [i, seg] of uit.entries()) {
+      // Een naad waar het vorige shot precies ophoudt waar dit begint (een
+      // camerawissel in de bron, een kaderwissel) is geen knip in het geluid:
+      // de spraak loopt door. Die grens verzetten zou juist een stukje woord
+      // dubbel laten klinken.
+      const doorlopendVoor = i > 0 && Math.abs(uit[i - 1].end - seg.start) < 0.005;
+      const doorlopendNa = i + 1 < uit.length && Math.abs(uit[i + 1].start - seg.end) < 0.005;
+      const bijStart = doorlopendVoor ? null : woordOnder(bronWoorden, seg.start);
       if (bijStart) {
         // Naar buiten: het hele woord komt mee. Een knip naar binnen zou het
         // woord juist half maken, en dat is exact wat we bestrijden.
@@ -134,7 +140,7 @@ export function poort(
         verzetGrens(seg, { start: bijStart.s });
       }
 
-      const bijEind = woordOnder(bronWoorden, seg.end);
+      const bijEind = doorlopendNa ? null : woordOnder(bronWoorden, seg.end);
       if (bijEind) {
         ingrepen.push({
           volgorde: seg.volgorde,

@@ -13,7 +13,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { resolveBinary } from '../src/lib/ingest/binaries';
 import { groveWoorden, haalBronWoorden, type BronWoord, type BronWoordCache } from '../src/lib/roughcut/woorden';
-import { corrigeerWoorden } from '../src/lib/roughcut/ondertitelwoorden';
+import { corrigeerWoorden, pasCorrectiesToe } from '../src/lib/roughcut/ondertitelwoorden';
+import { bouwAss, groepeerRegels, keurOndertitelOverlap, REGEL_GAT, woordenOpTijdlijn } from '../src/lib/roughcut/ondertitels';
+import { editorTekst } from '../src/lib/roughcut/editortekst';
+import { kaartSchema } from '../src/lib/planner/schema';
+import type { Shot } from '../src/lib/roughcut';
 import { instelling } from '../src/lib/roughcut/instellingen';
 
 let gefaald = 0;
@@ -108,6 +112,67 @@ async function main() {
       toets('langer woord krijgt meer tijd', w[2].e - w[2].s > w[0].e - w[0].s);
       toets('gaten tussen de woorden (woordgrenzen)', w.every((x, i) => i === 0 || x.s > w[i - 1].e));
       toets('[muziek] en dergelijke vallen weg', !w.some((x) => /\[/.test(x.w)));
+    }
+
+    console.log('ondertitels overlappen nooit');
+    {
+      // YouTube-captions overlappen (rollend), en elk blok begint met een
+      // sprekerstreepje: zo ontstonden "Htoch?:Scar" en "rekening.-Dat".
+      const captions = [
+        { start_seconds: 10, end_seconds: 13.5, text: 'wie betaalt de rekening.' },
+        { start_seconds: 12.2, end_seconds: 15.8, text: '-Dat is toch? Scarom' },
+        { start_seconds: 15.0, end_seconds: 18.0, text: '- Hm.. ja precies' },
+      ];
+      const grof = groveWoorden(captions);
+      toets('grove woorden uit overlappende captions overlappen niet', grof.every((w, i) => i === 0 || w.s >= grof[i - 1].e), JSON.stringify(grof.map((w) => [w.w, w.s, w.e])));
+      toets('sprekerstreepje verdwijnt', !grof.some((w) => w.w.startsWith('-')), grof.map((w) => w.w).join(' '));
+      const shots: Shot[] = [{ volgorde: 1, start: 9.8, end: 18, functie: 'setup' }];
+      // Plus een dubbel binnengekomen woord en een los overlappend woord.
+      const woorden = [...grof, { w: 'toch?', s: grof.find((w) => w.w === 'toch?')!.s + 0.03, e: grof.find((w) => w.w === 'toch?')!.e + 0.02 }, { w: 'eh', s: 14.1, e: 14.9 }];
+      const regels = groepeerRegels(woordenOpTijdlijn(shots, woorden));
+      const k = keurOndertitelOverlap(regels);
+      toets('keuring: ondertitels overlappen niet', k.goed === true, k.detail);
+      toets('dubbel woord valt weg', regels.flatMap((r) => r.woorden).filter((w) => w.w === 'toch?').length === 1);
+      toets('geen "rekening.-Dat" meer', !regels.some((r) => r.woorden.some((w) => /\.-/.test(w.w))), regels.map((r) => r.woorden.map((w) => w.w).join(' ')).join(' | '));
+      // ASS: nooit twee dialoogregels tegelijk.
+      const ass = bouwAss(regels, { accent: '#ff8800' });
+      const tijd = (x: string) => { const [u, m, sec] = x.split(':'); return Number(u) * 3600 + Number(m) * 60 + Number(sec); };
+      const dia = [...ass.matchAll(/^Dialogue: 0,([^,]+),([^,]+),/gm)].map((m) => [tijd(m[1]), tijd(m[2])]).sort((a, b) => a[0] - b[0]);
+      toets('ASS: nooit twee dialogen tegelijk in beeld', dia.every((d, i) => i === 0 || d[0] >= dia[i - 1][1] - 1e-6), JSON.stringify(dia.slice(0, 8)));
+      // Een keuring die een echte overlap ook ziet.
+      const fout = [
+        { s: 0, e: 1.2, woorden: [{ w: 'a', s: 0, e: 0.5 }] },
+        { s: 1.0, e: 2, woorden: [{ w: 'b', s: 1.0, e: 1.5 }] },
+      ];
+      toets('keuring ziet een overlap', keurOndertitelOverlap(fout).goed === false);
+      toets(`gat tussen regels ≥ ${REGEL_GAT * 1000} ms`, regels.every((r, i) => i === 0 || r.s - regels[i - 1].e >= REGEL_GAT - 1e-6));
+      // Shots niet in volgnummer-volgorde in de array: de tijdlijn volgt de render.
+      const bron = [{ w: 'een', s: 1, e: 1.3 }, { w: 'twee', s: 5, e: 5.3 }];
+      const omgekeerd = woordenOpTijdlijn([{ volgorde: 2, start: 4.9, end: 5.5, functie: 'setup' }, { volgorde: 1, start: 0.9, end: 1.5, functie: 'setup' }], bron);
+      toets('woorden in render-volgorde (op volgnummer)', omgekeerd.map((w) => w.w).join(' ') === 'een twee' && omgekeerd[1].s > omgekeerd[0].s);
+    }
+
+    console.log('correctie mag één fout in twee woorden splitsen');
+    {
+      const c = pasCorrectiesToe([{ w: 'duurtraloesje.', s: 1, e: 2 }], [{ index: 0, woord: 'duurste horloge' }]);
+      toets('toegepast als twee woorden (leesteken blijft)', c.woorden[0].w === 'duurste horloge.' && c.toegepast.length === 1, JSON.stringify(c));
+      const op = woordenOpTijdlijn([{ volgorde: 1, start: 0, end: 3, functie: 'setup' }], c.woorden);
+      toets('op de tijdlijn twee woorden, tijd verdeeld', op.length === 2 && op[0].w === 'duurste' && op[1].w === 'horloge.' && op[0].e <= op[1].s + 1e-9 && op[1].e <= 2 + 1e-9, JSON.stringify(op));
+      const vier = pasCorrectiesToe([{ w: 'x', s: 1, e: 2 }], [{ index: 0, woord: 'een twee drie vier' }]);
+      toets('meer dan drie woorden: afgewezen en gemeld', vier.toegepast.length === 0 && vier.afgewezen.length === 1, JSON.stringify(vier.afgewezen));
+    }
+
+    console.log('kaarten: tekst voor de kijker, geen editor-aanwijzing');
+    {
+      for (const t of ['Hier opende deze clip mee', 'Cold open', '2 minuten later', 'Zie boven', 'Flashback naar 2019', 'Tijdsprong', 'Voor de editor: knip hier']) {
+        toets(`"${t}" is editor-tekst`, editorTekst(t) !== null);
+      }
+      for (const t of ['€5.250.000', 'Wie betaalt de rekening?', 'Titanic was niet de ergste', 'Hij blijft in karakter', 'De video ging viraal', '€105.000 · betaald in 10 minuten']) {
+        toets(`"${t}" is kijkertekst`, editorTekst(t) === null, String(editorTekst(t)));
+      }
+      const r = kaartSchema.safeParse({ shot: 3, tekst: 'Hier opende deze clip mee' });
+      toets('planner-schema weigert editor-tekst (repair-ronde)', !r.success && /aanwijzing voor de editor/.test(r.error.message), r.success ? '' : r.error.message);
+      toets('planner-schema accepteert kijkertekst', kaartSchema.safeParse({ shot: 3, tekst: '€5.250.000' }).success);
     }
 
     console.log('ondertitelcorrectie met captions');

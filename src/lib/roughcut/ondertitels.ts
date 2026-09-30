@@ -117,9 +117,15 @@ export function ondertitelMaat(stijl?: Huisstijl | null): { assGrootte: number; 
 export function woordenOpTijdlijn(segmenten: Shot[], bronWoorden: BronWoord[]): OndertitelWoord[] {
   const uit: OndertitelWoord[] = [];
   let cursor = 0;
-  for (const seg of segmenten) {
+  // Dezelfde volgorde als de render (op volgnummer, lege shots eruit). De
+  // array-volgorde week daar soms van af na een splitsing, en dan stonden
+  // de woorden van twee shots op elkaars tijdlijnplek: twee regels door
+  // elkaar in beeld.
+  const inRender = [...segmenten].sort((a, b) => a.volgorde - b.volgorde).filter((s) => s.end > s.start);
+  const woorden = [...bronWoorden].sort((a, b) => a.s - b.s);
+  for (const seg of inRender) {
     const duur = seg.end - seg.start;
-    for (const w of bronWoorden) {
+    for (const w of woorden) {
       if (w.s < seg.start - 0.05) continue;
       if (w.s > seg.end) break;
       // Een woord dat over de knip heen loopt wordt afgekapt op het segment;
@@ -127,13 +133,46 @@ export function woordenOpTijdlijn(segmenten: Shot[], bronWoorden: BronWoord[]): 
       const s = cursor + Math.max(0, w.s - seg.start);
       const e = cursor + Math.min(duur, Math.max(w.e - seg.start, w.s - seg.start + 0.08));
       if (e <= s) continue;
-      const tekst = veiligeTekst(w.w).replace(/\s+/g, '');
-      if (!tekst) continue;
-      uit.push({ w: tekst, s, e });
+      // Een correctie kan één herkenningsfout in twee of drie woorden
+      // splitsen ("duurtraloesje" → "duurste horloge"): de tijd van het
+      // woord wordt dan naar lengte over de delen verdeeld.
+      const delen = veiligeTekst(w.w).split(/\s+/).filter(Boolean);
+      if (delen.length === 0) continue;
+      const totaal = delen.reduce((t, d) => t + d.length + 1, 0);
+      let t0 = s;
+      for (const d of delen) {
+        const t1 = t0 + ((e - s) * (d.length + 1)) / totaal;
+        uit.push({ w: d, s: t0, e: t1 });
+        t0 = t1;
+      }
     }
     cursor += duur;
   }
-  return plakKoppeltekens(uit);
+  return plakKoppeltekens(ontwarWoorden(uit));
+}
+
+const kaalWoord = (w: string) => w.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+
+/**
+ * Harde regel na alle omrekeningen: woorden staan strikt na elkaar op de
+ * tijdlijn. Een woord dat twee keer binnenkwam (de rand van een verfijnd
+ * bereik, een grove en een gemeten versie) valt weg; overlappende woorden
+ * worden aan elkaar gelegd in plaats van over elkaar.
+ */
+export function ontwarWoorden(woorden: OndertitelWoord[]): OndertitelWoord[] {
+  const uit: OndertitelWoord[] = [];
+  for (const w of [...woorden].sort((a, b) => a.s - b.s || a.e - b.e)) {
+    const vorige = uit[uit.length - 1];
+    if (vorige && w.s < vorige.e) {
+      const overlap = Math.min(vorige.e, w.e) - w.s;
+      const korter = Math.min(vorige.e - vorige.s, w.e - w.s);
+      if (kaalWoord(vorige.w) === kaalWoord(w.w) && overlap > korter * 0.4) continue;
+      vorige.e = Math.max(vorige.s + 0.05, w.s);
+    }
+    const s = vorige ? Math.max(w.s, vorige.s + 0.05) : w.s;
+    uit.push({ ...w, s, e: Math.max(w.e, s + 0.05) });
+  }
+  return uit;
 }
 
 /**
@@ -146,6 +185,13 @@ export function plakKoppeltekens(woorden: OndertitelWoord[]): OndertitelWoord[] 
   const uit: OndertitelWoord[] = [];
   for (const w of woorden) {
     const vorige = uit[uit.length - 1];
+    // Een streepje na een zinseinde is een sprekerwissel in de captions
+    // ("rekening. -Dat is"), geen koppelteken: dat werd "rekening.-Dat".
+    if (w.w.startsWith('-') && (!vorige || /[.!?…,:;]$/.test(vorige.w))) {
+      const kaal = w.w.replace(/^-+/, '');
+      if (kaal) uit.push({ ...w, w: kaal });
+      continue;
+    }
     if (vorige && (w.w.startsWith('-') || vorige.w.endsWith('-')) && w.s - vorige.e < 0.6) {
       uit[uit.length - 1] = { w: `${vorige.w}${w.w}`.replace(/--/g, '-'), s: vorige.s, e: w.e };
     } else {
@@ -191,7 +237,51 @@ export function groepeerRegels(woorden: OndertitelWoord[]): OndertitelRegel[] {
     const plafond = volgende ? volgende.s - 0.02 : regels[i].e + 0.4;
     regels[i].e = Math.max(regels[i].e, Math.min(plafond, regels[i].e + 0.4));
   }
+  return scheidRegels(regels);
+}
+
+/** Minimaal gat tussen twee regels: nooit twee regels tegelijk in beeld. */
+export const REGEL_GAT = 0.04;
+
+/**
+ * Harde regel: regel k eindigt uiterlijk REGEL_GAT vóór regel k+1 begint.
+ * Ook de woorden binnen een regel worden daarop begrensd, want het ASS-
+ * bestand zet per woord een eigen dialoogregel.
+ */
+export function scheidRegels(regels: OndertitelRegel[]): OndertitelRegel[] {
+  for (let i = 0; i + 1 < regels.length; i++) {
+    const r = regels[i];
+    const volgende = regels[i + 1];
+    const laatste = r.woorden[r.woorden.length - 1];
+    const grens = volgende.s - REGEL_GAT;
+    if (r.e > grens) {
+      r.e = Math.max(laatste.s + 0.02, grens);
+      // Kan het echt niet (twee woorden binnen 60 ms), dan schuift de
+      // volgende regel een fractie op in plaats van eroverheen te vallen.
+      if (r.e > grens) volgende.s = volgende.woorden[0].s = r.e + REGEL_GAT;
+    }
+    for (const w of r.woorden) w.e = Math.min(w.e, r.e);
+  }
   return regels;
+}
+
+/** Keuring: overlappen ondertitelregels (of de woorden erin) in tijd? */
+export function keurOndertitelOverlap(regels: OndertitelRegel[] | null | undefined): KeuringRegel {
+  const naam = 'ondertitels overlappen niet';
+  if (!regels || regels.length === 0) return { naam, goed: null, detail: 'geen ondertitels' };
+  const fouten: string[] = [];
+  for (let i = 0; i < regels.length; i++) {
+    const r = regels[i];
+    const ws = r.woorden;
+    if (ws.some((w, k) => k > 0 && w.s < ws[k - 1].s)) fouten.push(`${r.s.toFixed(2)} s: woorden niet op volgorde in "${ws.map((w) => w.w).join(' ')}"`);
+    const v = regels[i + 1];
+    if (v && r.e > v.s - REGEL_GAT + 1e-6) {
+      fouten.push(`${v.s.toFixed(2)} s: "${ws.map((w) => w.w).join(' ')}" loopt ${Math.round((r.e - v.s) * 1000)} ms door onder "${v.woorden.map((w) => w.w).join(' ')}"`);
+    }
+  }
+  return fouten.length
+    ? { naam, goed: false, detail: `${fouten.length} overlap(pen): ${fouten.slice(0, 4).join('; ')}` }
+    : { naam, goed: true, detail: `${regels.length} regels, telkens ≥ ${Math.round(REGEL_GAT * 1000)} ms ertussen` };
 }
 
 /** #RRGGBB naar de ASS-notatie &H00BBGGRR&. */
@@ -254,7 +344,9 @@ export function bouwAss(regels: OndertitelRegel[], stijl?: Huisstijl | null, pla
     const schaalTag = (f: number) => `\\fscx${Math.round(schaal * f)}\\fscy${Math.round(schaal * f)}`;
     regel.woorden.forEach((woord, k) => {
       const van = woord.s;
-      const tot = k + 1 < regel.woorden.length ? regel.woorden[k + 1].s : regel.e;
+      // Nooit voorbij het einde van de regel: anders staat de oude regel nog
+      // (met een ander actief woord) onder de nieuwe.
+      const tot = Math.min(regel.e, k + 1 < regel.woorden.length ? regel.woorden[k + 1].s : regel.e);
       if (tot - van < 0.01) return;
       // De regel komt binnen met een korte fade en een kleine schuif omhoog
       // (alleen bij het eerste woord); daarna staat hij stil en loopt alleen

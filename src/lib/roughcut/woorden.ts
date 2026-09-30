@@ -68,11 +68,25 @@ export async function bronWoordenUitCache(
  */
 export function groveWoorden(segmenten: TranscriptSegmentTijd[], van = -Infinity, tot = Infinity): BronWoord[] {
   const uit: BronWoord[] = [];
-  for (const seg of segmenten) {
+  // YouTube-captions overlappen: een blok staat nog in beeld terwijl het
+  // volgende al begint. Evenredig verdeeld gaf dat woorden van twee blokken
+  // door elkaar op dezelfde tijden — en twee ondertitelregels over elkaar.
+  // Elk blok eindigt dus waar het volgende begint.
+  const gesorteerd = [...segmenten]
+    .filter((x) => Number.isFinite(Number(x.start_seconds)) && Number.isFinite(Number(x.end_seconds)))
+    .sort((a, b) => Number(a.start_seconds) - Number(b.start_seconds));
+  for (const [i, seg] of gesorteerd.entries()) {
     const s0 = Number(seg.start_seconds);
-    const s1 = Number(seg.end_seconds);
+    const volgendeStart = gesorteerd.slice(i + 1).find((x) => Number(x.start_seconds) > s0)?.start_seconds;
+    const s1 = Math.min(Number(seg.end_seconds), volgendeStart !== undefined ? Number(volgendeStart) : Infinity);
     if (!(s1 > s0) || s1 <= van || s0 >= tot) continue;
-    const woorden = String(seg.text ?? '').replace(/\[[^\]]*\]/g, ' ').split(/\s+/).filter(Boolean);
+    // [muziek] en dergelijke weg, en het streepje waarmee captions een
+    // sprekerwissel aangeven ("- Dat is", "-Dat is").
+    const woorden = String(seg.text ?? '')
+      .replace(/\[[^\]]*\]/g, ' ')
+      .replace(/(^|\s)[-–—]+(?=\s|\p{L}|\d)/gu, '$1')
+      .split(/\s+/)
+      .filter(Boolean);
     if (woorden.length === 0) continue;
     const gewicht = woorden.map((w) => w.length + 1);
     const totaal = gewicht.reduce((t, g) => t + g, 0);

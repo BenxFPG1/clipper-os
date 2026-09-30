@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { editorTekst } from '../roughcut/editortekst';
 
 export const SCHEMA_VERSION = '1.0';
 export const PROMPT_VERSION_CHARACTER_MAP = 'charmap-3.2';
@@ -112,7 +113,14 @@ export type ScrollStop = z.infer<typeof scrollStopSchema>;
 
 export const kaartSchema = z.object({
   shot: z.number().int().min(1).describe('volgorde van het shot waarbij de kaart in beeld komt'),
-  tekst: z.string().min(2).max(60).describe('de letterlijke kaarttekst, kort (spreektaal, hoogstens ~8 woorden)'),
+  tekst: z
+    .string()
+    .min(2)
+    .max(60)
+    .describe('de letterlijke kaarttekst voor de kijker, kort (hoogstens ~7 woorden): een feit, getal, vraag of label — nooit een aanwijzing over de montage')
+    // Tekst voor de kijker, geen editor-aanwijzing: faalt dit, dan krijgt het
+    // model de fout terug in de repair-ronde en herschrijft het de kaart.
+    .refine((t) => !editorTekst(t), (t) => ({ message: `kaart "${t}" is een aanwijzing voor de editor (${editorTekst(t)}), geen tekst voor de kijker; herschrijf of zet hem in edit_notitie` })),
 });
 export type PlanKaart = z.infer<typeof kaartSchema>;
 

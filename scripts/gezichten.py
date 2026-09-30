@@ -366,6 +366,14 @@ def sprekermeting(van, tot, stap):
         totaal = monsters_per_scene.get(sp["scene"], 1)
         if len(sp["xs"]) < max(2, totaal * 0.3) or med(sp["ws"]) < 0.035:
             continue
+        # Een gezicht dat geen millimeter beweegt en waarvan de mond stil is,
+        # is geen persoon maar een afbeelding: het portret op een bankbiljet
+        # in een graphic, een filmposter aan de muur. Gemeten: x-bereik 0,000
+        # en mondbeweging 0 (bankbiljet), 0,001 en 0,04 (poster); de stilste
+        # echte luisteraar had 0,006 en 2,9.
+        mond = sorted(m[2] for m in sp["monsters"] if m[2] is not None)
+        if max(sp["xs"]) - min(sp["xs"]) < 0.006 and (not mond or mond[len(mond) // 2] < 0.2):
+            continue
         personen.append({
             "id": 0,
             "scene": sp["scene"],
