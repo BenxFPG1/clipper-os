@@ -27,6 +27,7 @@ import { bouwAss, groepeerRegels, heeftAssFilter, maakOndertitels, woordenOpTijd
 import { tekenHookKaart, hookDuur } from '../src/lib/roughcut/tekstkaarten';
 import type { BronWoord } from '../src/lib/roughcut/woorden';
 import { keurRetentie, pasRetentieToe } from '../src/lib/roughcut/retentie';
+import { kleurCorrectie, meetKleur } from '../src/lib/roughcut/kleur';
 import { poort } from '../src/lib/roughcut/poort';
 import { keurKnippen } from '../src/lib/roughcut/keuring';
 import { STANDAARD_DOELEN } from '../src/lib/vault/normen';
@@ -284,6 +285,96 @@ async function main() {
         toets('retentie-render is korter dan het ongeknipte shot', p.duur < lang.end - lang.start - 1, `${p.duur}s vs ${(lang.end - lang.start).toFixed(2)}s`);
       } catch (e) {
         toets('retentie-render slaagt', false, (e as Error).message.slice(-600));
+      }
+    }
+    // 4b. Afwerking: alle nieuwe filters in één render — kleurcorrectie (eq),
+    //     stemketen, easing-zooms, kaderwissel-push, hit op het payoff-woord,
+    //     J/L-naad, pauze-crossfade, sfx-plan op vaste momenten, muziek met
+    //     aanzet na de hook en pop-ondertitels.
+    console.log('afwerking-render');
+    {
+      const muziekTrack = join(map, 'track.mp3');
+      ff(['-f', 'lavfi', '-i', "aevalsrc='if(lt(mod(t,0.5),0.03),0.5*sin(2*PI*1000*t),0)+0.08*sin(2*PI*110*t)':s=44100:d=6", '-c:a', 'libmp3lame', muziekTrack]);
+      const kleur = kleurCorrectie(await meetKleur(bron, [1, 5, 9]));
+      toets('kleur gemeten op de bron', kleur.filter !== null && kleur.detail.startsWith('helderheid'), kleur.detail);
+      const af: Shot[] = [
+        { volgorde: 1, start: 0.2, end: 3.0, functie: 'hook', beeld_effect: 'punch_in' },
+        { volgorde: 2, start: 3.0, end: 4.6, functie: 'context', zoom: 1.15, zachteWissel: true },
+        { volgorde: 3, start: 5.0, end: 7.0, functie: 'escalatie', strakBegin: true, audioNaad: 0.2 },
+        { volgorde: 4, start: 8.0, end: 11.0, functie: 'payoff', hit: 0.3 },
+      ];
+      const plan = [
+        { slug: 'whoosh', t: 2.68, reden: 'kaderwissel' },
+        { slug: 'riser', t: 4.9, volume: 0.13, reden: 'opbouw' },
+        { slug: 'impact', t: 6.38, volume: 0.2, reden: 'payoff-woord' },
+        { slug: 'ding', t: 8.0, reden: 'kaart met getal' },
+      ];
+      const afWoorden: BronWoord[] = 'de afwerking maakt het af met een pop op elk woord'.split(' ').map((w, i) => ({ w, s: 0.4 + i * 0.5, e: 0.4 + i * 0.5 + 0.35 }));
+      const afOndertitels = await maakOndertitels(af, afWoorden, map, 'afwerking', { accent: '#ff8800', font: 'archivo', ondertitel_stijl: 'pop' });
+      const afPad = join(map, 'afwerking.mp4');
+      const afLog: string[] = [];
+      const verwacht = af.reduce((t, x) => t + (x.end - x.start), 0);
+      try {
+        await maakRuweMontage({
+          sourceUrl: 'lokaal://test',
+          shots: af,
+          alGesegmenteerd: true,
+          outputPad: afPad,
+          werkmap,
+          kader: 'vullend',
+          overlays: afOndertitels.overlays,
+          ondertitelAss: afOndertitels.assPad,
+          muziekPad: muziekTrack,
+          sfxMap: join(process.cwd(), 'assets', 'sfx'),
+          ruisvloerDb: -60,
+          maxBytes: 50 * 1024 * 1024,
+          afwerking: { easing: true, kleurFilter: kleur.filter, stem: true, sfxPlan: plan, muziekNaHook: 1.2 },
+          onVoortgang: (m) => afLog.push(m),
+        });
+        const p = probe(afPad);
+        toets(`afwerking-render duurt de som van de shots (${verwacht.toFixed(1)}s)`, Math.abs(p.duur - verwacht) < 0.3, `${p.duur}s`);
+        toets('afwerking-render heeft beeld en geluid', p.streams.includes('video') && p.streams.includes('audio'));
+        toets('luidheid in twee passes gemeten', !afLog.some((m) => /luidheidsmeting mislukt/.test(m)), afLog.join(' | '));
+      } catch (e) {
+        toets('afwerking-render slaagt', false, (e as Error).message.slice(-900));
+      }
+
+      // Naad met pauze-crossfade: de bron is een doorlopende sinus; een harde
+      // knip midden in de golf (0,37 s verder) is een klik. Gemeten als de
+      // grootste knik (tweede verschil tussen samples) rond de naad, t.o.v.
+      // een rustig stuk van dezelfde render. Ter controle: met een fade van
+      // 1 ms (MONTAGE_PAUZE_CROSSFADE=0.001) is de knik ~6× zo groot.
+      const naadPad = join(map, 'naad.mp4');
+      try {
+        await maakRuweMontage({
+          sourceUrl: 'lokaal://test',
+          shots: [
+            { volgorde: 1, start: 0.2, end: 3.0, functie: 'setup' },
+            { volgorde: 2, start: 3.37, end: 6.0, functie: 'setup', strakBegin: true },
+          ],
+          alGesegmenteerd: true,
+          outputPad: naadPad,
+          werkmap,
+          kader: 'vullend',
+          ruisvloerDb: -60,
+          maxBytes: 50 * 1024 * 1024,
+          afwerking: { stem: true },
+        });
+        const r = spawnSync(resolveBinary('ffmpeg'), ['-v', 'error', '-i', naadPad, '-ac', '1', '-ar', '48000', '-f', 'f32le', '-'], { maxBuffer: 1e9 });
+        const b = r.stdout as Buffer;
+        const x = new Float32Array(Math.floor(b.length / 4));
+        for (let i = 0; i < x.length; i++) x[i] = b.readFloatLE(i * 4);
+        const sprong = (van: number, tot: number) => {
+          let m = 0;
+          for (let i = Math.max(1, Math.floor(van * 48000)); i < Math.min(x.length - 1, tot * 48000); i++) m = Math.max(m, Math.abs(x[i + 1] - 2 * x[i] + x[i - 1]));
+          return m;
+        };
+        const rustig = sprong(1.0, 2.2);
+        const naad = sprong(2.65, 2.95);
+        console.log(`    grootste knik in de golf: rustig ${rustig.toFixed(4)}, rond de naad ${naad.toFixed(4)}`);
+        toets('naad met crossfade klikt niet (knik ≤ 2× een rustig stuk)', rustig > 0 && naad <= rustig * 2, `${naad.toFixed(4)} vs ${rustig.toFixed(4)}`);
+      } catch (e) {
+        toets('naad-render slaagt', false, (e as Error).message.slice(-600));
       }
     }
     // 5. Encode: het eindbestand op crf 17 / medium, het tussenbestand bijna

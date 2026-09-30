@@ -463,7 +463,9 @@ function knipInDelen(seg: Shot, snedes: Snede[], ruimte = 0.5): Shot[] {
   for (let k = 0; k <= gesorteerd.length; k++) {
     const van = k === 0 ? seg.start : gesorteerd[k - 1].y;
     const tot = k === gesorteerd.length ? seg.end : gesorteerd[k].x;
-    const deel: Shot = { ...seg, volgorde: rond(seg.volgorde + k * stap, 6), exact: false };
+    const deel: Shot = { ...seg, volgorde: rond(seg.volgorde + k * stap, 6), exact: false, zachteWissel: undefined };
+    // Een kaderwissel (geen pauzeknip) mag als zachte push binnenkomen.
+    if (k > 0 && (gesorteerd[k - 1].soort === 'wissel' || gesorteerd[k - 1].soort === 'eerste_wissel')) deel.zachteWissel = true;
     if (k > 0) {
       verzetGrens(deel, { start: van });
       deel.strakBegin = true;
@@ -545,11 +547,19 @@ export function pasRetentieToe(
   // rest-stilte staan zodat het nog als ademhaling klinkt. In een payoff-shot
   // mag een pauze tot het payoff-maximum blijven (dat ís de spanning), en de
   // tease blijft heel.
+  // Adem en ritme. Wie rustig praat, heeft langere natuurlijke pauzes: de
+  // drempel schaalt mee met het spreektempo van deze clip (woorden per
+  // seconde spraak), zodat een bedachtzame spreker niet gehaast klinkt en een
+  // snelle spreker geen gaten houdt.
+  const tempo = woorden ? spreekTempo(segmenten, woorden) : null;
+  const tempoFactor = tempo ? Math.min(1.5, Math.max(0.8, 2.8 / tempo)) : 1;
+  const drempel = doelen.maxPauzeS * tempoFactor;
   if (woorden) {
     segmenten.forEach((seg, i) => {
       if (seg.tease) return;
       const ws = woordenIn(woorden, seg.start, seg.end);
       const venster = instelling('RETENTIE_PAYOFF_VENSTER');
+      const voorPayoff = segmenten.slice(i + 1).find((x) => !x.tease)?.functie === 'payoff';
       let deelStart = seg.start;
       for (let k = 0; k + 1 < ws.length; k++) {
         const gat = ws[k + 1].s - ws[k].e;
@@ -557,8 +567,19 @@ export function pasRetentieToe(
         // tot het payoff-maximum, en wordt een langere stilte daarheen
         // ingekort in plaats van tot een ademhaling.
         const rondOnthulling = seg.functie === 'payoff' && ws[k].e - seg.start <= venster;
-        if (gat <= doelen.maxPauzeS || (rondOnthulling && payoffPauze(seg, ws[k].e - seg.start, gat, doelen.maxPauzeS))) continue;
-        const blijft = rondOnthulling ? payoffMax : rest;
+        if (gat <= drempel || (rondOnthulling && payoffPauze(seg, ws[k].e - seg.start, gat, doelen.maxPauzeS))) continue;
+        // Functionele stilte: na een vraag (de kijker denkt mee) en vlak vóór
+        // de punchline (de spanning) blijft de pauze staan.
+        if (/\?["')]*$/.test(ws[k].w)) {
+          ingrepen.push({ soort: 'overgeslagen', volgorde: seg.volgorde, bron: rond(ws[k].e), wat: `pauze ${nl(gat)} s na een vraag blijft staan` });
+          continue;
+        }
+        if (voorPayoff && ws[k].e > seg.end - 1.5) {
+          ingrepen.push({ soort: 'overgeslagen', volgorde: seg.volgorde, bron: rond(ws[k].e), wat: `pauze ${nl(gat)} s vlak vóór de payoff blijft staan` });
+          continue;
+        }
+        // Na een zinseinde blijft er iets meer adem staan dan midden in een zin.
+        const blijft = rondOnthulling ? payoffMax : /[.!]["')]*$/.test(ws[k].w) ? instelling('RETENTIE_PAUZE_REST_ZIN') : rest;
         const x = ws[k].e + blijft / 2;
         const y = ws[k + 1].s - blijft / 2;
         if (y - x < 0.05) continue;
@@ -817,4 +838,18 @@ export function herstelWissels(
     niet++;
   }
   return { hersteld, niet };
+}
+
+/** Woorden per seconde spraak in deze segmenten (alleen de tijd waarin gesproken wordt). */
+export function spreekTempo(segmenten: Shot[], woorden: BronWoord[]): number | null {
+  let n = 0;
+  let spraak = 0;
+  for (const seg of segmenten) {
+    const ws = woordenIn(woorden, seg.start, seg.end);
+    n += ws.length;
+    spraak += ws.reduce((t, w) => t + Math.max(0.05, w.e - w.s), 0);
+    // Korte gaten (< 0,3 s) tellen als spraak: dat is het ritme, geen pauze.
+    for (let k = 0; k + 1 < ws.length; k++) spraak += Math.min(0.3, Math.max(0, ws[k + 1].s - ws[k].e));
+  }
+  return n >= 8 && spraak > 1 ? n / spraak : null;
 }

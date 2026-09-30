@@ -4,7 +4,7 @@ import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createCanvas } from '@napi-rs/canvas';
 import { resolveBinary } from '../ingest/binaries';
-import { instelling, ondertitelFontStandaard } from './instellingen';
+import { instelling, ondertitelFontStandaard, ondertitelStijlStandaard } from './instellingen';
 import { FONTS, fontVoor, veiligeTekst, type Huisstijl } from './tekstkaarten';
 import { basisZoom, type BurnOverlay, type Shot } from './index';
 import { uitsnedeVan } from './kadercontrole';
@@ -217,6 +217,8 @@ function assTijd(seconden: number): string {
  * onderrand in px (anker onder-midden); zonder plaatsing de standaardhoogte.
  */
 export function bouwAss(regels: OndertitelRegel[], stijl?: Huisstijl | null, plaatsing?: number[], schalen?: number[]): string {
+  // De stijl-preset: per campagne te kiezen, standaard 'pop'.
+  const preset = stijl?.ondertitel_stijl ?? ondertitelStijlStandaard();
   const font = ondertitelFont(stijl);
   const maat = ondertitelMaat(stijl);
   const accent = assKleur(stijl?.accent, '&H0000D7FF&'); // geel als er geen huisstijl is
@@ -249,13 +251,33 @@ export function bouwAss(regels: OndertitelRegel[], stijl?: Huisstijl | null, pla
     const breedte = regelBreedte(regel.woorden.map((w) => w.w).join(' '), stijl);
     const extra = schalen?.[r] ?? 1;
     const schaal = Math.floor(Math.min(1, instelling('ONDERTITEL_MAX_BREEDTE') / (breedte * extra)) * extra * 100);
-    const opmaak = `{\\an2\\pos(540,${y})${schaal < 100 ? `\\fscx${schaal}\\fscy${schaal}` : ''}}`;
+    const schaalTag = (f: number) => `\\fscx${Math.round(schaal * f)}\\fscy${Math.round(schaal * f)}`;
     regel.woorden.forEach((woord, k) => {
       const van = woord.s;
       const tot = k + 1 < regel.woorden.length ? regel.woorden[k + 1].s : regel.e;
       if (tot - van < 0.01) return;
+      // De regel komt binnen met een korte fade en een kleine schuif omhoog
+      // (alleen bij het eerste woord); daarna staat hij stil en loopt alleen
+      // de nadruk mee met de stem.
+      const binnenkomst = k === 0 && preset !== 'strak';
+      const plaats = binnenkomst ? `\\move(540,${y + 14},540,${y},0,110)\\fad(90,0)` : `\\pos(540,${y})`;
+      const opmaak = `{\\an2${plaats}${schaalTag(1)}}`;
       const tekst = regel.woorden
-        .map((x, i) => (i === k ? `{\\c${accent}}${veilig(x.w)}{\\c${wit}}` : veilig(x.w)))
+        .map((x, i) => {
+          const w = veilig(x.w);
+          if (preset === 'karaoke') {
+            // Wat al gezegd is blijft in de accentkleur staan; het actieve
+            // woord krijgt een kleine schaalnadruk.
+            if (i < k) return `{\\c${accent}}${w}{\\c${wit}}`;
+            if (i === k) return `{\\c${accent}${schaalTag(1.04)}}${w}{\\c${wit}${schaalTag(1)}}`;
+            return w;
+          }
+          if (i !== k) return w;
+          if (preset === 'strak') return `{\\c${accent}}${w}{\\c${wit}}`;
+          // pop: het actieve woord springt kort op (85% → 105% → 104%) in
+          // ~120 ms en blijft licht aangezet staan zolang het klinkt.
+          return `{\\c${accent}${schaalTag(0.85)}\\t(0,60,${schaalTag(1.05)})\\t(60,120,${schaalTag(1.04)})}${w}{\\c${wit}${schaalTag(1)}}`;
+        })
         .join(' ');
       dialogen.push(`Dialogue: 0,${assTijd(van)},${assTijd(tot)},Woord,,0,0,0,,${opmaak}${tekst}`);
     });

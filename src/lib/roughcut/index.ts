@@ -124,6 +124,16 @@ export type Shot = {
    * graphic, dan wisselt het kader op precies die bronknip (scenes.ts).
    */
   scenes?: Scene[];
+  /**
+   * Afwerking (afwerking.ts / sounddesign.ts): een "hit"-zoom op deze seconde
+   * binnen het shot (het payoff-woord); een retentie-kaderwissel die als
+   * zachte push binnenkomt; en een J/L-verschuiving van het geluid op de naad
+   * ná dit shot (negatief = het volgende geluid begint eerder, J-cut;
+   * positief = dit geluid loopt door onder het volgende beeld, L-cut).
+   */
+  hit?: number;
+  zachteWissel?: boolean;
+  audioNaad?: number;
   /** Gemeten eindscherm-/abonneeroverlay (genormaliseerd, eindscherm.ts); het kader houdt die buiten beeld. */
   overlay?: { x0: number; y0: number; x1: number; y1: number };
   /** Brontijd waarop de overlay voor het eerst gezien is (voor inkorten bij zelfherstel). */
@@ -168,6 +178,18 @@ export async function probeBron(pad: string): Promise<BronEigenschappen> {
  * ondertitels, muziek, precieze in- en uitpunten) aan de editor. Zo blijft de
  * kennis waar hij hoort en vervalt alleen het knip- en plakwerk.
  */
+/**
+ * De broadcast-stemketen (afwerking 'stem'), vóór loudnorm. Los geëxporteerd
+ * zodat de test exact deze keten meet (LUFS, geen pompen).
+ */
+export function stemKeten(ruisig: boolean): string {
+  return (
+    `highpass=f=80,afftdn=nf=${ruisig ? -24 : -30},deesser=i=0.35,` +
+    `acompressor=threshold=0.089:ratio=2.5:attack=15:release=250:makeup=1.6:knee=4,` +
+    `equalizer=f=3500:t=q:w=1.2:g=2`
+  );
+}
+
 export async function maakRuweMontage(opties: {
   sourceUrl: string;
   shots: Shot[];
@@ -219,6 +241,8 @@ export async function maakRuweMontage(opties: {
   renderBron?: RenderBron;
   /** Video-id: dan worden 4K-secties ook in de R2-cache gezocht en bewaard. */
   videoId?: string;
+  /** Afwerking: easing, kleur, stemketen, sound design en muziekdynamiek (afwerking.ts). Zonder: het oude gedrag. */
+  afwerking?: RenderAfwerking;
   onVoortgang?: (bericht: string) => void;
 }): Promise<{ pad: string; duur: number; bron: BronEigenschappen | null; kwaliteit: RenderKwaliteit }> {
   const { sourceUrl, shots, outputPad, werkmap } = opties;
@@ -303,10 +327,23 @@ export async function maakRuweMontage(opties: {
   const lees = leestijdPlan(gesorteerd, kader);
   kwaliteit.leestijd = leesLogregel(lees);
 
+  // Per naad (tussen shot i en i+1): de lengte van de audio-crossfade en de
+  // J/L-verschuiving. Een weggeknipte pauze (strakke, niet-aansluitende naad)
+  // krijgt een korte crossfade (PAUZE_CROSSFADE): lang genoeg tegen een tik of
+  // plotse stilte, kort genoeg om de adem niet te versmeren.
+  const naadFade = gesorteerd.slice(0, -1).map((shot, i) => {
+    const volgend = gesorteerd[i + 1];
+    const pauzeKnip = volgend.strakBegin && volgend.start - shot.end > 0.05;
+    return pauzeKnip ? instelling('PAUZE_CROSSFADE') : OVERLAP;
+  });
+  const naadVerschuif = gesorteerd.slice(0, -1).map((shot) => shot.audioNaad ?? 0);
+
   gesorteerd.forEach((shot, i) => {
     const duur = shot.end - shot.start;
-    const handleVoor = i === 0 ? 0 : OVERLAP / 2;
-    const handleNa = i === gesorteerd.length - 1 ? 0 : OVERLAP / 2;
+    const handleVoor = i === 0 ? 0 : naadFade[i - 1] / 2;
+    const handleNa = i === gesorteerd.length - 1 ? 0 : naadFade[i] / 2;
+    const verschuifVoor = i === 0 ? 0 : naadVerschuif[i - 1];
+    const verschuifNa = i === gesorteerd.length - 1 ? 0 : naadVerschuif[i];
     // Uit welke bron dit shot komt: de sectie die het hele shot plus handles
     // bevat, anders de analysebron. Beeld én geluid uit hetzelfde bestand, dus
     // ze blijven onderling synchroon.
@@ -321,6 +358,14 @@ export async function maakRuweMontage(opties: {
     // uit zichzelf verdient (spreker klein in beeld → inzoomen tot het hoofd
     // het beeld draagt, begrensd op zijn bewegingsruimte).
     const zoom = shot.zoom ?? basisZoom(shot);
+    // Een retentie-kaderwissel als push: renderen op het wijdste van de twee
+    // kaders en in RETENTIE_WISSEL_DUUR naar het nieuwe kader zoomen.
+    const vorige = i > 0 ? gesorteerd[i - 1] : null;
+    const pushVan =
+      opties.afwerking?.easing !== false && shot.zachteWissel && vorige && Math.abs(shot.start - vorige.end) <= 0.05
+        ? (vorige.zoom ?? basisZoom(vorige))
+        : null;
+    const zoomRender = pushVan !== null ? Math.min(pushVan, zoom) : zoom;
     // Is de bron hier een split screen, dan eerst het paneel met de spreker
     // uitsnijden; daarna doet de rest van de keten alsof dat het hele beeld is.
     const paneel = shot.paneel;
@@ -346,7 +391,16 @@ export async function maakRuweMontage(opties: {
     // beeldtype van de kadercontrole wint van de clipkeuze, in beide
     // richtingen (graphic → blur, sprekend hoofd in een blur-clip → vullend).
     const delen = deelstukken(shot, kader);
-    const effect = effectKeten(shot.beeld_effect, duur, { fps: fpsUit, staand: delen[0].kader !== 'origineel' });
+    const staand = delen[0].kader !== 'origineel';
+    const easing = opties.afwerking?.easing !== false;
+    const effect =
+      [
+        effectKeten(shot.beeld_effect, duur, { fps: fpsUit, staand, easing }),
+        pushVan !== null ? effectKeten('wissel', duur, { fps: fpsUit, staand, easing, van: pushVan / zoomRender, naar: zoom / zoomRender }) : null,
+        shot.hit !== undefined ? effectKeten('hit', duur, { fps: fpsUit, staand, easing, vanaf: shot.hit }) : null,
+      ]
+        .filter(Boolean)
+        .join(',') || null;
     const ketenVoor = (deel: (typeof delen)[number]) => {
       // Een graphic wordt passend getoond: het paneel van de spreker ertussen
       // uitsnijden zou de graphic juist weer aansnijden.
@@ -375,12 +429,15 @@ export async function maakRuweMontage(opties: {
           // (uit beweging) als er geen gemeten focus is.
           focusX: focusNaarX(shot.focus, focusInPaneel ?? deel.persoonX ?? undefined),
           focusExpr: spoorDeel ? (spoorExpressie(spoorDeel) ?? undefined) : undefined,
-          zoom,
+          zoom: zoomRender,
           focusY: shot.focusY,
           focusYExpr: spoorYDeel ? (spoorExpressie(spoorYDeel) ?? undefined) : undefined,
           bronHoogte,
           inhoud,
-        })
+        }) +
+        // Kleurcorrectie alleen op camerabeeld: een graphic heeft de kleuren
+        // van het merk, die blijven zoals ze zijn.
+        (opties.afwerking?.kleurFilter && (deel.kader === 'vullend' || deel.kader === 'staand') ? `,${opties.afwerking.kleurFilter}` : '')
       );
     };
     // Twee invoeren per shot: beeld precies op de knip, geluid met handles
@@ -392,9 +449,13 @@ export async function maakRuweMontage(opties: {
     // einde blijven exact staan, zodat de totale lengte gelijk blijft aan de
     // som van de shots en beeld en geluid synchroon blijven.
     invoer.push('-ss', beeldTijd(shot.start).toFixed(3), '-t', duur.toFixed(3), '-i', invoerBestand);
+    // Het geluid: dezelfde bron, met handles voor de crossfades en de J/L-
+    // verschuivingen. Een J-cut laat het geluid van dit shot eerder beginnen
+    // (de naad ervóór schuift naar links), een L-cut laat het langer doorlopen.
+    // De som van alle geluidsstukken blijft gelijk aan het beeld.
     invoer.push(
-      '-ss', bronTijd(Math.max(0, shot.start - handleVoor)).toFixed(3),
-      '-t', (duur + handleVoor + handleNa).toFixed(3),
+      '-ss', bronTijd(Math.max(0, shot.start + verschuifVoor - handleVoor)).toFixed(3),
+      '-t', (duur - verschuifVoor + verschuifNa + handleVoor + handleNa).toFixed(3),
       '-i', invoerBestand,
     );
     const aanpassing = delen.map((_, k) => lees.aanpassing.get(`${i}:${k}`) ?? { vasthouden: 0, inkorten: 0 });
@@ -501,7 +562,7 @@ export async function maakRuweMontage(opties: {
       // Driehoekig in- en uitfaden: samen houden die de luidheid over de naad
       // constant, waar een gelijkmatige curve een dipje in het midden geeft.
       filter +=
-        `;[${vorigLabel}][a${i}]acrossfade=d=${OVERLAP.toFixed(3)}:c1=tri:c2=tri[${uitLabel}]`;
+        `;[${vorigLabel}][a${i}]acrossfade=d=${naadFade[i - 1].toFixed(3)}:c1=tri:c2=tri[${uitLabel}]`;
       vorigLabel = uitLabel;
     }
   }
@@ -514,9 +575,16 @@ export async function maakRuweMontage(opties: {
   // onhoorbaar goed.
   const ruis = opties.ruisvloerDb ?? null;
   const ruisig = ruis !== null && ruis > -45;
-  filter += ruisig
-    ? `;[aruw]highpass=f=75,afftdn=nf=-22,speechnorm=e=6.25:r=0.00001:l=1[aspraak]`
-    : `;[aruw]highpass=f=75,speechnorm=e=5:r=0.00001:l=1[aspraak]`;
+  // Broadcast-keten (afwerking): highpass tegen gerommel, lichte
+  // ruisonderdrukking (sterker op een ruisige bron), de-esser tegen scherpe
+  // s-klanken, een milde compressor (lage ratio, trage release: geen gepomp)
+  // en een kleine presence-lift rond 3,5 kHz voor verstaanbaarheid op een
+  // telefoonspeaker. De luidheid zelf regelt loudnorm verderop.
+  filter += opties.afwerking?.stem
+    ? `;[aruw]${stemKeten(ruisig)}[aspraak]`
+    : ruisig
+      ? `;[aruw]highpass=f=75,afftdn=nf=-22,speechnorm=e=6.25:r=0.00001:l=1[aspraak]`
+      : `;[aruw]highpass=f=75,speechnorm=e=5:r=0.00001:l=1[aspraak]`;
   let audioUit = 'aspraak';
 
   // Tijdvensters op de uiteindelijke tijdlijn waarin de muziek volledig stil
@@ -579,10 +647,17 @@ export async function maakRuweMontage(opties: {
     // ongewijzigd), of per shot opgebouwd uit duckVensters als die er zijn.
     // Geneste if()'s, van laatste naar eerste shot, met 0,34 als bodem voor
     // elk shot dat geen spanning meekreeg.
-    const basisVolExpr = duckVensters.reduceRight(
+    const basisVolExprRuw = duckVensters.reduceRight(
       (acc, v) => `if(between(t\\,${v.van.toFixed(2)}\\,${v.tot.toFixed(2)})\\,${v.vol}\\,${acc})`,
       String(instelling('MUZIEK_BASIS')),
     );
+    // Na de hook mag het bed iets aanzetten (energie), in een halve seconde
+    // omhoog in plaats van een stap.
+    const naHook = opties.afwerking?.muziekNaHook;
+    const basisVolExpr =
+      naHook !== undefined
+        ? `(${basisVolExprRuw})*(1+${(instelling('MUZIEK_NA_HOOK') - 1).toFixed(3)}*min(1\\,max(0\\,(t-${naHook.toFixed(2)})/0.5)))`
+        : basisVolExprRuw;
 
     // Ducking in twee lagen. De sidechain volgt de spraak op de voet (snel
     // dicht, traag open, zodat hij niet tussen twee woorden omhoog pompt), en
@@ -610,8 +685,22 @@ export async function maakRuweMontage(opties: {
     extraIndex += 1;
   }
 
-  // Geluidseffecten: elk aanwezig sfx-bestand klinkt op het begin van zijn shot.
-  if (opties.sfxMap) {
+  // Geluidseffecten. Met een sfx-plan (sounddesign.ts) op precies de geplande
+  // momenten en volumes; anders zoals voorheen: per shot op zijn begin.
+  if (opties.sfxMap && opties.afwerking?.sfxPlan) {
+    for (const p of opties.afwerking.sfxPlan) {
+      const bestand = [join(opties.sfxMap, `${p.slug}.wav`), join(opties.sfxMap, `${p.slug}.mp3`)].find((k) => existsSync(k));
+      if (!bestand || p.t < 0 || p.t >= totaleDuur) continue;
+      extraInvoer.push('-i', bestand);
+      const ms = Math.round(p.t * 1000);
+      filter +=
+        `;[${extraIndex}:a]aformat=sample_rates=48000:channel_layouts=stereo,` +
+        `volume=${(p.volume ?? instelling('SFX_VOLUME')).toFixed(3)},adelay=${ms}|${ms}[fx${extraIndex}]` +
+        `;[${audioUit}][fx${extraIndex}]amix=inputs=2:duration=first:normalize=0[am${extraIndex}]`;
+      audioUit = `am${extraIndex}`;
+      extraIndex += 1;
+    }
+  } else if (opties.sfxMap) {
     let cursor = 0;
     for (const shot of gesorteerd) {
       const duur = shot.end - shot.start;
@@ -716,6 +805,22 @@ export async function maakRuweMontage(opties: {
   // gebouwd. De bronvideo blijft staan voor de volgende clip.
   return { pad: outputPad, duur: Math.round(totaal), bron: bronInfo, kwaliteit };
 }
+
+/** Een geluidseffect op een moment van de tijdlijn (sounddesign.ts). */
+export type SfxPlek = { slug: string; t: number; volume?: number; reden?: string };
+
+export type RenderAfwerking = {
+  /** Zachte in- en uitloop op zooms (en retentiewissels als push). */
+  easing?: boolean;
+  /** ffmpeg-filter voor de kleurcorrectie op sprekende beelden (kleur.ts), of null. */
+  kleurFilter?: string | null;
+  /** Broadcast-stemketen in plaats van alleen highpass + speechnorm. */
+  stem?: boolean;
+  /** Geplaatste geluidseffecten; vervangt de sfx per shot. */
+  sfxPlan?: SfxPlek[];
+  /** Vanaf deze tijdlijnseconde (einde hook) mag het muziekbed iets harder (MUZIEK_NA_HOOK). */
+  muziekNaHook?: number;
+};
 
 /** Wat de kwaliteitsregel in de log nodig heeft: opschaling en de verdeling persoon/graphic. */
 export type RenderKwaliteit = {

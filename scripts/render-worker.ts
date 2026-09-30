@@ -32,11 +32,15 @@ import { controleerAssFont, maakOndertitels, type Ondertitels } from '../src/lib
 import { gezichtMeterVia, kiesBevries, vulScenes, waaromGeenBevries } from '../src/lib/roughcut/scenes';
 import { graphicMeterVia, lijktGraphic } from '../src/lib/roughcut/graphics';
 import { behandelEindscherm, bronDuur, keurOverlayDetail, overlayMeterVia, vermijdOverlay } from '../src/lib/roughcut/eindscherm';
-import { afwijkendeInstellingen, gebruikteInstellingen, instelling } from '../src/lib/roughcut/instellingen';
+import { afwijkendeInstellingen, gebruikteInstellingen, instelling, ondertitelStijlStandaard } from '../src/lib/roughcut/instellingen';
 import { lijnShotsUit } from '../src/lib/roughcut/uitlijnen';
 import { runEditAgent, beslissingenVoorClip, bekendeEffectSlugs, type PlanMeetdata } from '../src/lib/agents/edit';
 
 import { zorgVoorMuziekbed } from '../src/lib/muziek';
+import { afwerkingAan, afwerkingOverzicht, type AfwerkingOnderdeel } from '../src/lib/roughcut/afwerking';
+import { kleurCorrectie, meetKleur } from '../src/lib/roughcut/kleur';
+import { planJL, planSfx, zetHit } from '../src/lib/roughcut/sounddesign';
+import { analyseerBeats, beatsOpTijdlijn, kiesTrack, knipOpBeat, BEAT_MIN_ZEKERHEID } from '../src/lib/roughcut/muziektracks';
 
 import { kiesHuisstijl } from '../src/lib/agents/huisstijl';
 import { controleerKaderVisueel } from '../src/lib/agents/kadercheck';
@@ -1108,6 +1112,49 @@ async function verwerk(job: Job) {
       }
     }
 
+    // AFWERKING (afwerking.ts): look en energie. Elk onderdeel apart uit te
+    // zetten (MONTAGE_AFWERKING_<X>=0 of huisstijl.afwerking.<x> = false).
+    const aan = (o: AfwerkingOnderdeel) => afwerkingAan(o, stijl);
+    console.log(`     afwerking: ${afwerkingOverzicht(stijl)}, ondertitels '${stijl.ondertitel_stijl ?? ondertitelStijlStandaard()}'`);
+    // Kleur: één meting per clip op de middens van (hoogstens vijf) shots.
+    let kleurFilter: string | undefined;
+    if (aan('kleur')) {
+      try {
+        const stap = Math.max(1, Math.ceil(segmenten.length / 5));
+        const tijden = segmenten.filter((_, i) => i % stap === 0).map((sg) => (sg.start + sg.end) / 2);
+        const k = kleurCorrectie(await meetKleur(bronPad, tijden), { lut: stijl.lut });
+        kleurFilter = k.filter ?? undefined;
+        console.log(`     kleur: ${k.detail}${stijl.lut && !k.lut ? ` (LUT '${stijl.lut}' niet gevonden in assets/lut)` : ''}`);
+      } catch (e) {
+        console.log(`     kleur overgeslagen (${(e as Error).message.slice(0, 70)})`);
+      }
+    }
+    // Muziek: een echte track uit assets/muziek/<sfeer>/ (vast op de clip),
+    // met gemeten beats; zonder map het oude bed.
+    const muziekSfeer = editClip?.muziek ?? clip.muziek ?? 'geen';
+    const track = aan('muziek') ? kiesTrack(muziekSfeer, `${job.video_id}|${nummer}|${clip.titel_intern}`) : null;
+    const beatAnalyse = track ? await analyseerBeats(track) : null;
+    if (track) {
+      console.log(
+        `     muziek: track ${track.split('/').slice(-2).join('/')}` +
+          (beatAnalyse
+            ? ` (${beatAnalyse.bpm} bpm, ${beatAnalyse.beats.length} beats, zekerheid ${String(beatAnalyse.zekerheid).replace('.', ',')}` +
+              `${beatAnalyse.zekerheid < BEAT_MIN_ZEKERHEID ? ' — geen duidelijke puls, niet op de beat geknipt' : ''})`
+            : ' (beats niet te meten)'),
+      );
+    } else if (aan('muziek') && muziekSfeer !== 'geen') {
+      console.log(`     muziek: geen tracks in assets/muziek/${muziekSfeer}/ — het vaste bed`);
+    }
+    // Kaarten die binnenkomen (voor whoosh/ding), op de huidige tijdlijn.
+    const sfxKaarten = () => {
+      const totaal = segmenten.reduce((t, sg) => t + (sg.end - sg.start), 0);
+      return [
+        ...(clip.context_kaart ? [{ start: hookTot + 0.3, end: hookTot + 2.5, tekst: clip.context_kaart }] : []),
+        ...uitvalKaarten(totaal).map((k) => ({ start: k.seconde, end: k.seconde + 2, tekst: k.tekst })),
+        ...planKaarten(),
+      ];
+    };
+
     let montage!: Awaited<ReturnType<typeof maakRuweMontage>>;
     // Een herrender (correctieronde) hergebruikt de gecachte secties; tel de
     // megabytes over alle rondes, anders staat er na een tweede ronde "0 MB".
@@ -1164,6 +1211,31 @@ async function verwerk(job: Job) {
         console.log(`     retentie: ${w.hersteld} kaderwissel(s) teruggezet na kadercorrectie${w.niet ? `, ${w.niet} niet mogelijk binnen het kader` : ''}`);
       }
     }
+    // Op de definitieve grenzen van deze ronde: knippen op de beat, dan de
+    // hit-zoom, J/L-naden en het sfx-plan (die hangen van de tijdlijn af).
+    let sfxPlan: import('../src/lib/roughcut/index').SfxPlek[] | undefined;
+    {
+      const delen: string[] = [];
+      if (beatAnalyse && beatAnalyse.zekerheid >= BEAT_MIN_ZEKERHEID) {
+        const totaal = segmenten.reduce((t, sg) => t + (sg.end - sg.start), 0);
+        const b = knipOpBeat(segmenten, beatsOpTijdlijn(beatAnalyse, totaal), ondertitelWoorden ?? bronWoorden);
+        delen.push(`${b.verschoven}/${b.kandidaten} knippen op de beat`);
+      }
+      for (const sg of segmenten) sg.hit = undefined;
+      const hitT = aan('hit') ? zetHit(segmenten, bronWoorden) : null;
+      if (hitT !== null) delen.push(`hit-zoom op het payoff-woord (${hitT.toFixed(2)} s)`);
+      if (aan('jl')) {
+        const jl = planJL(segmenten, bronWoorden);
+        delen.push(`J/L-cuts: ${jl.length ? jl.map((x) => `${x.soort} op naad ${x.naad + 1}`).join(', ') : 'geen naad die het toelaat'}`);
+      } else {
+        for (const sg of segmenten) sg.audioNaad = undefined;
+      }
+      if (aan('sfx')) {
+        sfxPlan = planSfx(segmenten, { woorden: bronWoorden, kaarten: sfxKaarten(), hookTot });
+        delen.push(`sound design: ${sfxPlan.length ? sfxPlan.map((p) => `${p.slug} ${p.t.toFixed(1)} s (${p.reden})`).join(', ') : 'geen'}`);
+      }
+      if (delen.length) console.log(`     ${delen.join('; ')}`);
+    }
     // Ondertitels op woordniveau uit de brontranscriptie — per poging opnieuw,
     // want de segmenten kunnen nog verschuiven. Uit te zetten per campagne
     // (huisstijl.ondertitels = false).
@@ -1175,7 +1247,7 @@ async function verwerk(job: Job) {
         });
         console.log(
           `     ondertitels: ${ondertitels.regels.length} regels` +
-            (ondertitels.assPad ? ' (ASS, woord in accentkleur)' : ondertitels.overlays.length ? ' (PNG-terugval: geen libass in deze ffmpeg)' : ''),
+            (ondertitels.assPad ? ` (ASS, stijl '${stijl.ondertitel_stijl ?? ondertitelStijlStandaard()}')` : ondertitels.overlays.length ? ' (PNG-terugval: geen libass in deze ffmpeg)' : ''),
         );
       } catch (e) {
         console.log(`     ondertitels overgeslagen (${(e as Error).message.slice(0, 70)})`);
@@ -1207,13 +1279,20 @@ async function verwerk(job: Job) {
       // Eigen gelicenseerde audio uit assets/: muziekbed met ducking en
       // stiltevensters, sfx op de shots die erom vragen. Ontbreekt een
       // bestand, dan wordt het stil overgeslagen.
-      muziekPad: await zorgVoorMuziekbed(editClip?.muziek ?? clip.muziek ?? 'geen', {
+      muziekPad: track ?? await zorgVoorMuziekbed(muziekSfeer, {
         werkmap: bronmap,
         seconden: segmenten.reduce((t, sg) => t + (sg.end - sg.start), 0),
         beschrijving: clip.titel_intern,
         log: (m) => console.log(`     ${m}`),
       }),
       sfxMap: join(process.cwd(), 'assets', 'sfx'),
+      afwerking: {
+        easing: aan('easing'),
+        kleurFilter,
+        stem: aan('stem'),
+        sfxPlan,
+        muziekNaHook: aan('muziek') && hookTot > 0 ? hookTot : undefined,
+      },
       ruisvloerDb: ruisvloer,
       maxBytes: MAX_BYTES,
       onVoortgang: (m) => console.log(`     ${m}`),
@@ -2003,13 +2082,20 @@ async function bepaalHuisstijl(
   const { data: v } = await supabase.from('videos').select('campaign_id').eq('id', videoId).single();
   if (!v?.campaign_id) return { font: 'archivo', ondertitels: true };
   const { data: c } = await supabase.from('campaigns').select('huisstijl').eq('id', v.campaign_id).single();
-  const bestaand = (c?.huisstijl as { accent?: string; font?: string; ondertitels?: boolean } | null) ?? {};
+  const bestaand = (c?.huisstijl as ({ accent?: string; font?: string; ondertitels?: boolean } & Pick<Huisstijl, 'ondertitel_stijl' | 'afwerking' | 'lut'>) | null) ?? {};
   // De ondertitel-vlag reist altijd mee: uit te zetten per campagne met
-  // huisstijl.ondertitels = false, standaard aan.
+  // huisstijl.ondertitels = false, standaard aan. Net als de afwerking
+  // (ondertitelstijl, uit te zetten onderdelen, LUT): alleen gelezen, nooit
+  // door de worker geschreven.
   const ondertitels = bestaand.ondertitels !== false;
+  const afwerk: Pick<Huisstijl, 'ondertitel_stijl' | 'afwerking' | 'lut'> = {
+    ondertitel_stijl: bestaand.ondertitel_stijl ?? null,
+    afwerking: bestaand.afwerking ?? null,
+    lut: bestaand.lut ?? null,
+  };
   // Al bepaald? Dan niet opnieuw: de huisstijl hoort over alle clips van een
   // campagne hetzelfde te zijn, en dit scheelt een call per render.
-  if (bestaand.accent && bestaand.font) return { accent: bestaand.accent, font: bestaand.font, ondertitels };
+  if (bestaand.accent && bestaand.font) return { accent: bestaand.accent, font: bestaand.font, ondertitels, ...afwerk };
 
   const kleur = bestaand.accent ?? (await kleurUitThumbnail(sourceUrl));
 
@@ -2038,7 +2124,7 @@ async function bepaalHuisstijl(
         .update({ huisstijl: { ...bestaand, accent: keuze.accent, font: keuze.font, bron: 'gezien', waarom: keuze.waarom } })
         .eq('id', v.campaign_id);
       console.log(`  huisstijl gezien: ${keuze.accent} + ${keuze.font} — ${keuze.waarom}`);
-      return { accent: keuze.accent, font: keuze.font, ondertitels };
+      return { accent: keuze.accent, font: keuze.font, ondertitels, ...afwerk };
     }
   } catch (e) {
     console.log(`  huisstijl-agent niet gelukt (${(e as Error).message.slice(0, 90)}); kleur uit thumbnail`);
@@ -2052,7 +2138,7 @@ async function bepaalHuisstijl(
       .update({ huisstijl: { ...bestaand, accent: kleur, bron: 'thumbnail' } })
       .eq('id', v.campaign_id);
   }
-  return { accent: kleur, font: bestaand.font ?? 'archivo', ondertitels };
+  return { accent: kleur, font: bestaand.font ?? 'archivo', ondertitels, ...afwerk };
 }
 
 /**

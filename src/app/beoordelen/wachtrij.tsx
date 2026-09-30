@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { roepApiAan } from '@/app/api-aanroep';
+import { AfwerkKnop } from '@/app/afwerk-knop';
 
 type Item = {
   render_job_id: string;
@@ -63,6 +64,9 @@ export function BeoordeelWachtrij() {
   const [vrij, setVrij] = useState('');
   const [bezig, setBezig] = useState(false);
   const [gedempt, setGedempt] = useState(true);
+  // De laatste die je 'goed' gaf: die kun je meteen als Premiere-pakket laten
+  // maken, ook al staat de volgende clip al in beeld.
+  const [laatsteGoed, setLaatsteGoed] = useState<Item | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
 
   const laad = useCallback(
@@ -143,6 +147,7 @@ export function BeoordeelWachtrij() {
         return;
       }
       setGedaan((n) => n + 1);
+      if (oordeel === 'goed') setLaatsteGoed(huidig);
       volgendeItem(huidig);
     },
     [huidig, bezig, chips, vrij, volgendeItem],
@@ -210,6 +215,26 @@ export function BeoordeelWachtrij() {
           ook hookvarianten
         </label>
       </div>
+
+      {laatsteGoed && (
+        <div className="rounded border border-emerald-900/60 bg-emerald-950/30 px-3 py-2 text-xs text-neutral-300">
+          <div className="flex items-start justify-between gap-2">
+            <span>
+              Goed: {laatsteGoed.clip ? `clip ${laatsteGoed.clip} · ` : ''}
+              {laatsteGoed.titel}
+            </span>
+            <button type="button" onClick={() => setLaatsteGoed(null)} className="text-neutral-500 hover:text-neutral-200" aria-label="Sluiten">
+              ×
+            </button>
+          </div>
+          <AfwerkKnop
+            key={sleutel(laatsteGoed)}
+            jobId={laatsteGoed.render_job_id}
+            bestandNaam={laatsteGoed.bestand_naam}
+            compact
+          />
+        </div>
+      )}
 
       {laden && items.length === 0 ? (
         <p className="text-sm text-neutral-500">Wachtrij laden…</p>

@@ -1,0 +1,67 @@
+# "Afwerken in Premiere"-pakketten bouwen. De site zet een aanvraag in R2
+# (afwerk/<render>/<clip>.json, status 'wachtend') en start deze workflow; hier
+# worden de 4K-secties, kaarten, muziek, sfx en ondertitels verzameld, het
+# Premiere-project geschreven en de zip naar R2 gezet. Niet op Vercel: de
+# secties zijn te groot voor een serverless functie, en een ontbrekende
+# sectie opnieuw ophalen vraagt yt-dlp en ffmpeg.
+name: afwerkpakket
+
+on:
+  workflow_dispatch:
+
+# Eén run tegelijk: een tweede aanvraag wacht en wordt door die run (of de
+# volgende) meegenomen, want de wachtrij staat in R2.
+concurrency:
+  group: afwerkpakket
+  cancel-in-progress: false
+
+jobs:
+  pakket:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      YTDLP_COOKIES_B64: ${{ secrets.YTDLP_COOKIES_B64 }}
+      NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      R2_BUCKET: ${{ secrets.R2_BUCKET }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # Alleen nodig als een 4K-sectie niet meer in de R2-cache staat: dan
+      # haalt yt-dlp hem opnieuw en lijnt ffmpeg hem uit op de analysebron.
+      - name: Installeer ffmpeg
+        run: |
+          if which ffmpeg; then ffmpeg -version | head -1
+          else sudo apt-get update -q && sudo apt-get install -y -q ffmpeg; fi
+
+      - name: Installeer yt-dlp
+        run: |
+          sudo curl -sSL --retry 3 --max-time 120 \
+            https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux \
+            -o /usr/local/bin/yt-dlp
+          sudo chmod +x /usr/local/bin/yt-dlp
+
+      - name: Installeer deno (challenge-solver voor yt-dlp)
+        run: |
+          curl -fsSL --retry 3 https://github.com/denoland/deno/releases/latest/download/deno-x86_64-unknown-linux-gnu.zip -o /tmp/deno.zip
+          sudo unzip -oq /tmp/deno.zip -d /usr/local/bin
+
+      - name: Dependencies
+        run: npm ci
+
+      - name: YouTube-cookies (optioneel)
+        if: ${{ env.YTDLP_COOKIES_B64 != '' }}
+        run: |
+          echo "$YTDLP_COOKIES_B64" | base64 -d > "$RUNNER_TEMP/cookies.txt"
+          echo "YTDLP_COOKIES_FILE=$RUNNER_TEMP/cookies.txt" >> "$GITHUB_ENV"
+
+      - name: Wachtende pakketten bouwen
+        run: npx tsx scripts/afwerkpakket.ts --wachtrij

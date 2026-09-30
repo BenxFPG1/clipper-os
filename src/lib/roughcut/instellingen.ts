@@ -201,6 +201,40 @@ const STANDAARD = {
   /** Eindscherm: alleen in de laatste zoveel seconden van de bron zoeken naar abonneer-overlays. */
   EINDSCHERM_VENSTER: 30,
 
+  /**
+   * Afwerking (afwerking.ts). Elk onderdeel staat aan met 1 en uit met 0, en
+   * is per campagne uit te zetten via huisstijl.afwerking.<onderdeel> = false.
+   */
+  AFWERKING_EASING: 1,
+  AFWERKING_HIT: 1,
+  AFWERKING_KLEUR: 1,
+  AFWERKING_STEM: 1,
+  AFWERKING_SFX: 1,
+  AFWERKING_MUZIEK: 1,
+  AFWERKING_JL: 1,
+  /** Een retentie-kaderwissel als zachte push in plaats van een harde sprong (s). */
+  RETENTIE_WISSEL_DUUR: 0.25,
+  /** Hit-zoom op het payoff-woord: schaal, aanloop en terugweg (s). */
+  HIT_SCHAAL: 1.08,
+  HIT_IN: 0.08,
+  HIT_UIT: 0.3,
+  /** Kleurcorrectie: doel-gemiddelde helderheid (0–255), maximaal contrast en verzadiging. */
+  KLEUR_DOEL_YAVG: 116,
+  KLEUR_MAX_CONTRAST: 1.12,
+  KLEUR_VERZADIGING: 1.06,
+  /** Sound design: minimale afstand tussen twee effecten (s) en hun volume onder de stem. */
+  SFX_MIN_AFSTAND: 3,
+  SFX_VOLUME: 0.16,
+  /** Muziek: hoeveel harder het bed na de hook mag (factor) en hoe ver een knip naar een beat mag schuiven (s). */
+  MUZIEK_NA_HOOK: 1.25,
+  BEAT_MAX_VERSCHUIF: 0.12,
+  /** J/L-cut: hoe ver het geluid vóór- of na-ijlt op een wissel (s). */
+  JL_DUUR: 0.2,
+  /** Crossfade op een weggeknipte pauze (s): kort, zodat er geen tik of plotse stilte is. */
+  PAUZE_CROSSFADE: 0.03,
+  /** Na een zinseinde blijft er zoveel adem staan (s) als de pauze wordt ingekort. */
+  RETENTIE_PAUZE_REST_ZIN: 0.22,
+
   /** Opschalen: vanaf deze factor een milde verscherping (lanczos schaalt altijd). */
   OPSCHAAL_VERSCHERP_VANAF: 1.1,
   /**
@@ -269,6 +303,13 @@ export type InstellingNaam = keyof typeof STANDAARD;
  */
 export function encodePreset(): string {
   return process.env.MONTAGE_ENCODE_PRESET || 'medium';
+}
+
+/** Ondertitelstijl-preset: 'pop' (standaard), 'strak' of 'karaoke'. */
+export type OndertitelStijl = 'pop' | 'strak' | 'karaoke';
+export function ondertitelStijlStandaard(): OndertitelStijl {
+  const s = process.env.MONTAGE_ONDERTITEL_STIJL;
+  return s === 'strak' || s === 'karaoke' ? s : 'pop';
 }
 
 /** Standaard ondertitelfont (sleutel in FONTS): dik, schreefloos en statisch, zodat libass het zeker laadt. */

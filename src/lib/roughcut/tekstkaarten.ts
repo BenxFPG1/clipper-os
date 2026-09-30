@@ -15,6 +15,16 @@ export type Huisstijl = {
    * op een telefoon onleesbaar. De huisstijl bepaalt wel de accentkleur.
    */
   ondertitel_font?: string | null;
+  /** Ondertitelstijl: 'pop' (standaard), 'strak' of 'karaoke'. */
+  ondertitel_stijl?: 'pop' | 'strak' | 'karaoke' | null;
+  /**
+   * Afwerking per onderdeel uit te zetten (false = uit). Onderdelen: easing,
+   * hit, kleur, stem, sfx, muziek, jl. Ontbreekt een sleutel, dan geldt de
+   * instelling (AFWERKING_*).
+   */
+  afwerking?: Partial<Record<'easing' | 'hit' | 'kleur' | 'stem' | 'sfx' | 'muziek' | 'jl', boolean>> | null;
+  /** Naam van een LUT in assets/lut/<naam>.cube (optioneel, per campagne). */
+  lut?: string | null;
 };
 
 /**

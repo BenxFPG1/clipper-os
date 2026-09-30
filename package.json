@@ -27,9 +27,12 @@
     "test:renderbron": "tsx scripts/test-renderbron.ts",
     "test:graphics": "tsx scripts/test-graphics.ts",
     "test:ondertitelwoorden": "tsx scripts/test-ondertitelwoorden.ts",
+    "test:afwerking": "tsx scripts/test-afwerking.ts",
     "test:trends": "tsx scripts/test-trends.ts",
     "test:normen": "tsx scripts/test-normen.ts",
-    "eval:smaak": "tsx scripts/eval-smaak.ts"
+    "eval:smaak": "tsx scripts/eval-smaak.ts",
+    "afwerkpakket": "tsx scripts/afwerkpakket.ts",
+    "test:afwerkpakket": "tsx scripts/test-afwerkpakket.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.115.0",

@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { roepApiAan } from '@/app/api-aanroep';
 import { RenderFeedback, type Beoordeling, type Gepost } from './render-feedback';
+import { AfwerkKnop } from '@/app/afwerk-knop';
 
 type Download = {
   naam: string;
@@ -205,6 +206,8 @@ export function RenderPanel({ videoId, aantalClips }: { videoId: string; aantalC
                         beoordeling={d.beoordeling ?? null}
                         gepost={d.gepost ?? null}
                       />
+                      {/* Goed genoeg om af te maken: dezelfde montage als Premiere-project met de 4K-bron. */}
+                      {d.url && <AfwerkKnop jobId={job.id} bestandNaam={d.naam} />}
                     </li>
                   ))}
                 </ul>

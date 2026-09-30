@@ -116,28 +116,63 @@ export function focusNaarX(focus?: string | null, gemeten?: number | null): numb
  * 1080x1920-beeld en zoomt op het midden, waar het gezicht na de
  * kadercontrole staat.
  */
-export const BEELD_EFFECTEN_BEKEND = ['punch_in', 'snelle_zoom', 'shake', 'freeze_frame', 'flits_wit', 'zwart_frame', 'tekstkaart'] as const;
+export const BEELD_EFFECTEN_BEKEND = ['punch_in', 'snelle_zoom', 'shake', 'freeze_frame', 'flits_wit', 'zwart_frame', 'tekstkaart', 'hit'] as const;
 
 export function effectKeten(
   effect?: string | null,
   duur = 0,
-  opties: { fps?: string | number; staand?: boolean } = {},
+  opties: {
+    fps?: string | number;
+    staand?: boolean;
+    /** Zachte in- en uitloop (smoothstep) in plaats van lineair; standaard aan. */
+    easing?: boolean;
+    /** hit: seconde binnen het shot waarop de hit valt. */
+    vanaf?: number;
+    /** wissel: van welke naar welke relatieve schaal (≥ 1). */
+    van?: number;
+    naar?: number;
+  } = {},
 ): string | null {
   if (!effect || effect === 'geen') return null;
+  const fps = Number(opties.fps ?? 30) || 30;
+  const zacht = opties.easing !== false;
+  // Voortgang p (0..1) als ffmpeg-expressie: lineair, of smoothstep
+  // (p²·(3−2p)) — een zoom die zachtjes vertrekt en zachtjes landt leest als
+  // camerawerk, een lineaire als een effect.
+  const voortgang = (frames: string) =>
+    zacht ? `(st(0,min(1,max(0,${frames})))*ld(0)*(3-2*ld(0)))` : `min(1,max(0,${frames}))`;
+  const zoompan = (z: string) =>
+    `zoompan=z='${z}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=1080x1920:fps=${fps}`;
 
   if ((effect === 'punch_in' || effect === 'snelle_zoom') && opties.staand !== false) {
     const schaal = effect === 'punch_in' ? instelling('PUNCH_IN_SCHAAL') : instelling('SNELLE_ZOOM_SCHAAL');
     const aanloop = effect === 'punch_in' ? instelling('PUNCH_IN_DUUR') : instelling('SNELLE_ZOOM_DUUR');
-    const fps = Number(opties.fps ?? 30) || 30;
     const extra = (schaal - 1).toFixed(3);
     const frames = Math.max(1, aanloop * fps).toFixed(2);
     // zoompan kent geen t, wel het invoerframenummer `in`; met d=1 en dezelfde
     // fps als de stroom is in/fps de tijd binnen het shot.
-    return (
-      `zoompan=z='1+${extra}*min(1,in/${frames})'` +
-      `:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'` +
-      `:d=1:s=1080x1920:fps=${fps}`
-    );
+    return zoompan(`1+${extra}*${voortgang(`in/${frames}`)}`);
+  }
+
+  if (effect === 'hit' && opties.staand !== false) {
+    // Een korte "hit" op het payoff-woord: in 80 ms naar 1,08 en in 300 ms
+    // terug. Voelbaar als klap, niet als zoom.
+    const extra = (instelling('HIT_SCHAAL') - 1).toFixed(3);
+    const start = Math.max(0, (opties.vanaf ?? 0) * fps).toFixed(2);
+    const fIn = Math.max(1, instelling('HIT_IN') * fps).toFixed(2);
+    const fUit = Math.max(1, instelling('HIT_UIT') * fps).toFixed(2);
+    const op = voortgang(`(in-${start})/${fIn}`);
+    const af = voortgang(`(in-${start}-${fIn})/${fUit}`);
+    return zoompan(`1+${extra}*if(lt(in,${start}),0,if(lt(in-${start},${fIn}),${op},1-${af}))`);
+  }
+
+  if (effect === 'wissel' && opties.staand !== false) {
+    // Een retentie-kaderwissel als korte push: van het vorige kader naar het
+    // nieuwe in RETENTIE_WISSEL_DUUR, in plaats van een harde sprong.
+    const van = Math.max(1, opties.van ?? 1);
+    const naar = Math.max(1, opties.naar ?? 1);
+    const frames = Math.max(1, instelling('RETENTIE_WISSEL_DUUR') * fps).toFixed(2);
+    return zoompan(`${van.toFixed(4)}+(${(naar - van).toFixed(4)})*${voortgang(`in/${frames}`)}`);
   }
 
   if (effect === 'flits_wit') {
