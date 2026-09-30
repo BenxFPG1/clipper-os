@@ -62,7 +62,7 @@ import {
 import { controleerScript } from '../src/lib/roughcut/scriptcontrole';
 import { haalBronWoorden, vindFragment } from '../src/lib/roughcut/woorden';
 import { poort, verzetGrens } from '../src/lib/roughcut/poort';
-import { keurGraphicsDetail, keurMontage, type Keuringsrapport } from '../src/lib/roughcut/keuring';
+import { herhaaldInBron, keurGraphicsDetail, keurMontage, type Keuringsrapport } from '../src/lib/roughcut/keuring';
 import { zelfherstelStap } from '../src/lib/roughcut/herstel';
 import { corrigeerWoorden, verfijnWoorden } from '../src/lib/roughcut/ondertitelwoorden';
 import { ruimBronCacheOp } from '../src/lib/roughcut/broncache';
@@ -718,6 +718,7 @@ async function verwerk(job: Job) {
           // trackingpunt, geen woordanker, dus "exact" klopt hier ook niet
           // meer.
           ankerStart: wissel,
+          planStart: wissel,
           exact: false,
           focusX: na,
           spoor: undefined,
@@ -726,6 +727,8 @@ async function verwerk(job: Job) {
           zachtBegin: false,
         };
         (tweede as { subKnip?: boolean }).subKnip = true;
+        // Het fragment blijft bij de eerste helft; de tweede heeft geen eigen scripttekst.
+        (tweede as { transcript_fragment?: string }).transcript_fragment = undefined;
         verzetGrens(seg, { end: wissel });
         seg.exact = false;
         seg.focusX = voor;
@@ -774,6 +777,17 @@ async function verwerk(job: Job) {
     // (ontstaan door dode lucht weg te knippen) erven van hun bronshot, maar
     // krijgen de tegenovergestelde schaal zodat de naad als nadruk leest.
     const editClip = beslissingenVoorClip(editPlan, nummer);
+    // Het kader voor de hele clip. Een passend kader (blur/origineel) koos de
+    // edit-agent soms "om af te wisselen" — bij een tafel vol mensen stond
+    // dan iedereen piepklein in beeld. Staat er een gezicht in de clip, dan
+    // vullend: de sprekerdetectie kadert op wie praat en de scènedetectie zet
+    // graphics per deelstuk zelf passend.
+    const kaderGekozen = (editClip?.kader ?? clip.kader ?? 'vullend') as Kader;
+    const heeftGezicht = segmenten.some((sg) => sg.sprekerBepaald || sg.gezicht || (sg.personen ?? 0) > 0);
+    const kaderClip: Kader = (kaderGekozen === 'blur' || kaderGekozen === 'origineel') && heeftGezicht ? 'vullend' : kaderGekozen;
+    if (kaderClip !== kaderGekozen) {
+      console.log(`     kader: '${kaderGekozen}' gekozen, maar er staan mensen in beeld → vullend (graphics blijven per deelstuk passend)`);
+    }
     if (editClip) {
       let vorigeZoom: string | undefined;
       for (const seg of segmenten) {
@@ -957,7 +971,7 @@ async function verwerk(job: Job) {
     // stuurt bij wat je niet kunt uitrekenen: een uitsnede zonder mens erin,
     // een zichtbare split-screen-naad, een benauwd kader.
     {
-      const kaderKeuze = (editClip?.kader ?? clip.kader ?? 'vullend') as Kader;
+      const kaderKeuze = kaderClip;
       // De naadbump (punch-in op een jump cut) vóór de controle in shot.zoom,
       // zodat de controle en de keuring dezelfde zoom zien als de render.
       for (const n of pasNaadZoomToe(segmenten)) console.log(`     naadknip shot ${n.volgorde}: zoom ${n.zoom.toFixed(2)}`);
@@ -1305,7 +1319,7 @@ async function verwerk(job: Job) {
     if (bronWoorden && stijl.ondertitels !== false) {
       try {
         ondertitels = await maakOndertitels(segmenten, ondertitelWoorden ?? bronWoorden, kaartMap, `c${nummer}`, stijl, {
-          kader: (editClip?.kader ?? clip.kader ?? 'vullend') as Kader,
+          kader: kaderClip,
         });
         console.log(
           `     ondertitels: ${ondertitels.regels.length} regels` +
@@ -1335,7 +1349,7 @@ async function verwerk(job: Job) {
       renderSecties: process.env.RENDERBRON !== '0',
       videoId: job.video_id,
       werkmap: bronmap,
-      kader: editClip?.kader ?? clip.kader ?? 'vullend',
+      kader: kaderClip,
       overlays: [...(await bouwOverlays()), ...(ondertitels?.overlays ?? [])],
       ondertitelAss: ondertitels?.assPad,
       // Eigen gelicenseerde audio uit assets/: muziekbed met ducking en
@@ -1479,7 +1493,10 @@ async function verwerk(job: Job) {
         const teaseGrens = (segmenten[0] as { tease?: boolean }).tease
           ? segmenten[0].end - segmenten[0].start + 0.5
           : 0;
-        const echteHerhalingen = script.herhalingen.filter((h) => h.eerste > teaseGrens);
+        const echteHerhalingen = script.herhalingen.filter((h) => h.eerste > teaseGrens && !herhaaldInBron(h.tekst, segmenten, bronWoorden));
+        for (const h of script.herhalingen.filter((x) => x.eerste > teaseGrens && herhaaldInBron(x.tekst, segmenten, bronWoorden))) {
+          console.log(`     scriptcontrole: "${h.tekst}" klinkt twee keer, maar wordt in de bron zelf ook herhaald (toegestaan)`);
+        }
         if (echteHerhalingen.length === 0 && procent >= 55) {
           const perShot = (script.perShot ?? [])
             .map((ps) => `${ps.volgorde}${ps.gevonden ? `✓@${ps.opSeconde}s` : '✗'}`)
@@ -1494,7 +1511,7 @@ async function verwerk(job: Job) {
               `     scriptcontrole: "${h.tekst}" klinkt twee keer (${h.eerste}s en ${h.tweede}s)`,
             );
           }
-          if (echteHerhalingen.length < script.herhalingen.length) {
+          if (script.herhalingen.some((h) => h.eerste <= teaseGrens)) {
             console.log('     scriptcontrole: cold open herhaalt de payoff (bedoeld)');
           }
         }
@@ -1575,7 +1592,7 @@ async function verwerk(job: Job) {
     // review nodig.
     const tHerstel = Date.now();
     try {
-      const kaderNu = (editClip?.kader ?? clip.kader ?? 'vullend') as Kader;
+      const kaderNu = kaderClip;
       const stap = await zelfherstelStap(
         segmenten,
         async () => ({
@@ -1740,7 +1757,7 @@ async function verwerk(job: Job) {
         python: pythonMetOpenCV(),
         bronPad,
         retentie: retentieEind && doelen ? keurRetentie(retentieEind, doelen, { ondertitels: Boolean(ondertitels) }) : undefined,
-        kader: (editClip?.kader ?? clip.kader ?? 'vullend') as Kader,
+        kader: kaderClip,
         ondertitelPlekken: ondertitels?.stijl.plekken ?? null,
         ondertitelRegels: ondertitels?.regels ?? null,
         graphicsRegel: laatsteGraphicsKeuring && laatsteGraphicsKeuring.sleutel === segmentSleutel(segmenten) ? laatsteGraphicsKeuring.regel : undefined,

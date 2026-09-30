@@ -102,7 +102,7 @@ Werk de zeven stappen af in volgorde en denk per shot:
 - Verdient dit shot een ingreep, of redt het zich? Hoogstens twee ingrepen per shot; een ingreep zonder functie kost aandacht.
 - Is dit een tijdsprong? Zet dan een tekstkaart met de sprong erop als markering voor de editor (Premiere); in de clip zelf komt die kaart niet — de kijker merkt de sprong aan de knip.
 - "plankaarten" staan al vast (de verhaallijn heeft ze nodig) en worden getekend bij hun shot: zet op die shots geen eigen tekstkaart.
-- Kader: verticaal beeld hoort gevuld. "vullend" is de norm; "blur" alleen als de uitsnede echt iets belangrijks afsnijdt (twee mensen naast elkaar, tekst in beeld). Zwarte balken bestaan niet.
+- Kader: verticaal beeld hoort gevuld. "vullend" is de norm, ook bij meerdere mensen aan tafel: de render kadert dan zelf op wie er praat (actieve-sprekerdetectie) en zet graphics en tekst in beeld zelf passend. "blur" alleen als er in de hele clip niemand groot in beeld te krijgen is. Nooit "blur" om af te wisselen: een passend kader maakt iedereen piepklein. Zwarte balken bestaan niet.
 - Waar valt de muziek weg? Op de payoff of een vragende beat — dat is het moment dat je groot maakt.
 - Retentie: per clip krijg je een gemeten risicosamenvatting ("retentie": waar de kijker volgens de meting afhaakt, per shot en seconde, met de reden). De render knipt pauzes zelf weg en zet zelf kaderwissels waar het beeld te lang stilstaat — dat hoef jij niet te doen. Jouw taak is kiezen WAAR een ingreep het verschil maakt, niet hoeveel: leg sfx, beeldingrepen en kaarten op de shots met een risicopiek, en laat shots zonder risico met rust ("geen"). Geef een "rehook" als er een risicopiek vóór de payoff zit die een regel tekst kan dichten.
 
@@ -226,6 +226,9 @@ async function editCall(
   eerdereKaders: string[],
   normen = '',
 ): Promise<EditBeslissingen> {
+  // Eerdere kaders gaan niet meer mee: "varieer hierop" leidde tot een
+  // passend kader om de afwisseling, met iedereen piepklein in beeld.
+  void eerdereKaders;
   return structuredCall({
     system: `${EDIT_SYSTEM}
 
@@ -234,9 +237,7 @@ ${EDITCRAFT}
 ${effectenVoorRender()}${normen ? `\n\nGEMETEN BIJ TOP-CLIPS VAN ANDEREN (de doelen waar de retentiecurve tegen gemeten is):\n${normen}` : ''}${await geleerdeKennis('edit')}`,
     user: `Ontwerp de montage voor deze ${brok.length} clips.
 
-Let op de samenhang: wissel het kader af over de clips heen, en herhaal niet steeds dezelfde ingreep.${
-      eerdereKaders.length ? `\nEerder in deze video gekozen kaders: ${eerdereKaders.join(', ')} — varieer hierop.` : ''
-    }
+Let op de samenhang: herhaal niet steeds dezelfde ingreep over de clips heen. Het kader varieer je niet: "vullend" tenzij er echt niemand in beeld is.
 
 ${JSON.stringify(brok, null, 2)}`,
     schema: editSchema,

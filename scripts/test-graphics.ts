@@ -151,6 +151,46 @@ async function vervolg() {
       toets(`${n} is een camerabeeld, geen graphic`, !lijktGraphic(a), `vlak ${a.vlak.toFixed(2)}`);
     }
 
+    console.log('vlak is niet genoeg: zachte verlopen = camerabeeld, tekstpagina = graphic');
+    {
+      // Getallen zoals gemeten op echte bronnen (MUKBANG, Michelle).
+      toets('donkere egale kantoormuur (vlak 0,65, zacht 0,12) is geen graphic', !lijktGraphic({ vlak: 0.646, zacht: 0.123, hard: 0.03, lum: 80 }));
+      toets('zwart-wit donker wijd shot (vlak 0,57, zacht 0,15) is geen graphic', !lijktGraphic({ vlak: 0.568, zacht: 0.153, hard: 0.026, lum: 27 }));
+      toets('getekende graphic (vlak 0,80, zacht 0,04) is een graphic', lijktGraphic({ vlak: 0.803, zacht: 0.037, hard: 0.025, lum: 96 }));
+      toets('lichte websitepagina met tekst (vlak 0,47, lum 149, hard 0,09) is een graphic', lijktGraphic({ vlak: 0.473, zacht: 0.23, hard: 0.091, lum: 149 }));
+      toets('oude meting zonder randinfo: alleen vlakheid (achterwaarts)', lijktGraphic({ vlak: 0.8 }) && !lijktGraphic({ vlak: 0.5 }));
+      // Echt gerenderd: een donker, zwart-wit, zacht belicht beeld (egaal met
+      // verloop en ruis) en een witte pagina met tekstregels.
+      const zw = join(map, 'zw.png');
+      spawnSync(resolveBinary('ffmpeg'), ['-v', 'error', '-y', '-f', 'lavfi', '-i', "gradients=s=480x270:c0=0x101010:c1=0x505050:x0=0:y0=0:x1=480:y1=270,noise=alls=6:allf=t,format=gray,format=rgb24", '-frames:v', '1', zw]);
+      const aZw = analyseerGraphic(pixels(zw), 480, 270);
+      toets('gerenderd donker zwart-wit verloop: geen graphic', !lijktGraphic(aZw), JSON.stringify({ vlak: aZw.vlak, zacht: aZw.zacht }));
+      const { createCanvas } = await import('@napi-rs/canvas');
+      const c = createCanvas(480, 270);
+      const ctx = c.getContext('2d');
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, 480, 270);
+      ctx.fillStyle = '#123a2a';
+      ctx.fillRect(0, 0, 480, 34);
+      ctx.fillStyle = '#222222';
+      ctx.font = '11px sans-serif';
+      for (let y = 50; y < 260; y += 14) ctx.fillText('Patek Philippe Sky Moon Tourbillon €5.250.000 · op voorraad', 170, y);
+      ctx.fillStyle = '#7a5230';
+      ctx.fillRect(20, 60, 130, 170);
+      const pagina = join(map, 'pagina.png');
+      (await import('node:fs')).writeFileSync(pagina, c.toBuffer('image/png'));
+      const aPag = analyseerGraphic(pixels(pagina), 480, 270);
+      toets('gerenderde tekstpagina: graphic', lijktGraphic(aPag), JSON.stringify({ vlak: aPag.vlak, zacht: aPag.zacht, hard: aPag.hard, lum: aPag.lum }));
+    }
+
+    console.log('keuring: camerabeeld in een passend clipkader');
+    {
+      const studio = video(fix('wijd-studio.jpg'), 'studio-blur.mp4');
+      const seg: Shot = { volgorde: 1, start: 0.1, end: 3.9, functie: 'setup' };
+      const k = await keurGraphicsDetail([seg], 'blur', async (t) => t.map(() => true), graphicMeterVia(studio));
+      toets('hele clip passend terwijl het een camerabeeld is → camerabeeld_passend', k.fouten.some((f) => f.soort === 'camerabeeld_passend'), k.regel.detail);
+    }
+
     console.log('geen gezicht gevonden + camerabeeld = wijd shot, vullend');
     {
       const studio = video(fix('wijd-studio.jpg'), 'studio.mp4');

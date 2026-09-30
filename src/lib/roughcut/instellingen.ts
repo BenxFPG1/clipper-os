@@ -162,6 +162,17 @@ const STANDAARD = {
    */
   /** Een beeld zonder gezicht is pas een graphic als minstens dit aandeel vlak is; anders is het een wijd camerashot. */
   GRAPHIC_MIN_VLAK: 0.62,
+  /**
+   * Een graphic heeft (bijna) geen zachte verlopen: aandeel pixels met een
+   * zachte helderheidsgradiënt (8–60 op 0–255). Gemeten: graphics 0,04;
+   * camerabeelden 0,12–0,28 (ook een donkere, egale kantoormuur: 0,12).
+   */
+  GRAPHIC_MAX_ZACHT: 0.1,
+  /** Een lichte pagina vol tekst (website, document) is ook een graphic: minimale helderheid en aandeel harde randen. */
+  GRAPHIC_PAGINA_LUM: 120,
+  GRAPHIC_PAGINA_HARD: 0.06,
+  /** Kleinste gezichtsbreedte (fractie) waarbij een moment als persoonsbeeld telt; kleiner beslist de graphic-meter. */
+  SCENE_MIN_GEZICHT: 0.04,
   /** De inhoud van het eerste en het laatste meetframe moet elk minstens dit aandeel van de unie beslaan, anders animeert de graphic en wordt er niet ingezoomd. */
   GRAPHIC_MIN_STABIEL: 0.7,
   /** Milde inzoom op een animerende graphic: alleen als er rondom minstens zoveel egale marge is (fractie). */

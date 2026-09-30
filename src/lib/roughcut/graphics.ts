@@ -91,11 +91,46 @@ export type GraphicAnalyse = {
    * overal ruis en textuur. Gemeten: graphics ≥ 0,77, studio-opnames ≤ 0,46.
    */
   vlak: number;
+  /** Aandeel zachte verlopen (camerabeeld: licht, huid, schaduw); een graphic heeft er bijna geen. */
+  zacht?: number;
+  /** Aandeel harde randen (tekst, UI-lijnen). */
+  hard?: number;
+  /** Gemiddelde helderheid 0–255. */
+  lum?: number;
 };
 
 /** Lijkt dit beeld op een graphic? "Geen gezicht" alleen is niet genoeg: een wijd camerashot heeft ook geen (gevonden) gezicht. */
-export function lijktGraphic(a: { vlak: number } | null | undefined): boolean {
-  return Boolean(a) && (a as { vlak: number }).vlak >= instelling('GRAPHIC_MIN_VLAK');
+export function lijktGraphic(a: { vlak: number; zacht?: number; hard?: number; lum?: number } | null | undefined): boolean {
+  if (!a) return false;
+  // Een lichte pagina vol tekst (website, document, schermopname): harde
+  // randen op een lichte grond, ook als er foto's in staan.
+  if (a.lum !== undefined && a.hard !== undefined && a.lum >= instelling('GRAPHIC_PAGINA_LUM') && a.hard >= instelling('GRAPHIC_PAGINA_HARD')) return true;
+  if (a.vlak < instelling('GRAPHIC_MIN_VLAK')) return false;
+  // Vlak alleen is niet genoeg: een donkere egale muur of een zwart-wit
+  // wijd shot is ook "vlak". Een graphic is getekend — egale vlakken met
+  // harde grenzen, bijna geen zachte verlopen. Een camerabeeld heeft die
+  // verlopen overal (licht op huid, schaduwen).
+  return a.zacht === undefined || a.zacht <= instelling('GRAPHIC_MAX_ZACHT');
+}
+
+/** Zachte verlopen, harde randen en helderheid (op het meetformaat). */
+function randen(rgb: Buffer | Uint8Array, w: number, h: number): { zacht: number; hard: number; lum: number } {
+  let zacht = 0;
+  let hard = 0;
+  let lum = 0;
+  let n = 0;
+  const l = (q: number) => (rgb[q] + rgb[q + 1] + rgb[q + 2]) / 3;
+  for (let y = 1; y < h - 1; y++) {
+    for (let x = 1; x < w - 1; x++) {
+      const p = (y * w + x) * 3;
+      const g = Math.max(Math.abs(l(p + 3) - l(p - 3)), Math.abs(l(p + w * 3) - l(p - w * 3)));
+      if (g > 60) hard++;
+      else if (g > 8) zacht++;
+      lum += l(p);
+      n++;
+    }
+  }
+  return n ? { zacht: zacht / n, hard: hard / n, lum: lum / n } : { zacht: 0, hard: 0, lum: 0 };
 }
 
 function vlakheid(rgb: Buffer | Uint8Array, w: number, h: number): number {
@@ -123,7 +158,7 @@ function vlakheid(rgb: Buffer | Uint8Array, w: number, h: number): number {
 
 export function analyseerGraphic(rgb: Buffer | Uint8Array, w: number, h: number): GraphicAnalyse {
   const vlak = vlakheid(rgb, w, h);
-  return { ...analyseerInhoud(rgb, w, h), vlak };
+  return { ...analyseerInhoud(rgb, w, h), vlak, ...randen(rgb, w, h) };
 }
 
 function analyseerInhoud(rgb: Buffer | Uint8Array, w: number, h: number): { box: Box | null; woorden: number | null; glad?: number } {
@@ -305,6 +340,10 @@ export type GraphicMeting = {
   box: Box | null;
   woorden: number | null;
   vlak: number;
+  /** Mediaan over de meetmomenten; zie GraphicAnalyse. */
+  zacht?: number;
+  hard?: number;
+  lum?: number;
   persoonX: number | null;
   /** Per meetmoment de box en de vlakheid (in de volgorde van de tijden). */
   boxen?: (Box | null)[];
@@ -334,6 +373,9 @@ export function graphicMeterVia(bron: string): GraphicMeter {
     const boxen: (Box | null)[] = [];
     const woorden: number[] = [];
     const vlak: number[] = [];
+    const zacht: number[] = [];
+    const hard: number[] = [];
+    const lum: number[] = [];
     const frames: Buffer[] = [];
     for (const t of tijden) {
       const rgb = await frameRgb(bron, t);
@@ -343,12 +385,19 @@ export function graphicMeterVia(bron: string): GraphicMeter {
       boxen.push(a.box);
       if (a.woorden !== null) woorden.push(a.woorden);
       vlak.push(a.vlak);
+      if ('zacht' in a && a.zacht !== undefined) {
+        zacht.push(a.zacht);
+        hard.push(a.hard ?? 0);
+        lum.push(a.lum ?? 0);
+      }
     }
-    const mediaanVlak = [...vlak].sort((a, b) => a - b)[Math.floor(vlak.length / 2)] ?? 0;
+    const med = (xs: number[]) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)];
+    const mediaanVlak = med(vlak) ?? 0;
     return {
       box: unie(boxen),
       woorden: woorden.length ? Math.max(...woorden) : null,
       vlak: mediaanVlak,
+      ...(zacht.length ? { zacht: med(zacht), hard: med(hard), lum: med(lum) } : {}),
       persoonX: bewegingX(frames),
       boxen,
       vlakken: vlak,

@@ -160,17 +160,23 @@ export function poort(
   if (bronWoorden && bronWoorden.length > 0) {
     const ADEM_VOOR = instelling('POORT_ADEM_VOOR');
     const ADEM_NA = instelling('POORT_ADEM_NA');
-    for (const seg of uit) {
+    // Doorlopende naden (camerawissel of sprekerwissel binnen één stuk bron:
+    // het vorige deel eindigt exact waar dit begint) vóór het oprekken
+    // vastleggen: daar hoort geen ademruimte, anders overlappen de delen,
+    // dupliceert de poort ze en valt de helft van het shot weg.
+    const doorVoor = uit.map((seg, i) => i > 0 && Math.abs(uit[i - 1].end - seg.start) < 0.005);
+    const doorNa = uit.map((seg, i) => i + 1 < uit.length && Math.abs(uit[i + 1].start - seg.end) < 0.005);
+    for (const [i, seg] of uit.entries()) {
       const vorig = [...bronWoorden].reverse().find((w) => w.e <= seg.start + 0.02);
       const gatVoor = vorig ? Math.max(0, seg.start - vorig.e) : 1;
       // Een strakke kant (retentieknip) heeft zijn rest-stilte al: ademruimte
       // erbij zou de weggeknipte pauze per poortronde laten teruggroeien, en
       // bij een kaderwissel in doorlopende spraak het buursegment overlappen.
-      if (!seg.strakBegin) seg.start = Math.max(0, seg.start - Math.min(ADEM_VOOR, gatVoor / 2));
+      if (!seg.strakBegin && !doorVoor[i]) seg.start = Math.max(0, seg.start - Math.min(ADEM_VOOR, gatVoor / 2));
 
       const volgend = bronWoorden.find((w) => w.s >= seg.end - 0.02);
       const gatNa = volgend ? Math.max(0, volgend.s - seg.end) : 1;
-      if (!seg.strakEind) seg.end += Math.min(ADEM_NA, gatNa / 2);
+      if (!seg.strakEind && !doorNa[i]) seg.end += Math.min(ADEM_NA, gatNa / 2);
 
       // Praat de spreker aan deze kant door, dan ís er geen stilte om mee te
       // nemen. Toch mag een woord niet abrupt stoppen — dat is precies het
@@ -182,8 +188,8 @@ export function poort(
       // knip nooit binnen een woord valt: de poort schoof hem meteen weer
       // terug, eindeloos heen en weer. De grens blijft dus op het woord staan;
       // wat de abruptheid verzacht is de langere fade, en die kost geen inhoud.
-      if (gatVoor < 0.12 && !seg.strakBegin) seg.zachtBegin = true;
-      if (gatNa < 0.12 && !seg.strakEind) seg.zachtEind = true;
+      if (gatVoor < 0.12 && !seg.strakBegin && !doorVoor[i]) seg.zachtBegin = true;
+      if (gatNa < 0.12 && !seg.strakEind && !doorNa[i]) seg.zachtEind = true;
     }
   }
 

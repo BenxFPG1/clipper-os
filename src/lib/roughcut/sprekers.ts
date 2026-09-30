@@ -422,7 +422,14 @@ export function pasSprekersToe(
       sfx: 'geen',
       tekstkaart: undefined,
       scenes: undefined,
+      // Een deel heeft geen eigen scripttekst: het eerste deel draagt het
+      // fragment. Anders moest elk deel de kop van het ouderfragment
+      // "terugbewijzen" en zette de scriptcontrole het terug naar het plan
+      // (waarna de poort het als duplicaat liet vervallen).
+      planStart: d.van,
+      planEnd: d.tot,
     };
+    (deel as { transcript_fragment?: string }).transcript_fragment = undefined;
     (deel as { subKnip?: boolean }).subKnip = true;
     kader(deel, d);
     uit.push(deel);

@@ -458,6 +458,18 @@ for t in tijden:
     for g in echt:
         g["beweging"] = mondbeweging(frames, g["mond"])
 
+    # Een gezicht dat over de monsters geen pixel verschuift en geen enkele
+    # mondbeweging heeft, is een afbeelding: het portret op een bankbiljet
+    # in een graphic, een horlogewijzerplaat die YuNet voor een gezicht
+    # aanziet, een foto op een website. Zo'n moment is geen persoonsbeeld.
+    # Alleen met meerdere monsters te beoordelen (met één frame weet je het niet).
+    if len(frames) >= 3 and os.environ.get("GEZICHT_STATISCH_FILTER", "1") != "0":
+        levend = [g for g in echt if not (g["beweging"] < 0.5 and max(g["xs"]) - min(g["xs"]) < 0.005)]
+        if not levend:
+            uit.append(None)
+            continue
+        echt = levend
+
     spreker = max(echt, key=lambda g: (g["beweging"], len(g["xs"])))
     xs = sorted(spreker["xs"])
     x_mediaan = xs[len(xs) // 2]

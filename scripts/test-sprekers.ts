@@ -16,6 +16,8 @@ import { pythonMetOpenCV } from '../src/lib/python';
 import type { Shot } from '../src/lib/roughcut';
 import { actieveSprekers, meetSprekers, pasSprekersToe, voegDubbeleSamen, type SprekerMeting, type SprekerPersoon } from '../src/lib/roughcut/sprekers';
 import { instelling } from '../src/lib/roughcut/instellingen';
+import { poort } from '../src/lib/roughcut/poort';
+import { herhaaldInBron, keurKnippen } from '../src/lib/roughcut/keuring';
 import type { BronWoord } from '../src/lib/roughcut/woorden';
 
 let gefaald = 0;
@@ -96,6 +98,38 @@ async function main() {
     toets('deel zonder persoon: geen sprekerkader, oorspronkelijke focus', r2.delen.length === 2 && r2.delen[0].sprekerBepaald === true && !r2.delen[1].sprekerBepaald && r2.delen[1].focusX === 0.5, JSON.stringify(r2.delen.map((d) => [d.start, d.focusX, d.sprekerBepaald])));
     const r3 = pasSprekersToe({ ...shot(0.5, 5.5), volgorde: 2.5 }, st, null, { volgendeVolgorde: 3 });
     toets('volgnummers blijven vóór het volgende shot', r3.delen.every((d) => d.volgorde >= 2.5 && d.volgorde < 3) && r3.delen.every((d, i) => i === 0 || d.volgorde > r3.delen[i - 1].volgorde), r3.delen.map((d) => d.volgorde).join(','));
+  }
+
+  console.log('splitdelen en de poort');
+  {
+    const A = persoon(0, 0, 0.3, 0, 3, praat);
+    const C = persoon(2, 1, 0.55, 3, 6, praat);
+    const st = actieveSprekers({ van: 0, tot: 6, stap: STAP, personen: [A, C], knippen: [3.05] }, spraakVan(0, 6, () => true));
+    const ouder: Shot = { ...shot(0.5, 5.5), ankerStart: 0.5, ankerEind: 5.5, planStart: 0.5, planEnd: 5.5 };
+    (ouder as { transcript_fragment?: string }).transcript_fragment = 'een lange zin die over de camerawissel heen loopt';
+    const r = pasSprekersToe(ouder, st, null, { volgendeVolgorde: 2 });
+    const tweede = r.delen[1] as Shot & { transcript_fragment?: string };
+    toets('splitdeel heeft geen eigen scriptfragment (hoeft het ouderfragment niet te bewijzen)', r.delen.length === 2 && !tweede.transcript_fragment && (r.delen[0] as { transcript_fragment?: string }).transcript_fragment !== undefined);
+    toets('splitdeel: plantijd = eigen begin (scriptcontrole zet het niet terug naar het ouderplan)', tweede.planStart === 3.05, String(tweede.planStart));
+    // Camerawissel midden in een woord: het geluid loopt door, dus de poort
+    // verschuift die grens niet en rekt er geen ademruimte aan.
+    const woorden: BronWoord[] = [];
+    for (let t = 0.6; t < 5.4; t += 0.4) woorden.push({ w: `w${Math.round(t * 10)}`, s: Math.round(t * 1000) / 1000, e: Math.round((t + 0.3) * 1000) / 1000 });
+    const p = poort(r.delen.map((d) => ({ ...d })), woorden);
+    const [a, b] = [...p.segmenten].sort((x, y) => x.volgorde - y.volgorde);
+    toets('poort: doorlopende naad blijft exact aansluiten', p.segmenten.length === 2 && Math.abs(a.end - 3.05) < 1e-9 && Math.abs(b.start - 3.05) < 1e-9, JSON.stringify(p.segmenten.map((x) => [x.volgorde, x.start, x.end])) + ' ' + JSON.stringify(p.ingrepen));
+    toets('poort: geen overlap/duplicaat door de split', !p.ingrepen.some((g) => g.regel === 'overlap' || g.regel === 'halfFragment'), JSON.stringify(p.ingrepen));
+    const k = keurKnippen(p.segmenten, woorden);
+    toets('keuring knippen: doorlopende naad in een woord telt niet als knip', k.goed === true && /doorlopende naad/.test(k.detail), k.detail);
+  }
+
+  console.log('herhaalde vraag in de bron');
+  {
+    const w = (tekst: string, van: number): BronWoord[] => tekst.split(' ').map((x, i) => ({ w: x, s: van + i * 0.3, e: van + i * 0.3 + 0.25 }));
+    const bron = [...w('Zou jij dit dragen?', 10), ...w('Zou jij dit dragen?', 13), ...w('Ja tuurlijk.', 15)];
+    const segs: Shot[] = [{ volgorde: 1, start: 9.9, end: 16, functie: 'setup' }];
+    toets('twee keer gezegd in de bron: toegestaan (ook verhaspeld teruggehoord)', herhaaldInBron('Zij jij dit dragen?', segs, bron));
+    toets('één keer in de bron: wél een dubbeling', !herhaaldInBron('Ja tuurlijk.', segs, bron) && !herhaaldInBron('Zou jij dit dragen?', [{ volgorde: 1, start: 9.9, end: 12, functie: 'setup' }], bron));
   }
 
   console.log('sprekerwissel binnen één standpunt: knip op woordgrens, anders pan');
@@ -192,6 +226,17 @@ async function main() {
         spawnSync(resolveBinary('ffmpeg'), ['-v', 'error', '-y', '-loop', '1', '-t', '2', '-i', 'scripts/fixtures/wijd-studio.jpg', '-vf', 'scale=1920:1080,setsar=1,fps=25', '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', stil]);
         const ms = await meetSprekers(stil, [{ van: 0, tot: 2 }], pythonMetOpenCV());
         toets('pixelstil gezicht (afbeelding) telt niet als persoon', ms[0]?.personen.length === 0, JSON.stringify(ms[0]?.personen.map((p) => p.x)));
+        // Ook in de gewone meting (kadrering, scènes): een pixelstil gezicht
+        // (bankbiljet, horlogewijzerplaat) is geen persoonsbeeld; een echt
+        // (bewegend) beeld van hetzelfde gezicht wel.
+        const py = pythonMetOpenCV();
+        const gewoon = (pad: string) => {
+          const r = spawnSync(py.cmd, [...py.voor, 'scripts/gezichten.py', pad, '[1.0]', '3'], { encoding: 'utf8' });
+          const regel = (r.stdout ?? '').split('\n').reverse().find((x) => x.trim().startsWith('['));
+          return regel ? (JSON.parse(regel) as unknown[])[0] : 'fout';
+        };
+        toets('gewone meting: pixelstil gezicht → geen gezicht', gewoon(stil) === null);
+        toets('gewone meting: bewegend beeld → wel een gezicht', gewoon(bron) !== null && gewoon(bron) !== 'fout');
         toets('monsters op 0,1 s', (m[0]?.personen[0]?.monsters.length ?? 0) >= 8);
       }
     } finally {

@@ -395,7 +395,10 @@ export async function keurGraphicsDetail(
           if (meting.box && !boxBinnen(meting.box, inhoudKader(d.inhoud).r)) {
             fouten.push({ soort: 'inhoud_buiten_beeld', volgorde: seg.volgorde, van, tot, gemeten: meting.box, wat: `shot ${seg.volgorde} ${van.toFixed(1)}s: graphic-inhoud valt buiten beeld na inzoomen` });
           }
-        } else if (!lijktGraphic(meting) && (d.gezicht === false || seg.beeldtype === 'graphic')) {
+        } else if (!lijktGraphic(meting)) {
+          // Ook als het hele clipkader passend gekozen was (d.gezicht niet
+          // gezet): een camerabeeld in het passende kader is altijd een
+          // postzegel — mukbang clip 4 stond zo bijna helemaal piepklein.
           fouten.push({ soort: 'camerabeeld_passend', volgorde: seg.volgorde, van, tot, wat: `shot ${seg.volgorde} ${van.toFixed(1)}s: camerabeeld in het passende kader (postzegel)` });
         }
         continue;
@@ -451,9 +454,38 @@ export async function keurGraphics(
 }
 
 /** Regels 4 en 5: klinkt het script, en klinkt niets dubbel? */
+/**
+ * Wordt deze zin in de bron zelf ook (minstens) twee keer gezegd, binnen de
+ * stukken die de clip gebruikt? Dan is de herhaling echt — een tweede
+ * spreker die de vraag herhaalt — en geen knip die iets dupliceert. Ruim
+ * vergeleken: de terugluistering verhaspelt woorden ("Zij jij dit dragen?"
+ * voor "Zou jij dit dragen?"), dus één afwijkend woord mag.
+ */
+export function herhaaldInBron(tekst: string, segmenten: Shot[], bronWoorden: BronWoord[] | null): boolean {
+  if (!bronWoorden?.length) return false;
+  const norm = (w: string) => w.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+  const doel = tekst.split(/\s+/).map(norm).filter(Boolean);
+  if (doel.length < 3) return false;
+  const bron = bronWoorden
+    .filter((w) => segmenten.some((sg) => (w.s + w.e) / 2 >= sg.start - 0.3 && (w.s + w.e) / 2 <= sg.end + 0.3))
+    .sort((a, b) => a.s - b.s)
+    .map((w) => norm(w.w));
+  let keer = 0;
+  for (let i = 0; i + doel.length <= bron.length; i++) {
+    let mis = 0;
+    for (let k = 0; k < doel.length && mis <= 1; k++) if (bron[i + k] !== doel[k]) mis++;
+    if (mis <= Math.min(1, doel.length - 2)) {
+      keer++;
+      i += doel.length - 1;
+    }
+  }
+  return keer >= 2;
+}
+
 export async function keurScript(
   montagePad: string,
   segmenten: Shot[],
+  bronWoorden: BronWoord[] | null = null,
 ): Promise<KeuringRegel[]> {
   const script = await controleerScript(montagePad, segmenten as never);
   if (!script) {
@@ -466,7 +498,11 @@ export async function keurScript(
   const teaseGrens = (segmenten[0] as { tease?: boolean } | undefined)?.tease
     ? segmenten[0].end - segmenten[0].start + 0.5
     : 0;
-  const herhalingen = script.herhalingen.filter((h) => h.eerste > teaseGrens);
+  const naTease = script.herhalingen.filter((h) => h.eerste > teaseGrens);
+  // Een zin die in de bron zelf twee keer klinkt (een herhaalde vraag) is
+  // geen dubbeling door een knip.
+  const inBron = naTease.filter((h) => herhaaldInBron(h.tekst, segmenten, bronWoorden));
+  const herhalingen = naTease.filter((h) => !inBron.includes(h));
 
   return [
     {
@@ -481,9 +517,10 @@ export async function keurScript(
       naam: 'geen dubbele zinnen',
       goed: herhalingen.length === 0,
       detail:
-        herhalingen.length === 0
+        (herhalingen.length === 0
           ? 'geen zin klinkt twee keer'
-          : herhalingen.map((h) => `"${h.tekst}" op ${h.eerste}s en ${h.tweede}s`).join('; '),
+          : herhalingen.map((h) => `"${h.tekst}" op ${h.eerste}s en ${h.tweede}s`).join('; ')) +
+        (inBron.length ? ` (${inBron.map((h) => `"${h.tekst}"`).join(', ')} wordt in de bron zelf herhaald — toegestaan)` : ''),
     },
     {
       naam: 'geen vreemde aanloop',
@@ -520,15 +557,26 @@ export async function keurNaden(
   // woordtijden van de bron.
   const echt: string[] = [];
   const opWoordgrens: string[] = [];
+  let doorlopend = 0;
+  const volg = [...segmenten].sort((a, b) => a.volgorde - b.volgorde);
   for (const s of eind.slecht) {
     let cursor = 0;
     let bronTijd: number | null = null;
-    for (const seg of segmenten) {
+    let aansluitend = false;
+    for (const [i, seg] of volg.entries()) {
       cursor += seg.end - seg.start;
       if (Math.abs(cursor - s.seconde) < 0.25) {
         bronTijd = seg.end;
+        // Het volgende shot begint precies waar dit eindigt (camerawissel,
+        // kaderwissel): het geluid loopt door, dus een "luide naad" is hier
+        // gewoon spraak — geen knip.
+        aansluitend = i + 1 < volg.length && Math.abs(volg[i + 1].start - seg.end) < 0.005;
         break;
       }
+    }
+    if (aansluitend) {
+      doorlopend++;
+      continue;
     }
     const inWoord = bronTijd !== null && bronWoorden ? woordOnder(bronWoorden, bronTijd) : null;
     if (bronTijd !== null && bronWoorden && !inWoord) {
@@ -543,8 +591,8 @@ export async function keurNaden(
     goed: echt.length === 0,
     detail:
       echt.length === 0
-        ? `${eind.naden} naden: ${eind.naden - opWoordgrens.length} stil, ${opWoordgrens.length} op een woordgrens in doorlopende spraak`
-        : echt.join('; '),
+        ? `${eind.naden} naden: ${eind.naden - opWoordgrens.length - doorlopend} stil, ${opWoordgrens.length} op een woordgrens in doorlopende spraak${doorlopend ? `, ${doorlopend} beeldwissel(s) zonder knip in het geluid` : ''}`
+        : echt.join('; ') + (doorlopend ? ` (${doorlopend} beeldwissel(s) zonder knip in het geluid niet meegeteld)` : ''),
   };
 }
 
@@ -584,7 +632,7 @@ export async function keurMontage(
     keurFragmenten(segmenten),
     keurOverlap(segmenten),
     await keurGezicht(montagePad, { ...opties, segmenten }),
-    ...(await keurScript(montagePad, segmenten)),
+    ...(await keurScript(montagePad, segmenten, bronWoorden)),
     await keurNaden(montagePad, segmenten, bronWoorden),
     ...(opties.retentie ? [opties.retentie] : []),
     ...(opties.kader ? [keurLeesbaar(segmenten, opties.kader), keurOverlay(segmenten, opties.kader)] : []),

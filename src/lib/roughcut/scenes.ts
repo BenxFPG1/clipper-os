@@ -206,9 +206,14 @@ export function gezichtMeterVia(bron: string, python: { cmd: string; voor: strin
     });
     try {
       const regel = uit.split('\n').map((r) => r.trim()).reverse().find((r) => r.startsWith('['));
-      const metingen = JSON.parse(regel || '[]') as unknown[];
+      const metingen = JSON.parse(regel || '[]') as ({ breedte?: number } | null)[];
       if (metingen.length !== tijden.length) return tijden.map(() => null);
-      return metingen.map((m) => m !== null);
+      // Een piepklein gezicht (picture-in-picture in een graphic, iemand ver
+      // weg in een wijd shot) beslist niet dat dit een persoonsbeeld is: dan
+      // meet de graphic-meter of het beeld een graphic (passend) of een wijd
+      // camerabeeld (vullend) is.
+      const min = instelling('SCENE_MIN_GEZICHT');
+      return metingen.map((m) => m !== null && (m.breedte === undefined || m.breedte >= min));
     } catch {
       return tijden.map(() => null);
     }
