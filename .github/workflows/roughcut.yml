@@ -91,7 +91,11 @@ jobs:
           key: hf-whisper-${{ runner.os }}-v1
 
       - name: Installeer OpenCV en faster-whisper
-        run: pip3 install --quiet "opencv-python-headless<5" "numpy<2.3" faster-whisper
+        # Versies vastgezet: de nieuwste faster-whisper + PyAV botsten ("open() got an
+        # unexpected keyword argument 'metadata_errors'"), waardoor élke
+        # woordtranscriptie in CI stil terugviel op grove tijden. Dit is de
+        # combinatie die lokaal getest werkt.
+        run: pip3 install --quiet "opencv-python-headless<5" "numpy<2.3" "faster-whisper==1.2.1" "av==18.0.0"
 
       - name: Installeer Claude Code CLI
         run: npm install -g @anthropic-ai/claude-code

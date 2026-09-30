@@ -127,7 +127,7 @@ jobs:
       # voor woorden tellen genoeg, en een fractie van de tijd van 'small'.
       - name: faster-whisper (vingerafdruk)
         if: ${{ steps.kies.outputs.job == 'vingerafdruk' }}
-        run: pip3 install --quiet faster-whisper
+        run: pip3 install --quiet "faster-whisper==1.2.1" "av==18.0.0"
 
       # Ook nodig voor cliparmy: een binnengehaalde campagne wordt door de
       # import-agent gelezen.
