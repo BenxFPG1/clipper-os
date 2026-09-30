@@ -19,7 +19,10 @@ import {
   doelenUitNormen,
   editDoelen,
   editNormenVoorPrompt,
+  gepaardeToets,
   groepeer,
+  accountSleutel,
+  wilcoxonSignedRank,
   mediaan,
   normenTekst,
   schoneDoelen,
@@ -147,6 +150,71 @@ console.log('aggregeerNormen');
   toets('tekstInBeeldAandeel afgerond omlaag op 0,05 en ≤0,98', d.tekstInBeeldAandeel === 0.95, String(d.tekstInBeeldAandeel));
 }
 
+console.log('gepaarde analyse');
+{
+  const w8 = wilcoxonSignedRank([1, 2, 3, 4, 5, 6, 7, 8])!;
+  toets('Wilcoxon: 8 van 8 positief → p = 2/256', w8.wPlus === 36 && Math.abs(w8.p - 2 / 256) < 1e-12 && w8.r === 1, JSON.stringify(w8));
+  const w7 = wilcoxonSignedRank([-1, 2, 3, 4, 5, 6, 7, 8])!;
+  toets('Wilcoxon: kleinste negatief → p = 4/256', w7.wPlus === 35 && Math.abs(w7.p - 4 / 256) < 1e-12, JSON.stringify(w7));
+  const wSym = wilcoxonSignedRank([1, -1, 2, -2, 3, -3, 4, -4])!;
+  toets('Wilcoxon: symmetrisch → p = 1, r = 0', wSym.p === 1 && wSym.r === 0);
+  const wTies = wilcoxonSignedRank([1, 1, 1, 1, 1, 1, 1, 1, 0, 0])!;
+  toets('Wilcoxon: nullen vallen weg, ties mogen', wTies.n === 8 && Math.abs(wTies.p - 2 / 256) < 1e-12, JSON.stringify(wTies));
+  toets('Wilcoxon: alleen nullen → null', wilcoxonSignedRank([0, 0]) === null);
+
+  const g = gepaardeToets([
+    { account: 'a', groep: 'top', w: 5 }, { account: 'a', groep: 'top', w: 7 }, { account: 'a', groep: 'basis', w: 4 },
+    { account: 'b', groep: 'top', w: 1 }, { account: 'b', groep: 'basis', w: 3 },
+    { account: 'c', groep: 'top', w: 9 }, // geen basis → geen paar
+  ])!;
+  toets('gepaardeToets: mediaan per account, alleen paren', g.n_accounts === 2 && g.hoger === 1 && g.lager === 1 && g.top === 3.5 && g.mediaan_verschil === 0, JSON.stringify(g));
+
+  toets('accountSleutel: handle uit URL, platform erbij', accountSleutel('https://www.tiktok.com/@JordFinance/video/1', 'x') === 'tiktok:jordfinance');
+  toets('accountSleutel: zonder handle → tracked id', accountSleutel('https://www.youtube.com/shorts/abc', 'id1') === 'id:id1' && accountSleutel(null, null) === null);
+
+  // Het echte probleem: accounts verschillen sterk in stijl (1 tot 12
+  // wissels/10 s), binnen elk account knipt de uitschieter iets sneller.
+  // Ongepaard verdrinkt dat; gepaard ziet het.
+  const metingen: Meting[] = [];
+  for (let a = 0; a < 10; a++) {
+    const stijl = 1 + a * 1.2;
+    for (let j = 0; j < 2; j++) {
+      metingen.push({ groep: 'top', platform: 'tiktok', theme: null, account: `acc${a}`, v: vinger({ wisselsPer10s: stijl + 0.8 + j * 0.1, loudnessI: -14 + j }) });
+      metingen.push({ groep: 'basis', platform: 'tiktok', theme: null, account: `acc${a}`, v: vinger({ wisselsPer10s: stijl + j * 0.1, loudnessI: -14 + (1 - j) }) });
+    }
+  }
+  const n = aggregeerNormen(metingen);
+  const ongepaard = aggregeerNormen(metingen.map((m) => ({ ...m, account: null })));
+  toets('ongepaard ziet het verschil niet (stijl overheerst)', ongepaard.wisselsPer10s?.norm_extern === false && ongepaard.wisselsPer10s?.methode === 'ongepaard', JSON.stringify(ongepaard.wisselsPer10s?.effect));
+  toets('gepaard ziet het wel: 10 van 10 accounts hoger', n.wisselsPer10s?.norm_extern === true && n.wisselsPer10s?.methode === 'gepaard' && n.wisselsPer10s?.gepaard?.hoger === 10, JSON.stringify(n.wisselsPer10s?.gepaard));
+  toets('gepaard: geen verschil in loudness → geen norm', n.loudnessI?.norm_extern === false && n.loudnessI?.methode === 'gepaard');
+  const d = doelenUitNormen(n, metingen.length);
+  toets('doel uit gepaarde top-mediaan per account', d.knippenPer10s === 7 && d.bronPerDoel.knippenPer10s === 'extern', String(d.knippenPer10s));
+  const t = normenTekst(n, 'tiktok', 'all');
+  toets('prompt noemt methode en aantal accounts', /gepaard: uitschieter vs gewone post van hetzelfde account, 10 accounts/.test(t), t);
+  toets('prompt: hoger bij 10 van 10 accounts', /hoger bij 10 van 10 accounts/.test(t), t);
+  toets('prompt: loudness als niet-verschillend', /Verschilt NIET[^\n]*loudness/.test(t), t);
+
+  // Minder dan 8 accounts met beide soorten → terug naar ongepaard.
+  const weinig = aggregeerNormen(metingen.filter((m) => Number(m.account!.slice(3)) < 5 || m.groep === 'top'));
+  toets('<8 paren → ongepaarde terugval', weinig.wisselsPer10s?.methode === 'ongepaard' && weinig.wisselsPer10s?.gepaard?.n_accounts === 5);
+}
+
+{
+  // Ongepaarde terugval: uit te weinig accounts, of gelijke medianen → geen norm.
+  const uitTweeAccounts: Meting[] = [
+    ...reeks(10, 'top', (i) => ({ eersteWisselS: 0.6 + i * 0.01 })).map((m, i) => ({ ...m, account: `a${i % 2}` })),
+    ...reeks(10, 'basis', (i) => ({ eersteWisselS: 3 + i * 0.01 })).map((m, i) => ({ ...m, account: `b${i % 2}` })),
+  ];
+  const n2 = aggregeerNormen(uitTweeAccounts);
+  toets('ongepaard uit 2 accounts per groep → geen norm', n2.eersteWisselS?.methode === 'ongepaard' && n2.eersteWisselS?.norm_extern === false);
+  const staart = aggregeerNormen([
+    ...reeks(10, 'top', () => ({ spraakStartS: 0 })),
+    ...reeks(10, 'basis', (i) => ({ spraakStartS: i < 6 ? 0 : 1.5 })),
+  ]);
+  toets('gelijke medianen → geen norm, ook bij effect ≥ 0,33', staart.spraakStartS?.norm_extern === false && Math.abs(staart.spraakStartS?.effect ?? 0) >= 0.33, JSON.stringify(staart.spraakStartS));
+}
+
 console.log('doelen: grenzen en afronding');
 {
   toets('maximum rondt naar boven af', begrens(0.81, 0.5, 3, 0.1, 'op') === 0.9);
@@ -211,7 +279,8 @@ console.log('normenTekst');
     ...reeks(10, 'basis', (i) => ({ eersteWisselS: 2.9, wisselsPer10s: 2.1, loudnessI: -14 + (i % 2), tekst: 0.6 })),
   ];
   const t = normenTekst(aggregeerNormen(metingen), 'tiktok', 'sport');
-  toets('noemt de gemeten verschillen met n', /eerste visuele wissel: top 0,8 s vs gewone posts 2,9 s \(n=10\/10\)/.test(t), t);
+  toets('noemt de gemeten verschillen met n', /eerste visuele wissel: top 0,8 s vs gewone posts 2,9 s \(ongepaard, n=10\/10\)/.test(t), t);
+  toets('zegt welke methode (ongepaard zonder accounts)', /ongepaard: alle uitschieters/.test(t));
   toets('tekst in beeld als percentage', /tekst in beeld: top 95% vs gewone posts 60%/.test(t), t);
   toets('zegt wat NIET verschilt', /Verschilt NIET[^\n]*loudness/.test(t), t);
   toets('max 25 regels', t.split('\n').length <= 25);
@@ -300,6 +369,22 @@ console.log('scout: kiesBasislijn');
   const gekozen = kiesBasislijn([post(10_000), post(50_000), post(9_000), post(4_000), post(null), post(12_000)], 10_000);
   toets('dichtst bij de mediaan, geen uitschieters', JSON.stringify(gekozen.map((p) => p.views)) === '[10000,9000]', JSON.stringify(gekozen.map((p) => p.views)));
   toets('niets bij mediaan 0', kiesBasislijn([post(1)], 0).length === 0);
+}
+
+// Richting: een geleerd doel mag nooit tegen de data in bewegen (comedy:
+// top 6,3 s zonder wissel vs basis 8,8 s mocht geen doel van 6,5 s geven).
+{
+  const n = { top: 20, basis: 20, eigen_goed: 0, eigen_weg: 0 } as never;
+  const strakker = doelenUitNormen(
+    { langsteZonderWisselS: { top: 6.3, basis: 8.8, eigen_goed: null, eigen_weg: null, effect: -0.4, effect_eigen: null, n, norm_extern: true, norm_eigen: false } },
+    40,
+  );
+  toets('top strakker dan basis → doel niet ruimer dan standaard', strakker.maxSecondenZonderVisueleVerandering === STANDAARD_DOELEN.maxSecondenZonderVisueleVerandering, String(strakker.maxSecondenZonderVisueleVerandering));
+  const ruimer = doelenUitNormen(
+    { langsteZonderWisselS: { top: 6.3, basis: 3.0, eigen_goed: null, eigen_weg: null, effect: 0.5, effect_eigen: null, n, norm_extern: true, norm_eigen: false } },
+    40,
+  );
+  toets('top ruimer dan basis → doel mag ruimer', ruimer.maxSecondenZonderVisueleVerandering === 6.5, String(ruimer.maxSecondenZonderVisueleVerandering));
 }
 
 terugval().then(() => {

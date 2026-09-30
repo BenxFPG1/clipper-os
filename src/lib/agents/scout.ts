@@ -705,7 +705,7 @@ async function bewaarBasislijn(
  * Wordt gebruikt voor gevolgde accounts én als proefmeting vóór we een
  * ontdekt account gaan volgen.
  */
-function meetAccount(posts: AccountPost[]): { mediaan: number; recent: AccountPost[] } | null {
+export function meetAccount(posts: AccountPost[]): { mediaan: number; recent: AccountPost[] } | null {
   // Alleen recente posts: zo vergelijken we appels met appels.
   const recent = posts.filter((p) => binnenVenster(p.posted_at));
   const views = recent.map((p) => p.views).filter((v): v is number => v !== null);

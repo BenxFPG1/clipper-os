@@ -38,6 +38,19 @@ export function LeerlusBlok({ status }: { status: LeerlusStatus }) {
         </span>
       </div>
 
+      {status.teBeoordelen > 0 ? (
+        <Link
+          href="/beoordelen"
+          className="flex min-h-[56px] items-center justify-center rounded bg-neutral-100 px-4 py-3 text-base font-medium text-neutral-900"
+        >
+          Beoordelen ({status.teBeoordelen} wachten) →
+        </Link>
+      ) : (
+        <Link href="/beoordelen" className="block text-sm text-neutral-500 underline">
+          Alle renders zijn beoordeeld
+        </Link>
+      )}
+
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Getal label="Renders" waarde={status.renders} />
         <Getal

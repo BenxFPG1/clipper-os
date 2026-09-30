@@ -128,7 +128,29 @@ export const MIN_N = 8;
 export const MIN_EFFECT = 0.33;
 
 export type Groep = 'top' | 'basis' | 'eigen_goed' | 'eigen_weg';
-export type Meting = { groep: Groep; platform: string | null; theme: string | null; v: Vingerafdruk };
+/**
+ * account: wie de clip maakte (handle uit de URL). Nodig voor de gepaarde
+ * analyse: top en basislijn van hetzelfde account vergelijken.
+ */
+export type Meting = { groep: Groep; platform: string | null; theme: string | null; v: Vingerafdruk; account?: string | null };
+
+/** Gepaarde vergelijking binnen accounts (zie gepaardeToets). */
+export type GepaardResultaat = {
+  /** Accounts met zowel een top- als een basislijnmeting. */
+  n_accounts: number;
+  /** Mediaan over accounts van (mediaan top − mediaan basis) binnen het account. */
+  mediaan_verschil: number;
+  /** Mediaan over de gepaarde accounts van hun top- resp. basismediaan. */
+  top: number;
+  basis: number;
+  /** Bij hoeveel accounts top hoger/lager dan basis ligt (gelijk telt niet). */
+  hoger: number;
+  lager: number;
+  /** Tweezijdige p-waarde, Wilcoxon signed-rank (exact, conditioneel op de rangen). */
+  p: number;
+  /** Rank-biserial correlatie (-1..1): de gepaarde effectgrootte. */
+  r: number;
+};
 
 export type KenmerkNorm = {
   top: number | null;
@@ -144,6 +166,13 @@ export type KenmerkNorm = {
   norm_extern: boolean;
   /** Duidelijk verschil eigen (goed vs weg) met genoeg metingen. */
   norm_eigen: boolean;
+  /**
+   * Welke toets over norm_extern besliste: 'gepaard' zodra er genoeg accounts
+   * met beide soorten zijn, anders de ongepaarde vergelijking als terugval.
+   * Optioneel: rijen van vóór de gepaarde analyse hebben het veld niet.
+   */
+  methode?: 'gepaard' | 'ongepaard';
+  gepaard?: GepaardResultaat | null;
 };
 
 export type Normen = Partial<Record<Kenmerk, KenmerkNorm>>;
@@ -172,13 +201,107 @@ export function cliffsDelta(a: number[], b: number[]): number | null {
   return (groter - kleiner) / (a.length * b.length);
 }
 
+/**
+ * Wilcoxon signed-rank op gepaarde verschillen, puur TypeScript.
+ *
+ * Waarom gepaard: ongepaard (alle tops tegen alle basisposts) verdrinkt het
+ * verschil binnen een account in de verschillen tússen accounts — een
+ * voetbalcompilatie knipt altijd sneller dan een talking head, of het nu een
+ * uitschieter is of niet. Met 75/73 metingen haalde geen enkel kenmerk nog een
+ * duidelijk ongepaard effect. Per account "top min gewoon" nemen haalt die
+ * stijl eruit; de vraag wordt dan: wijzen die verschillen over accounts heen
+ * systematisch één kant op?
+ *
+ * Exact in plaats van de normale benadering: bij 8–30 accounts is die
+ * benadering te grof. De verdeling wordt per keer opgebouwd over de werkelijke
+ * (mid)rangen, dus ties zijn geen probleem. Nullen tellen niet mee (standaard).
+ */
+export function wilcoxonSignedRank(verschillen: number[]): { n: number; wPlus: number; wMin: number; p: number; r: number } | null {
+  const d = verschillen.filter((x) => Number.isFinite(x) && Math.abs(x) > 1e-9);
+  const n = d.length;
+  if (n === 0) return null;
+  // Midrangen van |d|, verdubbeld zodat ze gehele getallen zijn.
+  const orde = d.map((x, i) => ({ a: Math.abs(x), i })).sort((x, y) => x.a - y.a);
+  const rang2 = new Array<number>(n);
+  for (let i = 0; i < n; ) {
+    let j = i;
+    while (j + 1 < n && Math.abs(orde[j + 1].a - orde[i].a) < 1e-9) j++;
+    const mid2 = i + j + 2; // (i+1 + j+1) = 2 × midrang
+    for (let k = i; k <= j; k++) rang2[orde[k].i] = mid2;
+    i = j + 1;
+  }
+  const totaal2 = rang2.reduce((a, b) => a + b, 0);
+  const wPlus2 = d.reduce((a, x, i) => a + (x > 0 ? rang2[i] : 0), 0);
+  // Verdeling van W+ onder H0: elk teken 50/50. Telling in doubles is exact
+  // genoeg (2^30 past ruim).
+  let verdeling = new Array<number>(totaal2 + 1).fill(0);
+  verdeling[0] = 1;
+  for (const r of rang2) {
+    const nieuw = verdeling.slice();
+    for (let s = totaal2 - r; s >= 0; s--) if (verdeling[s]) nieuw[s + r] += verdeling[s];
+    verdeling = nieuw;
+  }
+  const alles = 2 ** n;
+  let links = 0;
+  let rechts = 0;
+  for (let s = 0; s <= totaal2; s++) {
+    if (s <= wPlus2) links += verdeling[s];
+    if (s >= wPlus2) rechts += verdeling[s];
+  }
+  const p = Math.min(1, (2 * Math.min(links, rechts)) / alles);
+  const wPlus = wPlus2 / 2;
+  const wMin = (totaal2 - wPlus2) / 2;
+  return { n, wPlus, wMin, p, r: (wPlus - wMin) / (wPlus + wMin) };
+}
+
+/** Onder deze p-waarde telt een gepaard verschil als systematisch. */
+export const MAX_P = 0.05;
+/**
+ * De ongepaarde terugval telt alleen als beide groepen uit minstens zoveel
+ * verschillende accounts komen. Anders meet je accounts, niet uitschieters:
+ * de eerste echte run gaf in comedy (17 tops, 9 basisposts uit een handvol
+ * accounts) vier "normen", waarvan twee met gelijke medianen.
+ */
+export const MIN_ACCOUNTS_ONGEPAARD = 5;
+
+/**
+ * Puur: gepaarde toets voor één kenmerk. Per account de mediaan van top en
+ * van basis; alleen accounts met beide tellen. Null als er geen paar is.
+ */
+export function gepaardeToets(waarden: { account: string; groep: 'top' | 'basis'; w: number }[]): GepaardResultaat | null {
+  const perAccount = new Map<string, { top: number[]; basis: number[] }>();
+  for (const x of waarden) {
+    const a = perAccount.get(x.account) ?? { top: [], basis: [] };
+    a[x.groep].push(x.w);
+    perAccount.set(x.account, a);
+  }
+  const paren = [...perAccount.values()]
+    .filter((a) => a.top.length > 0 && a.basis.length > 0)
+    .map((a) => ({ top: mediaan(a.top)!, basis: mediaan(a.basis)! }));
+  if (paren.length === 0) return null;
+  const verschillen = paren.map((x) => x.top - x.basis);
+  const w = wilcoxonSignedRank(verschillen);
+  return {
+    n_accounts: paren.length,
+    mediaan_verschil: rond(mediaan(verschillen))!,
+    top: rond(mediaan(paren.map((x) => x.top)))!,
+    basis: rond(mediaan(paren.map((x) => x.basis)))!,
+    hoger: verschillen.filter((x) => x > 1e-9).length,
+    lager: verschillen.filter((x) => x < -1e-9).length,
+    p: w ? Math.round(w.p * 1000) / 1000 : 1,
+    r: w ? Math.round(w.r * 100) / 100 : 0,
+  };
+}
+
 /** Puur: van metingen naar normen per kenmerk. */
-export function aggregeerNormen(metingen: Meting[], opties: { minN?: number; minEffect?: number } = {}): Normen {
+export function aggregeerNormen(metingen: Meting[], opties: { minN?: number; minEffect?: number; maxP?: number } = {}): Normen {
   const minN = opties.minN ?? MIN_N;
   const minEffect = opties.minEffect ?? MIN_EFFECT;
+  const maxP = opties.maxP ?? MAX_P;
   const normen: Normen = {};
   for (const [sleutel, def] of Object.entries(KENMERKEN) as [Kenmerk, (typeof KENMERKEN)[Kenmerk]][]) {
     const waarden: Record<Groep, number[]> = { top: [], basis: [], eigen_goed: [], eigen_weg: [] };
+    const metAccount: { account: string; groep: 'top' | 'basis'; w: number }[] = [];
     for (const m of metingen) {
       let w: number | null = null;
       try {
@@ -186,12 +309,31 @@ export function aggregeerNormen(metingen: Meting[], opties: { minN?: number; min
       } catch {
         // Een onvolledige vingerafdruk (oude versie, half gevuld) telt niet mee.
       }
-      if (typeof w === 'number' && Number.isFinite(w)) waarden[m.groep].push(w);
+      if (typeof w === 'number' && Number.isFinite(w)) {
+        waarden[m.groep].push(w);
+        if (m.account && (m.groep === 'top' || m.groep === 'basis')) metAccount.push({ account: m.account, groep: m.groep, w });
+      }
     }
     const n = { top: waarden.top.length, basis: waarden.basis.length, eigen_goed: waarden.eigen_goed.length, eigen_weg: waarden.eigen_weg.length };
     if (n.top + n.basis + n.eigen_goed + n.eigen_weg === 0) continue;
     const effect = cliffsDelta(waarden.top, waarden.basis);
     const effectEigen = cliffsDelta(waarden.eigen_goed, waarden.eigen_weg);
+    const accounts = (g: 'top' | 'basis') => new Set(metAccount.filter((x) => x.groep === g).map((x) => x.account)).size;
+    // Metingen zonder account (oude rijen, tests) kunnen de spreiding niet
+    // aantonen maar ook niet ontkrachten; dan geldt alleen de n-eis.
+    const genoegAccounts = (g: 'top' | 'basis') => metAccount.length === 0 || accounts(g) >= MIN_ACCOUNTS_ONGEPAARD;
+    const medTop = mediaan(waarden.top);
+    const medBasis = mediaan(waarden.basis);
+    // Gelijke medianen = het verschil zit alleen in de staarten; daar kan de
+    // montage niet op sturen ("top 100% vs gewoon 100%" is geen norm).
+    const ongepaardNorm =
+      effect !== null && n.top >= minN && n.basis >= minN && Math.abs(effect) >= minEffect &&
+      medTop !== medBasis && genoegAccounts('top') && genoegAccounts('basis');
+    // Gepaard gaat voor zodra er genoeg accounts met beide soorten zijn: dat
+    // is de eerlijkere vergelijking. Anders de ongepaarde als terugval.
+    const gepaard = gepaardeToets(metAccount);
+    const gepaardBruikbaar = gepaard !== null && gepaard.n_accounts >= minN;
+    const gepaardNorm = gepaardBruikbaar && gepaard!.p < maxP && Math.abs(gepaard!.r) >= minEffect && gepaard!.mediaan_verschil !== 0;
     normen[sleutel] = {
       top: rond(mediaan(waarden.top)),
       basis: rond(mediaan(waarden.basis)),
@@ -200,7 +342,9 @@ export function aggregeerNormen(metingen: Meting[], opties: { minN?: number; min
       effect: effect === null ? null : Math.round(effect * 100) / 100,
       effect_eigen: effectEigen === null ? null : Math.round(effectEigen * 100) / 100,
       n,
-      norm_extern: effect !== null && n.top >= minN && n.basis >= minN && Math.abs(effect) >= minEffect,
+      norm_extern: gepaardBruikbaar ? gepaardNorm : ongepaardNorm,
+      methode: gepaardBruikbaar ? 'gepaard' : 'ongepaard',
+      gepaard,
       norm_eigen: effectEigen !== null && n.eigen_goed >= minN && n.eigen_weg >= minN && Math.abs(effectEigen) >= minEffect,
     };
   }
@@ -246,7 +390,10 @@ export function doelenUitNormen(normen: Normen, nTotaal: number): EditDoelen & P
   for (const r of DOEL_REGELS) {
     const k = normen[r.kenmerk];
     if (!k) continue;
-    const extern = k.norm_extern && k.top !== null ? k.top : null;
+    // Gepaard: de mediaan van de top-mediaan per account — elk account telt
+    // één keer, zodat een account met twintig vondsten de norm niet bepaalt.
+    const topWaarde = k.methode === 'gepaard' && k.gepaard ? k.gepaard.top : k.top;
+    const extern = k.norm_extern && topWaarde !== null ? topWaarde : null;
     const eigen = k.norm_eigen && k.eigen_goed !== null ? k.eigen_goed : null;
     if (extern === null && eigen === null) {
       doelen.bronPerDoel[r.doel] = 'standaard';
@@ -255,7 +402,23 @@ export function doelenUitNormen(normen: Normen, nTotaal: number): EditDoelen & P
     // Beide bronnen: het midden. Extern is breder gemeten, eigen is ons
     // eigen publiek en materiaal — geen van beide wint vanzelf.
     const ruw = extern !== null && eigen !== null ? (extern + eigen) / 2 : (extern ?? eigen)!;
-    doelen[r.doel] = begrens(ruw, r.min, r.max, r.stap, r.afronden);
+    let doel = begrens(ruw, r.min, r.max, r.stap, r.afronden);
+    // Een geleerd doel mag nooit tegen de richting van de data in bewegen.
+    // Knippen de beste clips strakker dan gewone posts (top < basis), dan is
+    // het doel hoogstens de standaard, ook als de top-mediaan zelf ruimer is
+    // dan de standaard: comedy-tops hadden 6,3 s zonder wissel tegen 8,8 s bij
+    // gewone posts, en 'doel = top' maakte daar 6,5 s van — ruimer dan de 4 s
+    // standaard, dus het tegendeel van wat de meting zegt.
+    const effect =
+      extern !== null
+        ? k.methode === 'gepaard' && k.gepaard
+          ? k.gepaard.mediaan_verschil
+          : k.effect
+        : k.effect_eigen;
+    const standaard = STANDAARD_DOELEN[r.doel];
+    if (typeof effect === 'number' && effect < 0) doel = Math.min(doel, standaard);
+    if (typeof effect === 'number' && effect > 0) doel = Math.max(doel, standaard);
+    doelen[r.doel] = doel;
     const bron = extern !== null && eigen !== null ? 'mix' : extern !== null ? 'extern' : 'eigen';
     doelen.bronPerDoel[r.doel] = bron;
     if (extern !== null) bronnen.add('extern');
@@ -284,9 +447,22 @@ export function normenTekst(normen: Normen, platform: string, theme: string): st
   if (extern.length === 0 && eigen.length === 0) return '';
 
   const waar = platform === 'all' && theme === 'all' ? 'alle platforms/thema\'s' : `${theme === 'all' ? 'alle thema\'s' : theme}/${platform === 'all' ? 'alle platforms' : platform}`;
-  const regels: string[] = [`GEMETEN EDIT-NORMEN (${waar}; mediaan, gemeten met ffmpeg + frame-analyse — geen mening):`];
+  const nAccounts = Math.max(0, ...alle.map(([, k]) => (k.methode === 'gepaard' ? (k.gepaard?.n_accounts ?? 0) : 0)));
+  const methodeUitleg =
+    nAccounts > 0
+      ? `gepaard: uitschieter vs gewone post van hetzelfde account, ${nAccounts} accounts, Wilcoxon p<${MAX_P}`
+      : 'ongepaard: alle uitschieters vs alle gewone posts, rangtest';
+  const regels: string[] = [`GEMETEN EDIT-NORMEN (${waar}; ${methodeUitleg} — gemeten met ffmpeg + frame-analyse, geen mening):`];
   for (const [k, n] of extern.slice(0, 9)) {
-    regels.push(`- ${KENMERKEN[k].label}: top ${fmt(k, n.top)} vs gewone posts ${fmt(k, n.basis)} (n=${n.n.top}/${n.n.basis})`);
+    const g = n.gepaard;
+    if (n.methode === 'gepaard' && g) {
+      const teken = g.mediaan_verschil > 0 ? '+' : '';
+      regels.push(
+        `- ${KENMERKEN[k].label}: top ${fmt(k, g.top)} vs gewone posts ${fmt(k, g.basis)} binnen hetzelfde account (verschil ${teken}${fmt(k, g.mediaan_verschil)}; ${g.mediaan_verschil > 0 ? 'hoger' : 'lager'} bij ${g.mediaan_verschil > 0 ? g.hoger : g.lager} van ${g.n_accounts} accounts, p=${String(g.p).replace('.', ',')})`,
+      );
+    } else {
+      regels.push(`- ${KENMERKEN[k].label}: top ${fmt(k, n.top)} vs gewone posts ${fmt(k, n.basis)} (ongepaard, n=${n.n.top}/${n.n.basis})`);
+    }
   }
   for (const [k, n] of eigen.slice(0, 6)) {
     regels.push(`- eigen renders, ${KENMERKEN[k].label}: 'goed' ${fmt(k, n.eigen_goed)} vs 'weg' ${fmt(k, n.eigen_weg)} (n=${n.n.eigen_goed}/${n.n.eigen_weg})`);
@@ -294,8 +470,8 @@ export function normenTekst(normen: Normen, platform: string, theme: string): st
   // Wat NIET verschilt: gemeten met genoeg n, maar geen duidelijk effect. Dat
   // voorkomt dat de edit-agent energie steekt in iets wat niets uitmaakt.
   const gelijk = alle
-    .filter(([, k]) => !k.norm_extern && k.n.top >= MIN_N && k.n.basis >= MIN_N)
-    .map(([k, n]) => `${KENMERKEN[k].label} (~${fmt(k, n.top)})`);
+    .filter(([, k]) => !k.norm_extern && (k.methode === 'gepaard' || (k.n.top >= MIN_N && k.n.basis >= MIN_N)))
+    .map(([k, n]) => `${KENMERKEN[k].label} (~${fmt(k, n.methode === 'gepaard' && n.gepaard ? n.gepaard.top : n.top)})`);
   if (gelijk.length > 0) regels.push(`- Verschilt NIET tussen top en gewoon: ${gelijk.slice(0, 8).join('; ')}.`);
   regels.push('Stuur op de verschillen; wat niet verschilt is vrij.');
   return regels.slice(0, 25).join('\n');
@@ -417,7 +593,7 @@ export async function laadMetingen(): Promise<{ metingen: Meting[]; waarschuwing
   for (let van = 0; ; van += 1000) {
     const { data, error } = await supabase
       .from('scout_finds')
-      .select('platform, theme, is_basislijn, vingerafdruk')
+      .select('platform, theme, is_basislijn, vingerafdruk, post_url, tracked_account_id')
       .not('vingerafdruk', 'is', null)
       .range(van, van + 999);
     if (error) throw new Error(`scout_finds lezen: ${error.message}`);
@@ -425,7 +601,13 @@ export async function laadMetingen(): Promise<{ metingen: Meting[]; waarschuwing
       if (!isVingerafdruk(r.vingerafdruk)) continue;
       // Metingen van vóór de duurgrens (lange video's) tellen niet mee.
       if (r.vingerafdruk.duurS > MAX_SHORTFORM_S) continue;
-      metingen.push({ groep: r.is_basislijn ? 'basis' : 'top', platform: r.platform as string, theme: r.theme as string | null, v: r.vingerafdruk });
+      metingen.push({
+        groep: r.is_basislijn ? 'basis' : 'top',
+        platform: r.platform as string,
+        theme: r.theme as string | null,
+        v: r.vingerafdruk,
+        account: accountSleutel(r.post_url as string | null, r.tracked_account_id as string | null),
+      });
     }
     if (!data || data.length < 1000) break;
   }
@@ -481,6 +663,21 @@ export async function laadMetingen(): Promise<{ metingen: Meting[]; waarschuwing
   }
 
   return { metingen, waarschuwingen };
+}
+
+/**
+ * Puur: wie maakte deze post. De handle uit de URL, want zoek- en
+ * trendingvondsten hebben geen tracked_account_id terwijl de basislijn die
+ * wel heeft — op de handle vallen ze samen. Platform erbij: dezelfde naam op
+ * TikTok en YouTube is niet per se dezelfde maker.
+ */
+export function accountSleutel(postUrl: string | null, trackedAccountId: string | null): string | null {
+  const handle = postUrl?.match(/\/@([^/?#]+)/)?.[1]?.toLowerCase();
+  if (handle) {
+    const platform = /tiktok\.com/.test(postUrl!) ? 'tiktok' : /youtube\.com|youtu\.be/.test(postUrl!) ? 'yt' : /instagram\.com/.test(postUrl!) ? 'ig' : 'x';
+    return `${platform}:${handle}`;
+  }
+  return trackedAccountId ? `id:${trackedAccountId}` : null;
 }
 
 /** Puur: welke (platform, theme)-groepen krijgen een rij, en welke metingen horen erin. */

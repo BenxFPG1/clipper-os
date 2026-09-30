@@ -1,4 +1,5 @@
 import { db } from './supabase';
+import { beoordeelWachtrij } from './tracking/leerlus';
 import { editDoelen, STANDAARD_DOELEN, type EditDoelen } from './vault/normen';
 
 export type StapStatus = {
@@ -284,6 +285,8 @@ export type LeerlusStatus = {
   /** Gerenderde bestanden in klare renders. */
   renders: number;
   beoordeeld: number;
+  /** Hoofdbestanden die nog op een oordeel wachten (de /beoordelen-wachtrij). */
+  teBeoordelen: number;
   perOordeel: { goed: number; matig: number; weg: number };
   evalCases: number;
   /** Clips die aan een render gekoppeld zijn en gepost. */
@@ -335,6 +338,10 @@ export async function laadLeerlus(): Promise<LeerlusStatus> {
     editDoelen().catch(() => STANDAARD_DOELEN),
   ]);
 
+  const teBeoordelen = await beoordeelWachtrij({ limiet: 0 })
+    .then((w) => w.totaal)
+    .catch(() => 0);
+
   const perOordeel = { goed: 0, matig: 0, weg: 0 };
   let evalCases = 0;
   for (const o of oordelen.data ?? []) {
@@ -345,6 +352,7 @@ export async function laadLeerlus(): Promise<LeerlusStatus> {
   return {
     renders: (renderJobs.data ?? []).reduce((n, j) => n + ((j.bestanden as unknown[] | null)?.length ?? 0), 0),
     beoordeeld: oordelen.data?.length ?? 0,
+    teBeoordelen,
     perOordeel,
     evalCases,
     gepost: gepost.count ?? 0,

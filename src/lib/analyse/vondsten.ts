@@ -3,7 +3,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { db } from '../supabase';
 import { downloadVideo, probeDuur } from '../roughcut/frames';
-import { herberekenNormen } from '../vault/normen';
+import { accountSleutel, herberekenNormen } from '../vault/normen';
+import { kiesBasislijn, meetAccount } from '../agents/scout';
+import { getFallbackProvider, getMetricsProvider, type MetricsProvider, type Platform } from '../tracking/provider';
+import { logProviderUsage } from '../supabase';
 import { MAX_SHORTFORM_S, VINGERAFDRUK_VERSIE, vingerafdrukVanBestand, type Vingerafdruk } from './vingerafdruk';
 
 /**
@@ -112,20 +115,53 @@ export type VingerafdrukRun = {
  * Om en om top en basis: stopt de run op het tijdsbudget, dan zijn beide
  * groepen ongeveer even groot gegroeid in plaats van alleen de tops.
  */
-export async function runVingerafdrukJob(opties: { batch?: number; maxMinuten?: number; visueel?: boolean } = {}): Promise<VingerafdrukRun> {
+export async function runVingerafdrukJob(
+  opties: { batch?: number; maxMinuten?: number; visueel?: boolean; alleenAggregatie?: boolean } = {},
+): Promise<VingerafdrukRun> {
   const batch = opties.batch ?? Number(process.env.VINGERAFDRUK_BATCH ?? 15);
   const maxMs = (opties.maxMinuten ?? Number(process.env.VINGERAFDRUK_MAX_MIN ?? 18)) * 60_000;
   const visueel = opties.visueel ?? process.env.VINGERAFDRUK_VISUEEL !== '0';
   const start = Date.now();
   const supabase = db();
 
-  const tops = await kandidaten(false, batch);
-  const topAccounts = new Set(tops.map((t) => t.tracked_account_id).filter(Boolean));
-  // Basislijn bij voorkeur van dezelfde accounts: dan is het verschil echt
-  // "uitschieter vs gewone dag van dezelfde maker", niet "ander account".
-  const basis = (await kandidaten(true, batch * 4))
-    .sort((a, b) => Number(topAccounts.has(b.tracked_account_id)) - Number(topAccounts.has(a.tracked_account_id)))
-    .slice(0, Math.max(batch, tops.length));
+  const alleenAggregatie = opties.alleenAggregatie ?? process.env.VINGERAFDRUK_ALLEEN_AGGREGATIE === '1';
+
+  // De normen zijn gepaard (uitschieter vs gewone post van hetzelfde
+  // account), dus elk account met maar één kant gemeten is verspilde meting.
+  // Eerst de ontbrekende kant aanvullen, daarna pas nieuwe accounts.
+  const stand = alleenAggregatie ? null : await gemetenStand();
+  let basislijnAangevuld = 0;
+  if (stand) {
+    try {
+      basislijnAangevuld = await vulOntbrekendeBasislijn(stand.alleenTop, Number(process.env.VINGERAFDRUK_MAX_AANVUL_ACCOUNTS ?? 8));
+    } catch (e) {
+      console.log(`  basislijn aanvullen mislukt: ${(e as Error).message.slice(0, 160)}`);
+    }
+  }
+  const nodigTop = stand ? stand.alleenBasis : new Set<string>();
+  const nodigBasis = stand ? stand.alleenTop : new Set<string>();
+  const heeftTop = stand ? stand.metTop : new Set<string>();
+  const sleutel = (v: Vondst) => accountSleutel(v.post_url, v.tracked_account_id) ?? '';
+
+  // Tops: eerst accounts die al een gemeten basislijn hebben maar nog geen
+  // top; verder op outlier-score (volgorde van de query blijft staan).
+  const tops = alleenAggregatie
+    ? []
+    : stabielSorteer(await kandidaten(false, batch * 4), (v) => (nodigTop.has(sleutel(v)) ? 0 : 1)).slice(0, batch);
+  // Basislijn: eerst accounts met een gemeten top zonder basislijn, dan
+  // accounts die sowieso al een top hebben (meer paren per account maakt de
+  // mediaan per account stabieler), dan de rest.
+  const basis = alleenAggregatie
+    ? []
+    : stabielSorteer(await kandidaten(true, batch * 6), (v) => (nodigBasis.has(sleutel(v)) ? 0 : heeftTop.has(sleutel(v)) ? 1 : 2)).slice(
+        0,
+        Math.max(batch, tops.length),
+      );
+  if (stand) {
+    console.log(
+      `  paren: ${stand.paren} accounts met beide soorten; ${stand.alleenTop.size} alleen top, ${stand.alleenBasis.size} alleen basis; ${basislijnAangevuld} basislijnpost(s) aangevuld`,
+    );
+  }
 
   const volgorde: (Vondst & { pogingen: number })[] = [];
   for (let i = 0; i < Math.max(tops.length, basis.length); i++) {
@@ -168,6 +204,9 @@ export async function runVingerafdrukJob(opties: { batch?: number; maxMinuten?: 
       decided_by: 'auto',
       input_summary: {
         kandidaten: { top: tops.length, basis: basis.length },
+        paren_voor: stand?.paren ?? null,
+        basislijn_aangevuld: basislijnAangevuld,
+        alleen_aggregatie: alleenAggregatie,
         gemeten: run.gemeten,
         fouten: run.fouten,
         gestopt_op_tijd: run.gestoptOpTijd,
@@ -206,4 +245,118 @@ async function kandidaten(basislijn: boolean, aantal: number): Promise<(Vondst &
     }
   }
   return uit;
+}
+
+function stabielSorteer<T>(xs: T[], prioriteit: (x: T) => number): T[] {
+  return xs.map((x, i) => ({ x, i, p: prioriteit(x) })).sort((a, b) => a.p - b.p || a.i - b.i).map((y) => y.x);
+}
+
+/** Welke accounts hebben al een bruikbare top- en/of basislijnmeting. */
+async function gemetenStand(): Promise<{ paren: number; metTop: Set<string>; alleenTop: Set<string>; alleenBasis: Set<string> }> {
+  const metTop = new Set<string>();
+  const metBasis = new Set<string>();
+  for (let van = 0; ; van += 1000) {
+    const { data, error } = await db()
+      .from('scout_finds')
+      .select('post_url, tracked_account_id, is_basislijn, duur:vingerafdruk->duurS')
+      .not('vingerafdruk->duurS', 'is', null)
+      .range(van, van + 999);
+    if (error) throw new Error(`stand lezen: ${error.message}`);
+    for (const r of data ?? []) {
+      const duur = Number((r as { duur?: unknown }).duur);
+      if (!Number.isFinite(duur) || duur > MAX_SHORTFORM_S) continue;
+      const k = accountSleutel(r.post_url as string | null, r.tracked_account_id as string | null);
+      if (k) (r.is_basislijn ? metBasis : metTop).add(k);
+    }
+    if (!data || data.length < 1000) break;
+  }
+  return {
+    paren: [...metTop].filter((k) => metBasis.has(k)).length,
+    metTop,
+    alleenTop: new Set([...metTop].filter((k) => !metBasis.has(k))),
+    alleenBasis: new Set([...metBasis].filter((k) => !metTop.has(k))),
+  };
+}
+
+/**
+ * Accounts met een gemeten top maar zonder enige basislijnrij (ook geen
+ * ongemeten): die krijgt de scout nooit, bijvoorbeeld omdat de top uit een
+ * zoekterm kwam en het account niet gevolgd wordt. Dan halen we hier zelf
+ * hun recente posts op en bewaren we er twee rond de mediaan, precies zoals
+ * de scout dat doet. Begrensd per run: elk account is één provider-call.
+ */
+async function vulOntbrekendeBasislijn(alleenTop: Set<string>, maxAccounts: number): Promise<number> {
+  if (alleenTop.size === 0 || maxAccounts <= 0) return 0;
+  const supabase = db();
+
+  // Welke van die accounts hebben al ongemeten basislijnrijen? Die hoeven
+  // niet opgehaald te worden: de meetvolgorde pakt ze vanzelf eerst.
+  const { data: open } = await supabase
+    .from('scout_finds')
+    .select('post_url, tracked_account_id')
+    .eq('is_basislijn', true)
+    .is('vingerafdruk', null)
+    .limit(2000);
+  const heeftOpen = new Set((open ?? []).map((r) => accountSleutel(r.post_url as string, r.tracked_account_id as string | null)));
+
+  // Handle, platform en thema per account uit een van zijn tops.
+  const { data: tops } = await supabase
+    .from('scout_finds')
+    .select('post_url, platform, theme, tracked_account_id')
+    .eq('is_basislijn', false)
+    .not('vingerafdruk->duurS', 'is', null)
+    .limit(2000);
+  const doelen = new Map<string, { handle: string; platform: Platform; theme: string | null; accountId: string | null }>();
+  for (const t of tops ?? []) {
+    const k = accountSleutel(t.post_url as string, t.tracked_account_id as string | null);
+    const handle = (t.post_url as string).match(/\/@([^/?#]+)/)?.[1];
+    if (!k || !handle || !alleenTop.has(k) || heeftOpen.has(k) || doelen.has(k)) continue;
+    doelen.set(k, { handle, platform: t.platform as Platform, theme: (t.theme as string | null) ?? null, accountId: (t.tracked_account_id as string | null) ?? null });
+  }
+
+  const provider = getMetricsProvider();
+  const reserve = getFallbackProvider(provider);
+  let bewaard = 0;
+  for (const [k, d] of [...doelen].slice(0, maxAccounts)) {
+    try {
+      let gebruikt: MetricsProvider = provider;
+      let posts;
+      try {
+        posts = await provider.fetchAccountPosts(d.handle, d.platform, 30);
+      } catch (e) {
+        if (!reserve) throw e;
+        gebruikt = reserve;
+        posts = await reserve.fetchAccountPosts(d.handle, d.platform, 30);
+      }
+      await logProviderUsage(gebruikt.name, 'fetch_account_posts', 1, gebruikt.costPerCallEur).catch(() => undefined);
+      const meting = meetAccount(posts);
+      if (!meting) {
+        console.log(`  basislijn @${d.handle}: te weinig posts of mediaan buiten bereik — overgeslagen`);
+        continue;
+      }
+      const rijen = kiesBasislijn(meting.recent, meting.mediaan).map((p) => ({
+        tracked_account_id: d.accountId,
+        handle: d.handle,
+        platform: d.platform,
+        post_url: p.post_url,
+        posted_at: p.posted_at,
+        views: p.views,
+        likes: p.likes,
+        comments: p.comments,
+        outlier_score: Math.round((p.views! / meting.mediaan) * 100) / 100,
+        gevonden_via: `basislijn:@${d.handle}`,
+        theme: d.theme,
+        caption: p.caption,
+        is_basislijn: true,
+      }));
+      if (rijen.length === 0) continue;
+      const { error } = await supabase.from('scout_finds').upsert(rijen, { onConflict: 'post_url', ignoreDuplicates: true });
+      if (error) throw new Error(error.message);
+      bewaard += rijen.length;
+      console.log(`  basislijn @${d.handle} (${k}): ${rijen.length} gewone post(s) rond mediaan ${Math.round(meting.mediaan)}`);
+    } catch (e) {
+      console.log(`  basislijn @${d.handle}: ${(e as Error).message.slice(0, 160)}`);
+    }
+  }
+  return bewaard;
 }

@@ -2,7 +2,8 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { roepApiAan } from './api-aanroep';
 
 /**
  * De navigatie hoort niet op de inlogschermen: daar is nog niemand
@@ -14,6 +15,7 @@ const VERBORGEN_OP = ['/toegang', '/login', '/register', '/auth', '/privacy', '/
 
 const NAV = [
   { href: '/', label: 'Dashboard' },
+  { href: '/beoordelen', label: 'Beoordelen' },
   { href: '/videos', label: "Video's" },
   { href: '/opdrachten', label: 'Opdrachten' },
   { href: '/outliers', label: 'Outliers' },
@@ -25,7 +27,9 @@ const NAV = [
 
 export function Nav() {
   const pathname = usePathname();
-  if (VERBORGEN_OP.some((p) => pathname?.startsWith(p))) return null;
+  const verborgen = VERBORGEN_OP.some((p) => pathname?.startsWith(p));
+  const teBeoordelen = useTeBeoordelen(verborgen ? null : pathname);
+  if (verborgen) return null;
 
   return (
     <header className="border-b border-neutral-800">
@@ -34,12 +38,35 @@ export function Nav() {
         {NAV.map((item) => (
           <Link key={item.href} href={item.href} className="text-sm text-neutral-400 hover:text-neutral-100">
             {item.label}
+            {item.href === '/beoordelen' && teBeoordelen !== null && (
+              <span className={teBeoordelen > 0 ? 'text-amber-300' : ''}> ({teBeoordelen})</span>
+            )}
           </Link>
         ))}
         <UitlogKnop />
       </nav>
     </header>
   );
+}
+
+/**
+ * Aantal renders dat nog op een oordeel wacht, ververst bij elke paginawissel
+ * (na een ronde beoordelen klopt het getal dan meteen). Faalt het, dan geen
+ * getal in plaats van een verkeerd getal.
+ */
+function useTeBeoordelen(pathname: string | null): number | null {
+  const [aantal, setAantal] = useState<number | null>(null);
+  useEffect(() => {
+    if (!pathname) return;
+    let weg = false;
+    void roepApiAan<{ totaal?: number }>('/api/beoordelen?alleen_aantal=1').then(({ ok, json }) => {
+      if (!weg) setAantal(ok && typeof json.totaal === 'number' ? json.totaal : null);
+    });
+    return () => {
+      weg = true;
+    };
+  }, [pathname]);
+  return aantal;
 }
 
 /**

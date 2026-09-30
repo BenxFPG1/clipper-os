@@ -499,3 +499,125 @@ export async function startRenderCloudRun(): Promise<boolean> {
     return false;
   }
 }
+
+/* ------------------------------------------------------- beoordeel-wachtrij */
+
+export type WachtrijItem = {
+  render_job_id: string;
+  bestand_naam: string;
+  pad: string;
+  hook_variant: number;
+  hook_tekst: string | null;
+  /** Titel van de clip uit het plan, anders afgeleid uit de bestandsnaam. */
+  titel: string;
+  /** Titel van de renderopdracht (bv. "AUDIT …" of "EVAL …"), als die er is. */
+  job_titel: string | null;
+  video_titel: string | null;
+  campagne: string | null;
+  clip: number | null;
+  keuring_status: string | null;
+  keuring_fouten: string[];
+  klaar_at: string | null;
+};
+
+/**
+ * De renders die nog op een oordeel wachten, nieuwste eerst. Alleen het
+ * hoofdbestand (de hookvarianten delen de montage; die komen er alleen bij met
+ * `hookvarianten: true`). Renders met een titel als "AUDIT …" blijven er
+ * bewust in: dat zijn juist de testclips waar een oordeel het meest zegt.
+ * Een mislukte of lopende render heeft niets om te bekijken en valt weg.
+ */
+export async function beoordeelWachtrij(opties: { hookvarianten?: boolean; limiet?: number; ouder?: boolean } = {}): Promise<{
+  items: WachtrijItem[];
+  totaal: number;
+}> {
+  const supabase = db();
+  const [{ data: jobs, error }, { data: oordelen, error: oordeelFout }] = await Promise.all([
+    supabase
+      .from('render_jobs')
+      .select('id, video_id, clip_index, titel, bestanden, created_at, gestart_at, klaar_at')
+      .eq('status', 'klaar')
+      // Standaard alleen de laatste drie weken: oudere renders komen uit een
+      // pipeline die er niet meer is (geen ondertitels, geen retentie, andere
+      // kadrering). Een oordeel daarover leert het systeem vooral iets over
+      // code die al vervangen is. Met `ouder` komt alles mee.
+      .gte('klaar_at', opties.ouder ? '1970-01-01T00:00:00Z' : new Date(Date.now() - 21 * 864e5).toISOString())
+      .order('klaar_at', { ascending: false, nullsFirst: false })
+      .order('created_at', { ascending: false })
+      .limit(500),
+    supabase.from('render_beoordelingen').select('render_job_id, bestand_naam'),
+  ]);
+  if (error) throw new Error(error.message);
+  if (oordeelFout) throw new Error(oordeelFout.message);
+  const beoordeeld = new Set((oordelen ?? []).map((o) => `${o.render_job_id}|${o.bestand_naam}`));
+
+  type Kandidaat = { job: RenderJobRij; bestand: RenderBestand };
+  const kandidaten: Kandidaat[] = [];
+  // Alleen de nieuwste render per clip: een clip die vijf keer opnieuw is
+  // gerenderd (testrondes, fixes) hoort één keer beoordeeld te worden, op de
+  // versie die er nu staat. Oudere versies leren vooral iets over al
+  // verbeterde code. Is de nieuwste al beoordeeld, dan valt de clip weg.
+  const gezienClip = new Set<string>();
+  for (const job of (jobs ?? []) as RenderJobRij[]) {
+    const clipSleutel = `${job.video_id}|${job.clip_index ?? 'alle'}`;
+    if (job.clip_index !== null && job.clip_index !== undefined) {
+      if (gezienClip.has(clipSleutel)) continue;
+      gezienClip.add(clipSleutel);
+    }
+    for (const b of job.bestanden ?? []) {
+      if (!b.pad || beoordeeld.has(`${job.id}|${b.naam}`)) continue;
+      if (!opties.hookvarianten && hookVariantVan(b) !== 1) continue;
+      kandidaten.push({ job, bestand: b });
+    }
+  }
+  const totaal = kandidaten.length;
+  const deel = kandidaten.slice(0, opties.limiet ?? 50);
+
+  // Video, campagne en plan in bulk voor alleen dit deel.
+  const videoIds = [...new Set(deel.map((k) => k.job.video_id).filter((v): v is string => Boolean(v)))];
+  const [{ data: videos }, { data: plannen }] = videoIds.length
+    ? await Promise.all([
+        supabase.from('videos').select('id, title, campaigns(name)').in('id', videoIds),
+        supabase.from('clip_plans').select('id, video_id, plan, created_at').in('video_id', videoIds).order('created_at', { ascending: false }),
+      ])
+    : [{ data: [] }, { data: [] }];
+  const videoPer = new Map((videos ?? []).map((v) => [v.id as string, v]));
+
+  const items = deel.map(({ job, bestand }) => {
+    const video = job.video_id ? videoPer.get(job.video_id) : undefined;
+    const moment = job.gestart_at ?? job.created_at;
+    const vanVideo = (plannen ?? []).filter((p) => p.video_id === job.video_id);
+    // Zelfde keuze als planVoorRender: het nieuwste plan van vóór de start.
+    const plan = vanVideo.find((p) => (p.created_at as string) <= moment) ?? vanVideo[0];
+    const nummer = clipNummerUitNaam(bestand.naam, job.clip_index);
+    const variant = hookVariantVan(bestand);
+    const info = planInfo(plan?.plan as PlanRuw | undefined, nummer, variant);
+    const regels = bestand.keuring?.regels ?? [];
+    return {
+      render_job_id: job.id,
+      bestand_naam: bestand.naam,
+      pad: bestand.pad,
+      hook_variant: variant,
+      hook_tekst: bestand.hook_tekst ?? null,
+      titel: info.titel ?? titelUitNaam(bestand.naam),
+      job_titel: job.titel,
+      video_titel: (video?.title as string | undefined) ?? null,
+      campagne: one<{ name: string }>(video?.campaigns as { name: string } | { name: string }[] | null)?.name ?? null,
+      clip: nummer,
+      keuring_status:
+        bestand.keuring?.status ?? (bestand.keuring ? (bestand.keuring.goed === false ? 'review_nodig' : 'goed') : null),
+      keuring_fouten: regels.filter((r) => r.goed === false).map((r) => `${r.naam}: ${r.detail}`),
+      klaar_at: job.klaar_at,
+    };
+  });
+  return { items, totaal };
+}
+
+/** "02-137-waterstofprojecten-hook2.mp4" → "137 waterstofprojecten". */
+function titelUitNaam(naam: string): string {
+  return naam
+    .replace(/\.mp4$/i, '')
+    .replace(/-hook\d+$/i, '')
+    .replace(/^\d{1,3}-/, '')
+    .replace(/-/g, ' ');
+}
