@@ -21,7 +21,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { resolveBinary } from '../src/lib/ingest/binaries';
-import { brandHookVarianten, brandOverlays, fpsVoorRender, maakRuweMontage, pasNaadZoomToe, probeBron, type Shot } from '../src/lib/roughcut';
+import { brandHookVarianten, brandOverlays, controleerDecode, telFrames, fpsVoorRender, maakRuweMontage, pasNaadZoomToe, probeBron, type Shot } from '../src/lib/roughcut';
 import { effectKeten } from '../src/lib/roughcut/kader';
 import { bouwAss, groepeerRegels, heeftAssFilter, maakOndertitels, woordenOpTijdlijn } from '../src/lib/roughcut/ondertitels';
 import { tekenHookKaart, hookDuur } from '../src/lib/roughcut/tekstkaarten';
@@ -228,6 +228,31 @@ async function main() {
       const pb = pcm(basis);
       toets('geluid bit-identiek aan de basis (geen klik op de naad)', pa.length === pb.length && pa.equals(pb), `${pa.length} vs ${pb.length}`);
       toets('sneller dan de oude manier', nieuwMs < oudMs, `${nieuwMs} vs ${oudMs} ms`);
+      toets('decode-controle: beide varianten goed, niets teruggevallen', r.teruggevallen.length === 0, JSON.stringify(r.teruggevallen));
+      const cA = await controleerDecode(uitA, await telFrames(basis));
+      toets('controleerDecode: variant decodeert foutloos met het frameaantal van de basis', cA.goed && cA.frames === nb, `${cA.reden} (${cA.frames})`);
+
+      // Veiligheidsnet: een staart met een andere maxrate/bufsize (zoals
+      // wanneer die van de stuklengte zou afhangen) onder de header van de
+      // kop. ffmpeg zelf decodeert dat vaak nog; de SPS/PPS-vergelijking
+      // vangt het vóór de concat.
+      const uitC = join(map, 'var-c.mp4');
+      const rc = await brandHookVarianten(basis, [{ hookPad, eind: 2.4, uitPad: uitC }], {
+        duur: 10.8,
+        werkmap: map,
+        maxBytes: 50 * 1024 * 1024,
+        staartEncode: ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '17', '-profile:v', 'high', '-pix_fmt', 'yuv420p', '-maxrate', '900000', '-bufsize', '1800000'],
+      });
+      toets('staart met andere maxrate: gevangen en volledig opnieuw ge-encodeerd', rc.teruggevallen.length === 1 && /SPS\/PPS/.test(rc.teruggevallen[0].reden), JSON.stringify(rc.teruggevallen));
+      const cC = await controleerDecode(uitC, nb);
+      toets('na de terugval decodeert de variant foutloos', cC.goed, cC.reden);
+      // Een afgekapt bestand (zoals een halve download) wordt ook gezien.
+      const { readFile: lees, writeFile: schrijf } = await import('node:fs/promises');
+      const heel = await lees(uitA);
+      const kapot = join(map, 'afgekapt.mp4');
+      await schrijf(kapot, heel.subarray(0, Math.floor(heel.length * 0.7)));
+      const cK = await controleerDecode(kapot, nb);
+      toets('afgekapt bestand: decode-controle keurt af', !cK.goed, cK.reden);
     }
 
     // 4. Retentie-render: dezelfde bron, één lang shot met twee lange pauzes.

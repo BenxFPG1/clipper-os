@@ -40,6 +40,7 @@ import { zorgVoorMuziekbed } from '../src/lib/muziek';
 import { afwerkingAan, afwerkingOverzicht, type AfwerkingOnderdeel } from '../src/lib/roughcut/afwerking';
 import { kleurCorrectie, meetKleur } from '../src/lib/roughcut/kleur';
 import { planJL, planSfx, zetHit } from '../src/lib/roughcut/sounddesign';
+import { actieveSprekers, meetSprekers, pasSprekersToe, spraakEnergie, type SprekerMeting } from '../src/lib/roughcut/sprekers';
 import { analyseerBeats, beatsOpTijdlijn, kiesTrack, knipOpBeat, BEAT_MIN_ZEKERHEID } from '../src/lib/roughcut/muziektracks';
 
 import { kiesHuisstijl } from '../src/lib/agents/huisstijl';
@@ -170,7 +171,7 @@ async function verwerk(job: Job) {
 
   const { data: videoRij } = await supabase
     .from('videos')
-    .select('transcript, stiltes, character_map')
+    .select('transcript, transcript_source, stiltes, character_map')
     .eq('id', job.video_id)
     .single();
 
@@ -265,9 +266,24 @@ async function verwerk(job: Job) {
   // De brontranscriptie is de enige waarheid voor knipgrenzen. Eenmalig per
   // video, daarna uit de cache. Al vóór de edit-agent: die krijgt per clip
   // de retentiecurve mee, en die is op woordtijden gemeten.
+  // Alleen de bereiken van de clips in deze opdracht (plus marge), elk apart
+  // gecachet; mislukt een bereik, dan grove woordtijden uit het transcript.
   const bronWoorden = await haalBronWoorden(job.video_id, bronPad, {
     log: (m) => console.log(`  ${m}`),
+    bereiken: teDoen.flatMap((x) => x.clip.shots ?? []),
+    transcript: (videoRij?.transcript as import('../src/lib/roughcut/woorden').TranscriptSegmentTijd[] | null) ?? null,
   });
+  // De captions van de video (YouTube of handmatig) voor een reeks
+  // brontijden: extra context voor de ondertitelcorrectie. Een eigen
+  // Whisper-transcript voegt niets toe en blijft weg.
+  const captionsVoor = (segs: { start: number; end: number }[]): string | null => {
+    if (!videoRij?.transcript || (videoRij as { transcript_source?: string | null }).transcript_source === 'whisper') return null;
+    const regels = (videoRij.transcript as import('../src/lib/roughcut/woorden').TranscriptSegmentTijd[])
+      .filter((t) => segs.some((sg) => t.end_seconds > sg.start - 1 && t.start_seconds < sg.end + 1))
+      .map((t) => t.text.trim())
+      .filter(Boolean);
+    return regels.length ? regels.join(' ') : null;
+  };
   // Lengte van de bron: voor de eindschermcontrole (laatste halve minuut).
   const bronLengte = bronDuur(bronPad);
 
@@ -295,15 +311,20 @@ async function verwerk(job: Job) {
   // zien" op 180 tekens tekst — en zijn focus-keuze werd daarna toch door de
   // meting overschreven.
   let editPlan = (plan.edit_beslissingen as Awaited<ReturnType<typeof runEditAgent>> | null) ?? null;
-  if (!editPlan) {
+  // Alleen de clips van deze opdracht: bij een lange video met veel clips
+  // werd de invoer anders onnodig groot (en de meting onnodig lang).
+  const opdrachtClips = teDoen.map((x) => x.nummer);
+  const ontbreekt = opdrachtClips.filter((n) => !editPlan?.clips.some((c) => c.clip_nummer === n));
+  if (ontbreekt.length > 0) {
     try {
-      console.log('  gezichtsmeting voor de edit-agent…');
-      const meetdata = await meetPlanShots(bronPad, clips);
+      console.log(`  gezichtsmeting voor de edit-agent (clip ${ontbreekt.join(', ')})…`);
+      const meetdata = await meetPlanShots(bronPad, clips.map((c, i) => (ontbreekt.includes(i + 1) ? c : { shots: [] })));
       // Per clip een voorlopige risicocurve op de planshots: de agent moet
       // weten wáár de kijker afhaakt om zijn ingrepen daar te leggen.
       const retentie: Record<number, string> = {};
       if (doelen && bronWoorden) {
         clips.forEach((c, i) => {
+          if (!ontbreekt.includes(i + 1)) return;
           const hook = c.hook?.tekst_overlay;
           const shots = [...c.shots].sort((a, b) => a.volgorde - b.volgorde).map((sh) => ({ ...sh }));
           retentie[i + 1] = samenvatVoorEditAgent(
@@ -321,11 +342,12 @@ async function verwerk(job: Job) {
         meetdata,
         retentie,
         normContext,
+        clipNummers: ontbreekt,
         onVoortgang: (m) => console.log(`  ${m}`),
       });
       console.log(`  montagebeslissingen voor ${editPlan.clips.length} clip(s)`);
     } catch (e) {
-      console.log(`  edit-agent niet beschikbaar (${(e as Error).message.slice(0, 80)}); standaardregels`);
+      console.log(`  edit-agent niet beschikbaar (${(e as Error).message.slice(0, 240)}); standaardregels`);
     }
   }
   const bekendeSlugs = bekendeEffectSlugs();
@@ -607,6 +629,11 @@ async function verwerk(job: Job) {
 
     // Gezichtsfocus per segment (alleen waar het script geen focus opgeeft).
     await vulGezichtsFocus(bronPad, segmenten);
+
+    // Actieve spreker (sprekers.ts): bij meerdere mensen in beeld of een bron
+    // die zelf tussen camera's knipt, volgt het kader wie er praat — per
+    // camerastandpunt, met een knip op de bronknip of op een woordgrens.
+    await pasActieveSprekerToe(bronPad, segmenten, bronWoorden);
 
     // Beweegt de spreker binnen een shot, of neemt de ander halverwege het
     // woord over? Dan de uitsnede laten meelopen in plaats van uitzoomen.
@@ -1097,6 +1124,7 @@ async function verwerk(job: Job) {
             namen,
             verhaallijn: [clip.verhaallijn?.belofte, clip.verhaallijn?.payoff].filter(Boolean).join(' — ') || null,
             fragmenten: clip.shots.map((sh) => (sh as { transcript_fragment?: string }).transcript_fragment ?? '').filter(Boolean),
+            captions: captionsVoor(segmenten),
           },
         );
         const samen = [...v.woorden];
@@ -1105,7 +1133,7 @@ async function verwerk(job: Job) {
         console.log(
           c.fout
             ? `     ondertitels: correctiepas mislukt (${c.fout}); ongecorrigeerd`
-            : `     ondertitels: ${c.toegepast.length} woord(en) gecorrigeerd${c.toegepast.length ? ` (${c.toegepast.map((t) => `${t.van}→${t.naar}`).join(', ')})` : ''}`,
+            : `     ondertitels: ${c.toegepast.length} woord(en) gecorrigeerd${captionsVoor(segmenten) ? ' (captions van de video als context)' : ''}${c.toegepast.length ? ` (${c.toegepast.map((t) => `${t.van}→${t.naar}`).join(', ')})` : ''}`,
         );
       } catch (e) {
         console.log(`     ondertitelwoorden: verfijnen overgeslagen (${(e as Error).message.slice(0, 80)}); 'small'-woorden`);
@@ -1602,7 +1630,12 @@ async function verwerk(job: Job) {
             werkmap,
           });
           for (const p of plan) varianten.push(p.i === 0 ? { pad: p.uitPad, naam: p.uitNaam } : { pad: p.uitPad, naam: p.uitNaam, hook_variant: p.i + 1, hook_tekst: p.tekst });
-          console.log(`     hookvarianten: ${r.manier === 'concat' ? `kop tot ${r.kopTot.toFixed(2)} s opnieuw, staart gedeeld (stream-copy)` : 'volledig per variant (korte clip)'}`);
+          console.log(
+            `     hookvarianten: ${r.manier === 'concat' ? `kop tot ${r.kopTot.toFixed(2)} s opnieuw, staart gedeeld (stream-copy), decode-controle ${plan.length - r.teruggevallen.length}/${plan.length} goed` : 'volledig per variant (korte clip)'}`,
+          );
+          for (const t of r.teruggevallen) {
+            console.log(`     ⚠ hookvariant ${t.uitPad.split('/').pop()} kapot na stream-copy (${t.reden}); volledig opnieuw ge-encodeerd`);
+          }
           klaar = true;
         } catch (e) {
           console.log(`     hookvarianten via kop+staart mislukt (${(e as Error).message.slice(0, 80)}); per variant volledig`);
@@ -2178,7 +2211,7 @@ async function meetSpoor(bronPad: string, segmenten: Shot[]): Promise<number> {
   // meetkundige toets laat zien dat een vást kader het niet kan: een spreker
   // die tijdens zijn shot beweegt staat dan tot 36% uit het midden.
   if (process.env.FACE_TRACKING === '0') return 0;
-  const teVolgen = segmenten.filter((s) => s.end - s.start >= 2.5 && !s.focus);
+  const teVolgen = segmenten.filter((s) => s.end - s.start >= 2.5 && !s.focus && !s.sprekerBepaald);
   if (teVolgen.length === 0) return 0;
 
   // Elke 0,35 seconde. Tussen twee meetpunten wordt lineair geïnterpoleerd,
@@ -2335,6 +2368,56 @@ async function meetSpoor(bronPad: string, segmenten: Shot[]): Promise<number> {
 }
 
 /**
+ * Actieve-sprekerdetectie voor alle shots van een clip (sprekers.ts). Alleen
+ * shots waar het ertoe doet — meer dan één gezicht in een standpunt, of een
+ * bron die binnen het shot van camera wisselt — krijgen het nieuwe kader;
+ * een solo talking head blijft bij de bestaande, uitgebreid getoetste
+ * meting. Splitst shots (in `segmenten`) op camera- en sprekerwissels.
+ */
+async function pasActieveSprekerToe(bronPad: string, segmenten: Shot[], woorden: import('../src/lib/roughcut/woorden').BronWoord[] | null): Promise<void> {
+  if (process.env.SPREKERDETECTIE === '0') return;
+  const kandidaten = segmenten.filter((s) => s.end - s.start >= 1 && !s.focus && !s.sprekerBepaald);
+  if (kandidaten.length === 0) return;
+  let metingen: SprekerMeting[];
+  try {
+    metingen = await meetSprekers(bronPad, kandidaten.map((s) => ({ van: s.start, tot: s.end })), pythonMetOpenCV());
+  } catch (e) {
+    console.log(`     sprekers: meting mislukt (${(e as Error).message.slice(0, 120)}); oude gezichtsmeting`);
+    return;
+  }
+  if (metingen.length !== kandidaten.length) {
+    console.log(`     sprekers: meting onvolledig (${metingen.length}/${kandidaten.length}); oude gezichtsmeting`);
+    return;
+  }
+  let gezichtenMax = 0;
+  const wisselTijden: string[] = [];
+  let toegepast = 0;
+  for (const [i, seg] of kandidaten.entries()) {
+    const m = metingen[i];
+    const perScene = new Map<number, number>();
+    for (const p of m.personen) perScene.set(p.scene, (perScene.get(p.scene) ?? 0) + 1);
+    gezichtenMax = Math.max(gezichtenMax, ...perScene.values(), 0);
+    const meerdere = [...perScene.values()].some((n) => n >= 2);
+    if (!meerdere && m.knippen.length === 0) continue;
+    const spraak = await spraakEnergie(bronPad, m.van, m.tot, m.stap).catch(() => [] as number[]);
+    const stukken = actieveSprekers(m, spraak, { woorden });
+    const r = pasSprekersToe(seg, stukken, woorden);
+    const plek = segmenten.indexOf(seg);
+    segmenten.splice(plek, 1, ...r.delen);
+    toegepast++;
+    for (const w of r.wissels) wisselTijden.push(`${w.t.toFixed(1)} s ${w.soort}`);
+  }
+  if (toegepast === 0) {
+    if (gezichtenMax > 0) console.log(`     sprekers: ${gezichtenMax} gezicht(en) per standpunt, geen bronknippen — oude gezichtsmeting`);
+    return;
+  }
+  console.log(
+    `     sprekers: ${gezichtenMax} gezichten (max per standpunt), actieve spreker wisselt ${wisselTijden.length}× ` +
+      `${wisselTijden.length ? `(op ${wisselTijden.slice(0, 12).join(', ')}${wisselTijden.length > 12 ? ', …' : ''})` : ''}; ${toegepast} shot(s) op de actieve spreker gekadreerd`,
+  );
+}
+
+/**
  * Meet per segment waar de spreker staat en zet dat als focusX,
  * zodat de verticale uitsnede de spreker volgt in plaats van blind het midden
  * te pakken. Draait via OpenCV (python); ontbreekt dat, dan blijft het midden.
@@ -2342,7 +2425,9 @@ async function meetSpoor(bronPad: string, segmenten: Shot[]): Promise<number> {
 async function vulGezichtsFocus(bronPad: string, segmenten: Shot[]): Promise<void> {
   // Alle segmenten meten, ook die waar het plan al een focus opgaf: de meting
   // is betrouwbaarder dan de gok van een agent die de beelden niet ziet.
-  const zonderScriptFocus = segmenten;
+  // Behalve waar de actieve-sprekerdetectie het kader al bepaalde: die weet
+  // wie er praat, deze meting kiest de mond die toevallig het meest bewoog.
+  const zonderScriptFocus = segmenten.filter((s) => !s.sprekerBepaald);
   if (zonderScriptFocus.length === 0) return;
 
   // Drie momenten per shot in plaats van alleen het midden. Een shot van tien

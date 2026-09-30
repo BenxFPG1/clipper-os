@@ -204,6 +204,12 @@ export type CorrectieContext = {
   namen?: string[];
   verhaallijn?: string | null;
   fragmenten?: string[];
+  /**
+   * De YouTube-captions (of een handmatig transcript) van hetzelfde bereik:
+   * vaak geschreven door de maker zelf, en dan kennen ze de namen en de
+   * straattaal die Whisper verhaspelt ("Skaard-japtom").
+   */
+  captions?: string | null;
 };
 
 const kaal = (w: string) => w.replace(/[.,!?;:"'“”„()]+$/g, '').replace(/^["'“„(]+/, '');
@@ -266,7 +272,7 @@ export async function corrigeerWoorden(
   if (woorden.length === 0) return { woorden, toegepast: [] };
   const system = `Je controleert automatische ondertitels (spraakherkenning, Nederlands) op herkenningsfouten. Je krijgt de woorden genummerd, plus context over de video.
 
-Corrigeer ALLEEN duidelijke herkenningsfouten: een woord dat zo niet gezegd kan zijn en waarvan uit de context vaststaat wat het wel was ("enimetaal" → "edelmetaal", een verkeerd geschreven eigennaam die in de context staat). Eén woord voor één woord.
+Corrigeer ALLEEN duidelijke herkenningsfouten: een woord dat zo niet gezegd kan zijn en waarvan uit de context vaststaat wat het wel was ("enimetaal" → "edelmetaal", een verkeerd geschreven eigennaam die in de context staat). Eén woord voor één woord. Staan er ondertitels van de video zelf bij, dan zijn die leidend voor de spelling van namen, bijnamen en straattaal.
 
 Niet doen: herschrijven, stijl of grammatica verbeteren, woorden toevoegen of weglaten, spreektaal netjes maken, getallen veranderen. Twijfel je, dan laat je het staan. Geen fout gevonden: een lege lijst.`;
   const regels = [
@@ -275,6 +281,7 @@ Niet doen: herschrijven, stijl of grammatica verbeteren, woorden toevoegen of we
     context.namen?.length ? `Namen in de video: ${context.namen.join(', ')}` : null,
     context.verhaallijn ? `Waar de clip over gaat: ${context.verhaallijn}` : null,
     context.fragmenten?.length ? `Scriptfragmenten (bedoelde tekst, kan afwijken):\n${context.fragmenten.map((f) => `- ${f}`).join('\n')}` : null,
+    context.captions ? `Ondertitels van de video zelf voor dit stuk (YouTube/maker; spelling van namen en straattaal is hier meestal juist, tijden niet):\n${context.captions.slice(0, 4000)}` : null,
   ].filter(Boolean);
   const user = `${regels.join('\n')}
 

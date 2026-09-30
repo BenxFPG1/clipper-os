@@ -91,6 +91,27 @@ const STANDAARD = {
    * past, houdt de 'small'-woorden.
    */
   ONDERTITEL_MODEL_BUDGET: 150,
+  /**
+   * Brontranscriptie per bereik (woorden.ts): marge (s) rond de shots van de
+   * opdracht, en de time-out als veelvoud van de audioduur (minimaal 120 s).
+   */
+  BRON_BEREIK_MARGE: 20,
+  /**
+   * Actieve-sprekerdetectie (sprekers.ts): meetstap (s), beslisvenster (s),
+   * hoe lang een spreker minstens in beeld blijft (hysterese, s), kortste
+   * deel bij een sprekerwissel en bij een camerawissel (s), hoe ver een
+   * sprekerwissel naar een woordgrens mag schuiven (s), de duur van een
+   * snelle pan (s) en de maximale breedte van een tweeshot (fractie).
+   */
+  SPREKER_STAP: 0.1,
+  SPREKER_VENSTER: 0.5,
+  SPREKER_MIN_VAST: 1.2,
+  SPREKER_MIN_DEEL: 0.6,
+  SPREKER_MIN_STANDPUNT: 0.25,
+  SPREKER_WOORDGRENS_MARGE: 0.4,
+  SPREKER_PAN_DUUR: 0.3,
+  SPREKER_TWEESHOT_MAX: 0.3,
+  BRON_TRANSCRIPTIE_TIJDFACTOR: 3,
   ONDERTITEL_RAND: 7,
   ONDERTITEL_SCHADUW: 3,
   /** Maximale regelbreedte in px; een langere regel wordt smaller geschaald in plaats van afgebroken. */

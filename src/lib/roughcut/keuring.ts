@@ -166,7 +166,7 @@ export async function keurGezicht(
 ): Promise<KeuringRegel> {
   const segmenten = opties.segmenten ?? [];
   if (!opties.bronPad || segmenten.length === 0) {
-    return { naam: 'spreker gecentreerd', goed: null, detail: 'geen bron of segmenten; niet te toetsen' };
+    return { naam: 'actieve spreker in beeld', goed: null, detail: 'geen bron of segmenten; niet te toetsen' };
   }
   const py = opties.python ?? { cmd: 'python3', voor: [] };
 
@@ -177,7 +177,7 @@ export async function keurGezicht(
     for (let t = seg.start + 0.15; t < seg.end - 0.1; t += 1.5) punten.push({ seg, t });
   }
   if (punten.length === 0) {
-    return { naam: 'spreker gecentreerd', goed: null, detail: 'te kort om te toetsen' };
+    return { naam: 'actieve spreker in beeld', goed: null, detail: 'te kort om te toetsen' };
   }
 
   const res = spawnSync(
@@ -185,7 +185,8 @@ export async function keurGezicht(
     [...py.voor, 'scripts/gezichten.py', opties.bronPad, JSON.stringify(punten.map((p) => p.t)), '3'],
     { encoding: 'utf8', maxBuffer: 20_000_000 },
   );
-  let metingen: ({ x: number; breedte: number; top: number; hoogte: number } | null)[] = [];
+  type Vak = { x: number; breedte: number; top: number; hoogte: number };
+  let metingen: (Vak & { gezichten?: Vak[] } | null)[] = [];
   try {
     // OpenCV schrijft soms zelf naar stdout; pak de laatste regel die JSON is.
     const regel = (res.stdout ?? '')
@@ -195,11 +196,11 @@ export async function keurGezicht(
       .find((r) => r.startsWith('['));
     metingen = JSON.parse(regel || '[]');
   } catch {
-    return { naam: 'spreker gecentreerd', goed: null, detail: 'meting mislukt; niet te toetsen' };
+    return { naam: 'actieve spreker in beeld', goed: null, detail: 'meting mislukt; niet te toetsen' };
   }
   if (metingen.length !== punten.length) {
     return {
-      naam: 'spreker gecentreerd',
+      naam: 'actieve spreker in beeld',
       goed: null,
       detail: `meting onvolledig (${metingen.length}/${punten.length}); niet te toetsen — draait OpenCV op deze machine?`,
     };
@@ -225,19 +226,37 @@ export async function keurGezicht(
     if (eigen.length) medianen.set(seg.volgorde, eigen[Math.floor(eigen.length / 2)]);
   }
 
-  for (const [i, m] of metingen.entries()) {
-    if (!m) {
+  for (const [i, m0] of metingen.entries()) {
+    if (!m0) {
       zonderGezicht++;
       continue;
     }
     const { seg: sg0 } = punten[i];
-    const mediaan = medianen.get(sg0.volgorde);
-    if (mediaan !== undefined && Math.abs(m.x - mediaan) > ANDERE_PERSOON) {
-      // Vermoedelijk de gesprekspartner. Niet stil overslaan: als dit vaak
-      // gebeurt volgt de detectie de verkeerde persoon, en dan is een groen
-      // oordeel over de rest niets waard.
-      genegeerd++;
-      continue;
+    let m: Vak = m0;
+    // Actieve spreker (sprekers.ts): niet de mond die op deze drie frames
+    // toevallig bewoog, maar het gezicht op de plek waar de montage de
+    // spreker verwacht. Staat daar niemand, dan kadert de montage een muur,
+    // een hand of de verkeerde persoon — en dat is precies de fout.
+    if (sg0.sprekerBepaald && m0.gezichten?.length) {
+      const verwacht = sg0.spoor?.length
+        ? sg0.spoor.reduce((a, b) => (Math.abs(b.t - punten[i].t) < Math.abs(a.t - punten[i].t) ? b : a)).x
+        : (sg0.focusX ?? 0.5);
+      const naast = m0.gezichten.reduce((a, b) => (Math.abs(b.x - verwacht) < Math.abs(a.x - verwacht) ? b : a));
+      if (Math.abs(naast.x - verwacht) > ANDERE_PERSOON) {
+        fouten.push(`${punten[i].t.toFixed(1)}s: actieve spreker niet in beeld (kader op ${verwacht.toFixed(2)}, dichtstbijzijnde gezicht ${naast.x.toFixed(2)})`);
+        getoetst++;
+        continue;
+      }
+      m = naast;
+    } else {
+      const mediaan = medianen.get(sg0.volgorde);
+      if (mediaan !== undefined && Math.abs(m.x - mediaan) > ANDERE_PERSOON) {
+        // Vermoedelijk de gesprekspartner. Niet stil overslaan: als dit vaak
+        // gebeurt volgt de detectie de verkeerde persoon, en dan is een groen
+        // oordeel over de rest niets waard.
+        genegeerd++;
+        continue;
+      }
     }
     getoetst++;
     const { seg, t } = punten[i];
@@ -277,7 +296,7 @@ export async function keurGezicht(
   const gemeten = getoetst + genegeerd;
   if (gemeten === 0) {
     return {
-      naam: 'spreker gecentreerd',
+      naam: 'actieve spreker in beeld',
       goed: null,
       detail: `geen gezicht gevonden op ${zonderGezicht} meetmomenten; niet te toetsen`,
     };
@@ -296,7 +315,7 @@ export async function keurGezicht(
   }
 
   return {
-    naam: 'spreker gecentreerd',
+    naam: 'actieve spreker in beeld',
     goed: fouten.length === 0,
     detail:
       fouten.length === 0

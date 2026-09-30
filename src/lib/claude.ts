@@ -1,4 +1,7 @@
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import Anthropic from '@anthropic-ai/sdk';
 import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
@@ -276,6 +279,55 @@ async function runClaudeCli(
   throw lastErr!;
 }
 
+/**
+ * Grens waarboven de systeemprompt niet meer als argument meegaat. Linux
+ * staat per argument hoogstens 128 KB toe (MAX_ARG_STRLEN), ongeacht
+ * ARG_MAX: een lange video gaf daarom "spawn E2BIG" en de edit-agent viel
+ * terug op standaardregels. Ruim eronder blijven.
+ */
+export const SYSTEEM_ARG_MAX = 64 * 1024;
+
+let kentSysteemBestand: boolean | null = null;
+/** Heeft deze CLI `--system-prompt-file`? Eén keer per proces nagevraagd. */
+function cliKentSysteemBestand(bin: string): boolean {
+  if (kentSysteemBestand === null) {
+    try {
+      const r = spawnSync(bin, ['--help'], { encoding: 'utf8', timeout: 20_000 });
+      kentSysteemBestand = /--system-prompt-file|--system-prompt\[-file\]/.test(`${r.stdout ?? ''}${r.stderr ?? ''}`);
+    } catch {
+      kentSysteemBestand = false;
+    }
+  }
+  return kentSysteemBestand;
+}
+
+/**
+ * Hoe de systeemprompt de CLI bereikt: klein als argument (ongewijzigd), groot
+ * via een tijdelijk bestand (`--system-prompt-file`), en als de CLI die optie
+ * niet kent bovenaan de stdin-prompt met een duidelijke scheiding. Nooit meer
+ * een argument boven SYSTEEM_ARG_MAX.
+ */
+export function systeemPromptVoorCli(
+  system: string,
+  prompt: string,
+  opties: { kentBestand: boolean; map?: string },
+): { args: string[]; prompt: string; opruimen: () => void } {
+  if (Buffer.byteLength(system, 'utf8') <= SYSTEEM_ARG_MAX) {
+    return { args: ['--system-prompt', system], prompt, opruimen: () => undefined };
+  }
+  if (opties.kentBestand) {
+    const map = mkdtempSync(join(opties.map ?? tmpdir(), 'claude-systeem-'));
+    const pad = join(map, 'systeem.txt');
+    writeFileSync(pad, system, 'utf8');
+    return { args: ['--system-prompt-file', pad], prompt, opruimen: () => rmSync(map, { recursive: true, force: true }) };
+  }
+  return {
+    args: ['--system-prompt', 'Volg de instructies in het blok SYSTEEMINSTRUCTIES aan het begin van het bericht strikt op; ze wegen zwaarder dan de rest.'],
+    prompt: `=== SYSTEEMINSTRUCTIES ===\n${system}\n=== EINDE SYSTEEMINSTRUCTIES ===\n\n${prompt}`,
+    opruimen: () => undefined,
+  };
+}
+
 function runClaudeCliOnce(
   system: string,
   prompt: string,
@@ -296,6 +348,8 @@ function runClaudeCliOnce(
     env.CLAUDE_CODE_OAUTH_TOKEN = process.env.CLAUDE_CODE_OAUTH_TOKEN;
   }
 
+  const bin = process.env.CLAUDE_CLI_BIN || 'claude';
+  const systeem = systeemPromptVoorCli(system, prompt, { kentBestand: cliKentSysteemBestand(bin) });
   const args = [
     '-p',
     '--output-format',
@@ -304,8 +358,7 @@ function runClaudeCliOnce(
     model,
     '--effort',
     effort,
-    '--system-prompt',
-    system,
+    ...systeem.args,
     '--no-session-persistence',
     // Dit is pure generatie; de agent-tools van Claude Code blijven uit.
     '--disallowed-tools',
@@ -328,7 +381,7 @@ function runClaudeCliOnce(
   const timeoutMs = Number(process.env.CLAUDE_CLI_TIMEOUT_MIN ?? '30') * 60_000;
 
   return new Promise((resolve, reject) => {
-    const child = spawn('claude', args, { env });
+    const child = spawn(bin, args, { env });
     let stdout = '';
     let stderr = '';
     let afgebroken = false;
@@ -338,12 +391,20 @@ function runClaudeCliOnce(
     }, timeoutMs);
     child.stdout.on('data', (d) => (stdout += d));
     child.stderr.on('data', (d) => (stderr += d));
-    child.on('error', () => {
+    child.on('error', (e: NodeJS.ErrnoException) => {
       clearTimeout(wekker);
-      reject(new Error('Claude Code CLI niet gevonden. Installeer hem of zet CLAUDE_BACKEND=api.'));
+      systeem.opruimen();
+      reject(
+        new Error(
+          e.code === 'ENOENT'
+            ? 'Claude Code CLI niet gevonden. Installeer hem of zet CLAUDE_BACKEND=api.'
+            : `claude CLI kon niet starten (${e.code ?? e.message}; argumenten ${args.reduce((t, a) => t + Buffer.byteLength(a), 0)} bytes)`,
+        ),
+      );
     });
     child.on('close', (code) => {
       clearTimeout(wekker);
+      systeem.opruimen();
       if (afgebroken) {
         return reject(
           new Error(`claude CLI stalled: geen antwoord binnen ${timeoutMs / 60_000} minuten, proces afgebroken`),
@@ -384,7 +445,10 @@ function runClaudeCliOnce(
       }
     });
 
-    child.stdin.write(prompt);
+    // Een proces dat meteen sneuvelt (E2BIG, ENOENT) sluit stdin; de
+    // schrijffout daarvan mag de echte melding hierboven niet overschrijven.
+    child.stdin.on('error', () => undefined);
+    child.stdin.write(systeem.prompt);
     child.stdin.end();
   });
 }

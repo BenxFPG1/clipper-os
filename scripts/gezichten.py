@@ -36,12 +36,13 @@ SAMEN = 0.14          # detecties dichter dan dit horen bij dezelfde persoon
 DREMPEL = 0.7         # zekerheid waarboven YuNet-detecties meetellen
 
 pad = sys.argv[1]
-tijden = json.loads(sys.argv[2])
+SPREKERMODUS = len(sys.argv) > 2 and sys.argv[2] == "--sprekers"
+tijden = [] if SPREKERMODUS else json.loads(sys.argv[2])
 # Optioneel derde argument: hoeveel frames per tijdstip. Voor het volgen van een
 # spreker vragen we véél tijdstippen met één frame elk (snel en fijnmazig); voor
 # het bepalen van de kadrering juist weinig tijdstippen met vijf frames (robuust
 # tegen één ongelukkig frame).
-if len(sys.argv) > 3:
+if len(sys.argv) > 3 and not SPREKERMODUS:
     MONSTERS = max(1, int(sys.argv[3]))
 cap = cv2.VideoCapture(pad)
 
@@ -232,6 +233,161 @@ def mondbeweging(frames, vak):
     return sum(verschillen) / len(verschillen)
 
 
+def grijs_uitsnede(frame, vak, maat=(32, 16)):
+    x, y, w, h = [max(0, int(v)) for v in vak]
+    stuk = frame[y: y + h, x: x + w]
+    if stuk.size == 0 or w < 4 or h < 4:
+        return None
+    klein = cv2.resize(cv2.cvtColor(stuk, cv2.COLOR_BGR2GRAY), maat).astype("float32")
+    # Belichting eruit: alleen de vorm telt, niet of de lamp flikkert.
+    return klein - float(np.mean(klein))
+
+
+def sprekermeting(van, tot, stap):
+    """Alle gezichten in [van, tot], elke `stap` seconde, met per gezicht de
+    mondbeweging t.o.v. het vorige monster. De mondzone min de oogzone van
+    hetzelfde gezicht: een hoofd dat knikt of draait beweegt beide, een mond
+    die praat alleen de onderste.
+
+    Veel bronnen (podcasts met meerdere camera's) knippen zelf tussen
+    camerastandpunten. Een persoon op x=0,4 in het ene standpunt is dan een
+    ander dan op x=0,4 in het volgende; daarom worden de bronknippen per frame
+    gemeten (exacte tijd) en beginnen alle gezichtssporen na een knip opnieuw.
+
+    Uitvoer: {van, tot, stap, personen: [{id, scene, x, breedte, oog, top,
+    hoogte, n, monsters: [[t, x, mond|null], ...]}], knippen: [t, ...]}.
+    """
+    cap.set(cv2.CAP_PROP_POS_MSEC, van * 1000)
+    fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+    elke = max(1, int(round(stap * fps)))
+    # Waar staat de lezer werkelijk? (seek landt op een frame, niet op van)
+    start_ms = cap.get(cv2.CAP_PROP_POS_MSEC)
+    t0 = start_ms / 1000.0 if start_ms and start_ms > 0 else van
+    sporen = []
+    afgesloten = []
+    knippen = []
+    scene = 0
+    monsters_per_scene = {0: 0}
+    vorig_klein = None
+    recent = []
+    n = 0
+    sinds_knip = 0
+    while True:
+        ok, frame = cap.read()
+        if not ok:
+            break
+        t = t0 + n / fps
+        n += 1
+        if t > tot:
+            break
+        # Bronknip per frame: het hele beeld verandert in één stap.
+        # Relatief aan de gewone beweging van de laatste frames: een camera-
+        # wissel binnen dezelfde kamer verandert minder dan een wissel naar
+        # een ander decor, maar altijd veel meer dan beweging.
+        mini = cv2.resize(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), (64, 36)).astype("float32")
+        knip = False
+        if vorig_klein is not None:
+            d = float(np.mean(np.abs(mini - vorig_klein)))
+            gewoon = sorted(recent)[len(recent) // 2] if recent else 2.0
+            knip = d > max(12.0, 5.0 * gewoon)
+            recent.append(d)
+            if len(recent) > 25:
+                recent.pop(0)
+        vorig_klein = mini
+        if knip and knippen and t - knippen[-1] < 0.3:
+            # Een overgang (flits, overvloeier) is een reeks "knippen" achter
+            # elkaar: dat is één wissel, en het nieuwe standpunt begint pas
+            # als het beeld weer stilstaat.
+            knippen[-1] = round(t, 3)
+            sporen = []
+            monsters_per_scene[scene] = 0
+            sinds_knip = 0
+        elif knip and t - van > 0.05:
+            knippen.append(round(t, 3))
+            afgesloten.extend(sporen)
+            sporen = []
+            scene += 1
+            monsters_per_scene[scene] = 0
+            sinds_knip = 0
+        # Monster direct na een knip, daarna elke `stap`.
+        if sinds_knip % elke:
+            sinds_knip += 1
+            continue
+        sinds_knip += 1
+        monsters_per_scene[scene] += 1
+        bb = frame.shape[1]
+        schaal = 960.0 / bb if bb > 960 else 1.0
+        beeld = cv2.resize(frame, None, fx=schaal, fy=schaal) if schaal < 1 else frame
+        kb = beeld.shape[1]
+        kh = beeld.shape[0]
+        gebruikt = set()
+        for (vak, mond, kijkt, ooghoogte, visueel) in detecteer(beeld):
+            x, y, w, h = vak
+            if w / kb < 0.025:
+                continue
+            mid = (visueel if visueel is not None else x + w / 2) / kb
+            mondvak = mond or (x, y + int(h * 0.55), w, max(1, int(h * 0.45)))
+            oogvak = (x, y + int(h * 0.2), w, max(1, int(h * 0.3)))
+            kandidaten = [i for i, sp in enumerate(sporen) if i not in gebruikt and abs(sp["mid"] - mid) < SAMEN]
+            if kandidaten:
+                i = min(kandidaten, key=lambda k: abs(sporen[k]["mid"] - mid))
+            else:
+                sporen.append({"scene": scene, "mid": mid, "xs": [], "ws": [], "ogen": [], "tops": [], "hs": [], "monsters": [], "vm": None, "vo": None, "vt": None})
+                i = len(sporen) - 1
+            gebruikt.add(i)
+            sp = sporen[i]
+            # De vakken gladgestreken over het spoor: de landmarks trillen een
+            # paar pixels per frame, en op een klein gezicht is dat al
+            # "mondbeweging". Een stilstaand gezicht moet ~0 geven.
+            glad = lambda oud, nieuw: nieuw if oud is None else tuple(0.7 * a + 0.3 * b for a, b in zip(oud, nieuw))
+            sp["mvak"] = glad(sp.get("mvak"), mondvak)
+            sp["ovak"] = glad(sp.get("ovak"), oogvak)
+            m_now = grijs_uitsnede(beeld, sp["mvak"])
+            o_now = grijs_uitsnede(beeld, sp["ovak"])
+            energie = None
+            if sp["vm"] is not None and m_now is not None and t - sp["vt"] <= stap * 2.5:
+                dm = float(np.mean(np.abs(m_now - sp["vm"])))
+                do = float(np.mean(np.abs(o_now - sp["vo"]))) if (o_now is not None and sp["vo"] is not None) else 0.0
+                energie = round(max(0.0, dm - 0.6 * do), 3)
+            sp["vm"], sp["vo"], sp["vt"] = m_now, o_now, t
+            sp["mid"] = 0.8 * sp["mid"] + 0.2 * mid
+            sp["xs"].append(mid)
+            sp["ws"].append(w / kb)
+            sp["ogen"].append((ooghoogte if ooghoogte is not None else y + h * 0.38) / kh)
+            sp["tops"].append(y / kh)
+            sp["hs"].append(h / kh)
+            sp["monsters"].append([round(t, 3), round(mid, 4), energie])
+    afgesloten.extend(sporen)
+    med = lambda xs: sorted(xs)[len(xs) // 2]
+    personen = []
+    for sp in afgesloten:
+        # Alleen wie een flink deel van zijn camerastandpunt in beeld is en
+        # niet piepklein op de achtergrond staat.
+        totaal = monsters_per_scene.get(sp["scene"], 1)
+        if len(sp["xs"]) < max(2, totaal * 0.3) or med(sp["ws"]) < 0.035:
+            continue
+        personen.append({
+            "id": 0,
+            "scene": sp["scene"],
+            "x": round(med(sp["xs"]), 4),
+            "breedte": round(med(sp["ws"]), 4),
+            "oog": round(med(sp["ogen"]), 4),
+            "top": round(med(sp["tops"]), 4),
+            "hoogte": round(med(sp["hs"]), 4),
+            "n": len(sp["xs"]),
+            "monsters": sp["monsters"],
+        })
+    personen.sort(key=lambda p: (p["scene"], p["x"]))
+    for i, p in enumerate(personen):
+        p["id"] = i
+    return {"van": van, "tot": tot, "stap": stap, "personen": personen, "knippen": knippen}
+
+
+if SPREKERMODUS:
+    opdrachten = json.loads(sys.argv[3])
+    print(json.dumps([sprekermeting(float(o["van"]), float(o["tot"]), float(o.get("stap", 0.1))) for o in opdrachten]))
+    sys.exit(0)
+
 uit = []
 for t in tijden:
     frames = []
@@ -345,6 +501,18 @@ for t in tijden:
         "breed": breed,
         "paneel": paneel,
         "model": "yunet" if yunet is not None else "haar",
+        # Alle personen, niet alleen de gekozen spreker: de keuring zoekt
+        # daarin de actieve spreker op (sprekers.ts), en die hoeft niet de
+        # mond te zijn die op deze drie frames toevallig het meest bewoog.
+        "gezichten": [
+            {
+                "x": round(sorted(g["xs"])[len(g["xs"]) // 2], 3),
+                "breedte": round(sorted(g["ws"])[len(g["ws"]) // 2], 3),
+                "top": round(sorted(g["tops"])[len(g["tops"]) // 2], 3),
+                "hoogte": round(sorted(g["hs"])[len(g["hs"]) // 2], 3),
+            }
+            for g in echt
+        ],
     })
 
 print(json.dumps(uit))

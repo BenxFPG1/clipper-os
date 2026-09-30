@@ -58,6 +58,19 @@ jobs:
         run: npm run test:broll
       - name: Regels van de trends-aggregatie
         run: npm run test:trends
+      # Pure rekenregels zonder video: snel genoeg voor elke push.
+      - name: Edit-normen (gepaarde toets, richtingsregel)
+        run: npm run test:normen
+      - name: Signalen voor fragmentkeuze
+        run: npm run test:signalen
+      - name: Claude-aanroep (grote systeemprompt, geen E2BIG)
+        run: npm run test:claude
+      - name: Brontranscriptie per bereik en terugval
+        run: npm run test:bronwoorden
+      - name: Ondertitelwoorden (beter model, correctiepas)
+        run: npm run test:ondertitelwoorden
+      - name: Afwerken in Premiere (pakket)
+        run: npm run test:afwerkpakket
 
   keuring:
     runs-on: ubuntu-latest

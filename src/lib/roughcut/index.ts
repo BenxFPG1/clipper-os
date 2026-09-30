@@ -93,6 +93,12 @@ export type Shot = {
    * tussen twee hoofden in.
    */
   breed?: boolean;
+  /**
+   * Kader bepaald door de actieve-sprekerdetectie (sprekers.ts): focus,
+   * breedte en spoor horen bij de persoon die praat. De oude
+   * één-gezicht-meting en het spoor mogen dit niet meer overschrijven.
+   */
+  sprekerBepaald?: boolean;
   beeld_effect?: string;
   /**
    * De emotiecurve (bouwsteen D), 1-10, uit het plan. Stuurt de muziek-
@@ -1219,23 +1225,36 @@ export async function brandOverlays(
 export async function brandHookVarianten(
   basisPad: string,
   varianten: { hookPad: string; eind: number; uitPad: string }[],
-  opties: { maxBytes?: number; duur: number; werkmap: string },
-): Promise<{ kopTot: number; manier: 'concat' | 'volledig' }> {
+  opties: {
+    maxBytes?: number;
+    duur: number;
+    werkmap: string;
+    /** Alleen voor de test: de staart met afwijkende encode-argumenten, om het veiligheidsnet te toetsen. */
+    staartEncode?: string[];
+  },
+): Promise<{ kopTot: number; manier: 'concat' | 'volledig'; teruggevallen: { uitPad: string; reden: string }[] }> {
   const bron = await probeBron(basisPad).catch(() => null);
   const fps = bron?.fps && bron.fps > 1 ? bron.fps : 25;
   const langste = Math.max(...varianten.map((v) => v.eind));
   // Het eerste frame ná de langste hookkaart (+ één frame speling).
   const frames = Math.ceil((langste + 1 / fps) * fps);
   const kopTot = frames / fps;
-  const encode = encodeArgs({ maxBytes: opties.maxBytes, duur: opties.duur });
+  // Kop en staart met exact dezelfde argumenten (maxrate en bufsize hangen
+  // van de clipduur af, niet van de lengte van het stuk), plus SPS/PPS bij
+  // elk keyframe in de stroom: mocht x264 toch andere headers kiezen, dan
+  // draagt de staart zijn eigen headers mee in plaats van te leunen op die
+  // van de kop.
+  const encode = [...encodeArgs({ maxBytes: opties.maxBytes, duur: opties.duur }), '-x264-params', 'repeat-headers=1'];
   if (kopTot >= opties.duur - 0.5) {
     for (const v of varianten) await brandOverlays(basisPad, [{ pad: v.hookPad, start: 0, end: v.eind }], v.uitPad, { maxBytes: opties.maxBytes, duur: opties.duur });
-    return { kopTot, manier: 'volledig' };
+    return { kopTot, manier: 'volledig', teruggevallen: [] };
   }
+  const basisFrames = await telFrames(basisPad);
+  const teruggevallen: { uitPad: string; reden: string }[] = [];
   const staart = join(opties.werkmap, `staart-${Date.now()}.mp4`);
   // De staart: frame-exact vanaf kopTot (invoer-seek met decode), alleen beeld.
   await run(resolveBinary('ffmpeg'), [
-    '-y', '-ss', kopTot.toFixed(6), '-i', basisPad, '-map', '0:v', '-an', ...encode, '-movflags', '+faststart', staart,
+    '-y', '-ss', kopTot.toFixed(6), '-i', basisPad, '-map', '0:v', '-an', ...(opties.staartEncode ?? encode), '-movflags', '+faststart', staart,
   ]);
   try {
     for (const v of varianten) {
@@ -1246,6 +1265,18 @@ export async function brandHookVarianten(
         '-filter_complex', `[0:v]trim=end_frame=${frames},setpts=PTS-STARTPTS[b];[b][1:v]overlay=0:0:enable='between(t,0,${v.eind.toFixed(2)})'[v]`,
         '-map', '[v]', '-an', ...encode, kop,
       ]);
+      // Twee losse encodes mogen alleen met stream-copy aan elkaar als hun
+      // SPS/PPS (avcC) identiek zijn: de container heeft er maar één. ffmpeg
+      // zelf decodeert een mismatch vaak nog (het leest de nieuwe headers uit
+      // de stroom), maar andere spelers en platform-transcoders niet — dus
+      // die vergelijking gaat vóór de decode-controle.
+      const [exKop, exStaart] = await Promise.all([extradataVan(kop), extradataVan(staart)]);
+      if (!exKop || exKop !== exStaart) {
+        await rm(kop, { force: true });
+        teruggevallen.push({ uitPad: v.uitPad, reden: exKop ? 'SPS/PPS van kop en staart verschillen' : 'headers van de kop niet te lezen' });
+        await brandOverlays(basisPad, [{ pad: v.hookPad, start: 0, end: v.eind }], v.uitPad, { maxBytes: opties.maxBytes, duur: opties.duur });
+        continue;
+      }
       const { writeFile } = await import('node:fs/promises');
       await writeFile(lijst, `file '${kop.replace(/'/g, "'\\''")}'\nfile '${staart.replace(/'/g, "'\\''")}'\n`);
       try {
@@ -1257,11 +1288,72 @@ export async function brandHookVarianten(
         await rm(kop, { force: true });
         await rm(lijst, { force: true });
       }
+      // Veiligheidsnet: stream-copy van twee losse encodes onder één header
+      // is alleen goed als die headers gelijk zijn. Het hele bestand wordt
+      // gedecodeerd; één fout of een ander frameaantal dan de basis → deze
+      // variant alsnog volledig opnieuw (brandOverlays). Liever een minuut
+      // extra dan een clip die halverwege niet meer afspeelt.
+      const controle = await controleerDecode(v.uitPad, basisFrames);
+      if (!controle.goed) {
+        teruggevallen.push({ uitPad: v.uitPad, reden: controle.reden });
+        await brandOverlays(basisPad, [{ pad: v.hookPad, start: 0, end: v.eind }], v.uitPad, { maxBytes: opties.maxBytes, duur: opties.duur });
+      }
     }
   } finally {
     await rm(staart, { force: true });
   }
-  return { kopTot, manier: 'concat' };
+  return { kopTot, manier: 'concat', teruggevallen };
+}
+
+/** De codec-headers (avcC: SPS/PPS) van het beeldspoor, als hex; null als onleesbaar. */
+export async function extradataVan(pad: string): Promise<string | null> {
+  try {
+    const uit = await run(resolveBinary('ffprobe'), ['-v', 'error', '-select_streams', 'v:0', '-show_data', '-show_entries', 'stream=extradata', pad]);
+    const hex = [...uit.matchAll(/^[0-9a-f]{8}: ((?:[0-9a-f]{2,4} ?)+)/gm)].map((m) => m[1].replace(/\s+/g, '')).join('');
+    return hex.length > 0 ? hex : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Aantal videoframes volgens de container (pakketten tellen, geen decode). */
+export async function telFrames(pad: string): Promise<number | null> {
+  try {
+    const uit = await run(resolveBinary('ffprobe'), [
+      '-v', 'error', '-select_streams', 'v:0', '-count_packets', '-show_entries', 'stream=nb_read_packets', '-of', 'csv=p=0', pad,
+    ]);
+    const n = Number(uit.trim().split(/\s+/)[0]);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Decodeert het hele beeldspoor en telt de frames. Goed = geen enkele
+ * decodeerfout en (als opgegeven) precies het verwachte aantal frames.
+ */
+export async function controleerDecode(pad: string, verwachtFrames?: number | null): Promise<{ goed: boolean; frames: number | null; reden: string }> {
+  const uit = await new Promise<{ code: number | null; stdout: string; stderr: string }>((klaar) => {
+    const kind = spawn(resolveBinary('ffmpeg'), ['-nostdin', '-v', 'error', '-progress', 'pipe:1', '-i', pad, '-map', '0:v:0', '-f', 'null', '-'], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    kind.stdout.on('data', (d) => (stdout += d));
+    kind.stderr.on('data', (d) => (stderr += d));
+    kind.on('error', (e) => klaar({ code: -1, stdout, stderr: e.message }));
+    kind.on('close', (code) => klaar({ code, stdout, stderr }));
+  });
+  const frames = Number([...uit.stdout.matchAll(/^frame=(\d+)/gm)].pop()?.[1] ?? NaN);
+  const fouten = uit.stderr.trim();
+  if (uit.code !== 0 || fouten) {
+    return { goed: false, frames: Number.isFinite(frames) ? frames : null, reden: `decodeerfout: ${(fouten || `exit ${uit.code}`).split('\n')[0].slice(0, 120)}` };
+  }
+  if (verwachtFrames && Number.isFinite(frames) && frames !== verwachtFrames) {
+    return { goed: false, frames, reden: `${frames} frames, basis heeft er ${verwachtFrames}` };
+  }
+  return { goed: true, frames: Number.isFinite(frames) ? frames : null, reden: 'ok' };
 }
 
 function runMetStderr(command: string, args: string[]): Promise<string> {

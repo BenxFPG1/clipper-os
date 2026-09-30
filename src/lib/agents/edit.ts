@@ -125,6 +125,13 @@ export async function runEditAgent(
     retentie?: Record<number, string>;
     /** Platform en thema van de campagne: bepalen welke gemeten normen van anderen gelden. */
     normContext?: NormContext;
+    /**
+     * Alleen deze clipnummers ontwerpen (de clips van deze renderopdracht).
+     * Een plan van een lange video kan tientallen clips hebben; die hoeven
+     * niet allemaal mee in de prompt om er één te renderen. Wat al ontworpen
+     * was, blijft bewaard.
+     */
+    clipNummers?: number[];
   } = {},
 ) {
   const supabase = db();
@@ -190,7 +197,8 @@ export async function runEditAgent(
   const BATCH = Number(process.env.EDIT_BATCH ?? 4);
   const alleClips: EditBeslissingen['clips'] = [...(bestaand?.clips ?? [])];
   const gedaan = new Set(alleClips.map((c) => c.clip_nummer));
-  const teDoen = compact.filter((c) => !gedaan.has(c.clip_nummer));
+  const gevraagd = opties.clipNummers?.length ? new Set(opties.clipNummers) : null;
+  const teDoen = compact.filter((c) => !gedaan.has(c.clip_nummer) && (!gevraagd || gevraagd.has(c.clip_nummer)));
 
   for (let i = 0; i < teDoen.length; i += BATCH) {
     const brok = teDoen.slice(i, i + BATCH);
@@ -206,7 +214,7 @@ export async function runEditAgent(
         edit_prompt_versie: EDIT_PROMPT_VERSIE,
       })
       .eq('id', planRij.id);
-    opties.onVoortgang?.(`montage ontworpen voor ${alleClips.length}/${compact.length} clips`);
+    opties.onVoortgang?.(`montage ontworpen voor ${alleClips.length}/${compact.length} clips${gevraagd ? ` (deze opdracht: ${[...gevraagd].join(', ')})` : ''}`);
   }
 
   return { clips: alleClips };
