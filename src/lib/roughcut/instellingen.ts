@@ -98,6 +98,10 @@ const STANDAARD = {
   /** Standaardhoogte van het regelmidden (fractie), en de onderrand die nooit gepasseerd wordt (TikTok-UI). */
   ONDERTITEL_Y: 0.72,
   ONDERTITEL_Y_MAX: 0.78,
+  /** Noodgrens: past het onder de kin net niet, dan mag de regel tot hier zakken (nog boven de platformknoppen). */
+  ONDERTITEL_Y_MAX_NOOD: 0.8,
+  /** Past ook dat niet, dan eerst de regel zoveel kleiner (fractie) voordat hij boven het hoofd gaat. */
+  ONDERTITEL_KLEINER: 0.85,
   /** Ruimte tussen kin en ondertitel (fractie van de hoogte). */
   ONDERTITEL_KIN_MARGE: 0.015,
   /** Boven het hoofd mag een regel alleen als hij dan niet in de hookzone valt (fractie). */
@@ -139,6 +143,8 @@ const STANDAARD = {
   GRAPHIC_MIN_VLAK: 0.62,
   /** De inhoud van het eerste en het laatste meetframe moet elk minstens dit aandeel van de unie beslaan, anders animeert de graphic en wordt er niet ingezoomd. */
   GRAPHIC_MIN_STABIEL: 0.7,
+  /** Milde inzoom op een animerende graphic: alleen als er rondom minstens zoveel egale marge is (fractie). */
+  GRAPHIC_MIN_MARGE: 0.05,
   /** Zelfherstel: zoveel extra render-en-keurrondes voor graphics en eindscherm. */
   ZELFHERSTEL_RONDES: 2,
   GRAPHIC_KLEUR_DREMPEL: 36,
@@ -157,6 +163,8 @@ const STANDAARD = {
    * correlatie waarmee de audio-uitlijning vertrouwd wordt.
    */
   RENDERBRON_MARGE: 2,
+  /** Gecachete bronnen en secties in R2 (bron/<videoId>/…) worden na zoveel dagen opgeruimd. */
+  BRONCACHE_DAGEN: 14,
   RENDERBRON_SAMENVOEG_GAT: 15,
   RENDERBRON_MAX_HOOGTE: 2160,
   RENDERBRON_TIMEOUT: 300,

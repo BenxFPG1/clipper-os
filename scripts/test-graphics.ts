@@ -13,7 +13,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { resolveBinary } from '../src/lib/ingest/binaries';
-import { analyseerGraphic, graphicMeterVia, inhoudKader, lijktGraphic, stabieleInhoud } from '../src/lib/roughcut/graphics';
+import { analyseerGraphic, graphicMeterVia, inhoudKader, lijktGraphic, margeBox, schaalTovPassend, stabieleInhoud } from '../src/lib/roughcut/graphics';
 import { keurGraphicsDetail, type GraphicFout } from '../src/lib/roughcut/keuring';
 import { herstelNaKeuring, zelfherstelStap } from '../src/lib/roughcut/herstel';
 import { deelstukken, kiesBevries, splitsOpBeeldsoort, vulScenes, type GezichtMeter } from '../src/lib/roughcut/scenes';
@@ -296,6 +296,31 @@ async function vervolg() {
         if (!stap.opnieuw) break;
       }
       toets('hoogstens twee herstelrondes', r3 === 2 && n3 === 3, JSON.stringify({ r3, n3 }));
+    }
+
+    console.log('adaptief herstel: eerst breder kaderen, dan pas passend');
+    {
+      const oud = { x0: 0.3, y0: 0.2, x1: 0.6, y1: 0.8 };
+      const breder = { x0: 0.28, y0: 0.18, x1: 0.78, y1: 0.82 };
+      const seg: Shot = { volgorde: 3.02, start: 290, end: 294, functie: 'setup', scenes: [{ van: 290, tot: 294, gezicht: false, inhoud: oud, inhoudBron: 'meting' }] };
+      const fout: GraphicFout = { soort: 'inhoud_buiten_beeld', volgorde: 3.02, van: 290, tot: 294, gemeten: breder, wat: 'x' };
+      const r1 = herstelNaKeuring([seg], [fout], []);
+      const sc = seg.scenes![0];
+      toets('ronde 1: nieuwe box = unie van oud en gemeten', sc.inhoud?.x1 === 0.78 && sc.inhoud?.x0 === 0.28 && sc.inhoudBron === 'verbreed', JSON.stringify(sc));
+      toets('en dat is nog steeds ingezoomd (groter dan passend)', schaalTovPassend(sc.inhoud!) > 1.05, String(schaalTovPassend(sc.inhoud!)));
+      toets('logregel noemt de nieuwe schaal', /opnieuw gekadreerd \(×\d,\d\d t\.o\.v\. passend\)/.test(r1[0] ?? ''), r1.join(' | '));
+      const r2 = herstelNaKeuring([seg], [fout], []);
+      toets('ronde 2: faalt het weer, dan pas volledig passend', sc.inhoud === null && /inzoom eraf/.test(r2[0] ?? ''), r2.join(' | '));
+      const zonderMeting: Shot = { ...seg, scenes: [{ van: 290, tot: 294, gezicht: false, inhoud: oud }] };
+      herstelNaKeuring([zonderMeting], [{ ...fout, gemeten: undefined }], []);
+      toets('zonder nieuwe meting: meteen passend', zonderMeting.scenes![0].inhoud === null);
+    }
+
+    console.log('milde inzoom op een animerende graphic met egale marges');
+    {
+      toets('marges rondom → box van alles wat er ooit in beeld kwam', JSON.stringify(margeBox([{ x0: 0.2, y0: 0.2, x1: 0.5, y1: 0.6 }, null, { x0: 0.3, y0: 0.15, x1: 0.8, y1: 0.85 }])) === JSON.stringify({ x0: 0.2, y0: 0.15, x1: 0.8, y1: 0.85 }));
+      toets('inhoud tot tegen de rand → geen inzoom', margeBox([{ x0: 0.01, y0: 0.2, x1: 0.8, y1: 0.8 }]) === null);
+      toets('niets gemeten → geen inzoom', margeBox([null, null]) === null);
     }
 
     console.log('ondertitels: koppeltekens bij elkaar');

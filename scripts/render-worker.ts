@@ -11,6 +11,7 @@ import {
   Shot,
   maakRuweMontage,
   brandOverlays,
+  brandHookVarianten,
   detecteerStiltes,
   meetRuisvloer,
   bepaalSegmenten,
@@ -58,6 +59,7 @@ import { poort, verzetGrens } from '../src/lib/roughcut/poort';
 import { keurGraphicsDetail, keurMontage, type Keuringsrapport } from '../src/lib/roughcut/keuring';
 import { zelfherstelStap } from '../src/lib/roughcut/herstel';
 import { corrigeerWoorden, verfijnWoorden } from '../src/lib/roughcut/ondertitelwoorden';
+import { ruimBronCacheOp } from '../src/lib/roughcut/broncache';
 import {
   herstelWissels,
   keurRetentie,
@@ -98,6 +100,14 @@ async function main() {
     .lt('hartslag', grens)
     .select('id');
   if (vastgelopen?.length) console.log(`${vastgelopen.length} vastgelopen montage(s) teruggezet.`);
+
+  // Gecachete bronnen ouder dan BRONCACHE_DAGEN uit R2 halen.
+  try {
+    const opruim = await ruimBronCacheOp();
+    if (opruim.verwijderd) console.log(`R2-broncache: ${opruim.verwijderd} oude bestand(en) opgeruimd (${opruim.mb} MB)`);
+  } catch {
+    // niet fataal
+  }
 
   const { data: jobs, error } = await supabase
     .from('render_jobs')
@@ -244,7 +254,9 @@ async function verwerk(job: Job) {
 
   // Bron en stiltes vóór de eerste clip klaarzetten: anders mist clip 1 de
   // spraakpauze-knippen en de gezichtsfocus die de rest wel krijgt.
-  const bronPad = await zorgVoorBron(video.source_url, bronmap, (m) => console.log(`  ${m}`));
+  const tBron = Date.now();
+  const bronPad = await zorgVoorBron(video.source_url, bronmap, (m) => console.log(`  ${m}`), { videoId: job.video_id });
+  const bronSeconden = (Date.now() - tBron) / 1000;
 
   // De brontranscriptie is de enige waarheid voor knipgrenzen. Eenmalig per
   // video, daarna uit de cache. Al vóór de edit-agent: die krijgt per clip
@@ -668,6 +680,9 @@ async function verwerk(job: Job) {
     // spreker naar een graphic, dan krijgt elk deelstuk zijn eigen kader
     // (graphic passend, spreker vullend) met de wissel precies op de
     // bronknip. Vóór de retentie-editor: een bronknip is al een beeldwissel.
+    // Tijd per fase, voor de logregel na de keuring.
+    const tijd = { scenes: 0, render: 0, zelfherstel: 0, varianten: 0, keuring: 0 };
+    const tScenes = Date.now();
     try {
       const sc = await vulScenes(bronPad, segmenten, gezichtMeterVia(bronPad, pythonMetOpenCV(), 1));
       console.log(
@@ -691,6 +706,8 @@ async function verwerk(job: Job) {
     } catch (e) {
       console.log(`     eindschermcontrole overgeslagen (${(e as Error).message.slice(0, 70)})`);
     }
+
+    tijd.scenes = (Date.now() - tScenes) / 1000;
 
     // Beslissingen van de edit-agent op de segmenten leggen. Subsegmenten
     // (ontstaan door dode lucht weg te knippen) erven van hun bronshot, maar
@@ -1108,6 +1125,7 @@ async function verwerk(job: Job) {
     // gerepareerd heeft. De poging-lus krijgt daarvoor ruimte bovenop zijn
     // eigen correctierondes.
     let herstelRonde = 0;
+    let laatsteGraphicsKeuring: { sleutel: string; regel: import('../src/lib/roughcut/keuring').KeuringRegel } | null = null;
     const MAX_POGINGEN = 5 + instelling('ZELFHERSTEL_RONDES');
     let retentieHersteld = false;
     for (let poging = 1; poging <= MAX_POGINGEN; poging++) {
@@ -1166,6 +1184,7 @@ async function verwerk(job: Job) {
       console.log('     ondertitels overgeslagen: geen brontranscriptie');
     }
 
+    const tRender = Date.now();
     montage = await maakRuweMontage({
       sourceUrl: video.source_url,
       shots: segmenten,
@@ -1180,6 +1199,7 @@ async function verwerk(job: Job) {
       // Scherpte uit de renderbron: alleen de gebruikte stukken, in de
       // hoogste kwaliteit; de analysebron blijft voor alle metingen.
       renderSecties: process.env.RENDERBRON !== '0',
+      videoId: job.video_id,
       werkmap: bronmap,
       kader: editClip?.kader ?? clip.kader ?? 'vullend',
       overlays: [...(await bouwOverlays()), ...(ondertitels?.overlays ?? [])],
@@ -1199,6 +1219,7 @@ async function verwerk(job: Job) {
       onVoortgang: (m) => console.log(`     ${m}`),
     });
     mbRenderbron += montage.kwaliteit.renderbron?.mbGedownload ?? 0;
+    tijd.render += (Date.now() - tRender) / 1000;
 
     // Zegt de clip wat het script voorschrijft? Het eindbestand wordt
     // terugvertaald naar tekst en vergeleken: dekking van de scriptwoorden, en
@@ -1411,18 +1432,26 @@ async function verwerk(job: Job) {
     // eindscherm). Dan opnieuw renderen en keuren; hoogstens
     // ZELFHERSTEL_RONDES keer. Wat daarna nog faalt, meldt de eindkeuring als
     // review nodig.
+    const tHerstel = Date.now();
     try {
       const kaderNu = (editClip?.kader ?? clip.kader ?? 'vullend') as Kader;
       const stap = await zelfherstelStap(
         segmenten,
         async () => ({
-          graphic: (await keurGraphicsDetail(segmenten, kaderNu, gezichtMeterVia(bronPad, pythonMetOpenCV()), graphicMeterVia(bronPad))).fouten,
+          graphic: await (async () => {
+            const g = await keurGraphicsDetail(segmenten, kaderNu, gezichtMeterVia(bronPad, pythonMetOpenCV()), graphicMeterVia(bronPad));
+            // Bewaren: blijven de segmenten zo, dan hergebruikt de eindkeuring
+            // deze meting in plaats van alles opnieuw door de detectie te halen.
+            laatsteGraphicsKeuring = { sleutel: segmentSleutel(segmenten), regel: g.regel };
+            return g.fouten;
+          })(),
           overlay: keurOverlayDetail(segmenten, kaderNu).fouten,
         }),
         { ronde: herstelRonde, maxRondes: instelling('ZELFHERSTEL_RONDES'), bronWoorden },
       );
       herstelRonde = stap.ronde;
       if (stap.log) console.log(`     ${stap.log}`);
+      tijd.zelfherstel += (Date.now() - tHerstel) / 1000;
       if (stap.opnieuw && poging < MAX_POGINGEN) {
         // Kaders zijn veranderd: de kadrering opnieuw rekenkundig toetsen en
         // de eindscherm-uitsnede opnieuw leggen, dan opnieuw renderen.
@@ -1472,11 +1501,36 @@ async function verwerk(job: Job) {
         await rename(basisPad, lokaal);
         varianten.push({ pad: lokaal, naam });
       }
-      for (const [i, tekst] of hookTeksten.entries()) {
-        const hookPad = join(kaartMap, `c${nummer}-hook-${i + 1}.png`);
-        await tekenHookKaart(tekst, hookPad, stijl);
-        const uitNaam = i === 0 ? naam : naam.replace(/\.mp4$/, `-hook${i + 1}.mp4`);
-        const uitPad = i === 0 ? lokaal : join(werkmap, uitNaam);
+      // Alle varianten in één keer: de staart (na de langste hookkaart) één
+      // keer encoderen, per variant alleen de kop, stream-copy erachter en
+      // het geluid ongewijzigd uit de basis. Lukt dat niet, dan per variant
+      // de hele clip zoals voorheen.
+      const tVarianten = Date.now();
+      const plan = await Promise.all(
+        hookTeksten.map(async (tekst, i) => {
+          const hookPad = join(kaartMap, `c${nummer}-hook-${i + 1}.png`);
+          await tekenHookKaart(tekst, hookPad, stijl);
+          const uitNaam = i === 0 ? naam : naam.replace(/\.mp4$/, `-hook${i + 1}.mp4`);
+          return { i, tekst, hookPad, uitNaam, uitPad: i === 0 ? lokaal : join(werkmap, uitNaam), eind: hookDuur(tekst) };
+        }),
+      );
+      let klaar = false;
+      if (plan.length > 0) {
+        try {
+          const r = await brandHookVarianten(basisPad, plan.map((p) => ({ hookPad: p.hookPad, eind: p.eind, uitPad: p.uitPad })), {
+            maxBytes: MAX_BYTES,
+            duur: totaal,
+            werkmap,
+          });
+          for (const p of plan) varianten.push(p.i === 0 ? { pad: p.uitPad, naam: p.uitNaam } : { pad: p.uitPad, naam: p.uitNaam, hook_variant: p.i + 1, hook_tekst: p.tekst });
+          console.log(`     hookvarianten: ${r.manier === 'concat' ? `kop tot ${r.kopTot.toFixed(2)} s opnieuw, staart gedeeld (stream-copy)` : 'volledig per variant (korte clip)'}`);
+          klaar = true;
+        } catch (e) {
+          console.log(`     hookvarianten via kop+staart mislukt (${(e as Error).message.slice(0, 80)}); per variant volledig`);
+        }
+      }
+      for (const p of klaar ? [] : plan) {
+        const { i, tekst, hookPad, uitNaam, uitPad } = p;
         try {
           await brandOverlays(basisPad, [{ pad: hookPad, start: 0, end: hookDuur(tekst) }], uitPad, {
             maxBytes: MAX_BYTES,
@@ -1493,11 +1547,13 @@ async function verwerk(job: Job) {
           }
         }
       }
+      tijd.varianten = (Date.now() - tVarianten) / 1000;
       if (hookTeksten.length > 1) console.log(`     ${varianten.length} hookvarianten gebrand (hook ${hookDuur(hookTeksten[0]).toFixed(1)}s in beeld)`);
       montage = { ...montage, pad: lokaal };
     }
 
     if (montage.kwaliteit.leestijd) console.log(`     ${montage.kwaliteit.leestijd}`);
+    if (montage.kwaliteit.graphicSchalen.length) console.log(`     graphics: ${montage.kwaliteit.graphicSchalen.join(', ')}`);
 
     // De kwaliteitsregel: alles wat bepaalt of de clip op een telefoon scherp
     // en leesbaar oogt, op één regel — bron, opschaling, ondertitel, kaders
@@ -1517,7 +1573,7 @@ async function verwerk(job: Job) {
         `     kwaliteit: analysebron ${b ? `${b.breedte}x${b.hoogte} ${b.codec ?? '?'}` : 'onbekend'}, ${renderbron}` +
           `effectieve opschaal bij sterkste zoom ×${k.opschaalMax.toFixed(2).replace('.', ',')}, ` +
           (ot
-            ? `ondertitels ${ot.familie} ${ot.assGrootte} (kap ${ot.kapPx} px; ${ot.plekken.standaard} standaard, ${ot.plekken.onder_kin} onder kin, ${ot.plekken.boven_hoofd} boven hoofd, ${ot.plekken.overlap} overlap), `
+            ? `ondertitels ${ot.familie} ${ot.assGrootte} (kap ${ot.kapPx} px; ${ot.plekken.standaard} standaard, ${ot.plekken.onder_kin} onder kin, ${ot.plekken.lager} lager, ${ot.plekken.kleiner} kleiner, ${ot.plekken.zoom_terug} zoom terug, ${ot.plekken.boven_hoofd} boven hoofd, ${ot.plekken.overlap} overlap), `
             : 'geen ondertitels, ') +
           `deelstukken ${k.persoonDelen} persoon / ${k.graphicDelen} graphic (${k.graphicsIngezoomd} ingezoomd), ` +
           `eindbitrate ${bitrate ? `${(bitrate.totaal / 1e6).toFixed(1).replace('.', ',')} Mbps (video ${(bitrate.video / 1e6).toFixed(1).replace('.', ',')})` : 'onbekend'}`,
@@ -1533,13 +1589,22 @@ async function verwerk(job: Job) {
       const retentieEind = doelen
         ? meetRetentie(segmenten, { bronWoorden, doelen, kaarten: retentieKaarten, ondertitels: Boolean(ondertitels) })
         : null;
+      const tKeuring = Date.now();
       const rapport = await keurMontage(montage.pad, segmenten, bronWoorden, {
         python: pythonMetOpenCV(),
         bronPad,
         retentie: retentieEind && doelen ? keurRetentie(retentieEind, doelen, { ondertitels: Boolean(ondertitels) }) : undefined,
         kader: (editClip?.kader ?? clip.kader ?? 'vullend') as Kader,
+        ondertitelPlekken: ondertitels?.stijl.plekken ?? null,
+        graphicsRegel: laatsteGraphicsKeuring && laatsteGraphicsKeuring.sleutel === segmentSleutel(segmenten) ? laatsteGraphicsKeuring.regel : undefined,
       });
+      tijd.keuring = (Date.now() - tKeuring) / 1000;
       if (retentieEind) await vulMontageplanAan(supabase, job.video_id, nummer, { retentie_eind: retentieEind });
+      const s = (x: number) => `${x.toFixed(0)} s`;
+      console.log(
+        `     tijd: bron ${s(bronSeconden)}${gedaan > 0 ? ' (gedeeld)' : ''}, scènes ${s(tijd.scenes)}, render ${s(tijd.render)}, ` +
+          `zelfherstel ${s(tijd.zelfherstel)}, varianten ${s(tijd.varianten)}, keuring ${s(tijd.keuring)}`,
+      );
       const kop =
         rapport.status === 'goed' ? 'GOED' : rapport.status === 'review_nodig' ? 'REVIEW NODIG' : 'NIET GETOETST (geen enkele regel meetbaar)';
       console.log(`     ── keuring: ${kop}`);
@@ -1714,6 +1779,11 @@ async function campagneNaam(supabase: ReturnType<typeof db>, videoId: string): P
   } catch {
     return null;
   }
+}
+
+/** Vingerafdruk van het montageplan: gelijk = dezelfde kaders en grenzen, dus een meting blijft geldig. */
+function segmentSleutel(segmenten: Shot[]): string {
+  return JSON.stringify(segmenten.map((s) => [s.volgorde, s.start, s.end, s.zoom, s.focusX, s.focusY, s.beeldtype, s.scenes]));
 }
 
 /** Bitrate van een gerenderd bestand (totaal en videostroom, bit/s); null als ffprobe het niet weet. */

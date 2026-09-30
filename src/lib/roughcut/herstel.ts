@@ -2,6 +2,7 @@ import type { Shot } from './index';
 import type { GraphicFout } from './keuring';
 import type { BronWoord } from './woorden';
 import { verzetGrens } from './poort';
+import { schaalTovPassend, unie } from './graphics';
 
 /**
  * Zelfherstel: de keuring als poort in plaats van als rapport achteraf.
@@ -35,14 +36,23 @@ export function herstelNaKeuring(
     if (!seg) continue;
     const scenes = (seg.scenes ?? []).filter((sc) => overlapt(sc, f.van, f.tot));
     if (f.soort === 'inhoud_buiten_beeld') {
-      let n = 0;
+      // Adaptief: eerst opnieuw kaderen met de ná de render gemeten inhoud
+      // (unie met de oude box — de graphic bleek breder, meestal door
+      // animatie). Pas als dát ook faalt, de inzoom eraf.
       for (const sc of scenes) {
-        if (sc.inhoud) {
-          sc.inhoud = null;
-          n++;
+        if (!sc.inhoud) continue;
+        if (f.gemeten && sc.inhoudBron !== 'verbreed') {
+          const breder = unie([sc.inhoud, f.gemeten]);
+          if (breder && (breder.x1 - breder.x0) * (breder.y1 - breder.y0) <= 0.92) {
+            sc.inhoud = breder;
+            sc.inhoudBron = 'verbreed';
+            acties.push(`shot ${f.volgorde} ${f.van.toFixed(1)}s: inhoud breder gemeten → opnieuw gekadreerd (×${schaalTovPassend(breder).toFixed(2).replace('.', ',')} t.o.v. passend)`);
+            continue;
+          }
         }
+        sc.inhoud = null;
+        acties.push(`shot ${f.volgorde} ${f.van.toFixed(1)}s: inzoom eraf → passend`);
       }
-      if (n) acties.push(`shot ${f.volgorde} ${f.van.toFixed(1)}s: inzoom eraf → passend`);
     } else if (f.soort === 'graphic_vullend') {
       if (scenes.length) {
         for (const sc of scenes) {

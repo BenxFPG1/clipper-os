@@ -12,10 +12,11 @@ import { basisZoom } from './index';
 import { instelling } from './instellingen';
 import type { Shot } from './index';
 import { deelstukken, gezichtMeterVia, type GezichtMeter } from './scenes';
-import { boxBinnen, graphicMeterVia, inhoudKader, lijktGraphic, type GraphicMeter } from './graphics';
+import { boxBinnen, graphicMeterVia, inhoudKader, lijktGraphic, type Box, type GraphicMeter } from './graphics';
 import type { Kader } from './kader';
 import { keurLeesbaar } from './leestijd';
 import { keurOverlay } from './eindscherm';
+import { keurOndertitelPlek, type Plek } from './ondertitels';
 
 /** Breedte/hoogte van een normale bron. */
 const BRON_VERHOUDING = 16 / 9;
@@ -319,6 +320,8 @@ export type GraphicFout = {
   van: number;
   tot: number;
   wat: string;
+  /** Bij inhoud_buiten_beeld: de inhoudsbox zoals na de render gemeten — het zelfherstel kadert daarmee opnieuw. */
+  gemeten?: Box;
 };
 
 /**
@@ -360,7 +363,7 @@ export async function keurGraphicsDetail(
           ingezoomd++;
           // Inzoomen mag nooit inhoud kosten.
           if (meting.box && !boxBinnen(meting.box, inhoudKader(d.inhoud).r)) {
-            fouten.push({ soort: 'inhoud_buiten_beeld', volgorde: seg.volgorde, van, tot, wat: `shot ${seg.volgorde} ${van.toFixed(1)}s: graphic-inhoud valt buiten beeld na inzoomen` });
+            fouten.push({ soort: 'inhoud_buiten_beeld', volgorde: seg.volgorde, van, tot, gemeten: meting.box, wat: `shot ${seg.volgorde} ${van.toFixed(1)}s: graphic-inhoud valt buiten beeld na inzoomen` });
           }
         } else if (!lijktGraphic(meting) && (d.gezicht === false || seg.beeldtype === 'graphic')) {
           fouten.push({ soort: 'camerabeeld_passend', volgorde: seg.volgorde, van, tot, wat: `shot ${seg.volgorde} ${van.toFixed(1)}s: camerabeeld in het passende kader (postzegel)` });
@@ -535,6 +538,13 @@ export async function keurMontage(
     gezichtMeter?: GezichtMeter;
     /** Graphic-meter (inhoud, vlakheid) voor ingezoomde graphics en wijde shots; standaard ffmpeg op de bron. */
     graphicMeter?: GraphicMeter;
+    /** Waar de ondertitelregels terechtkwamen (ondertitels.ts); voedt "ondertitel over gezicht". */
+    ondertitelPlekken?: Record<Plek, number> | null;
+    /**
+     * Al gemeten "graphics passend" (het zelfherstel meet hem op precies deze
+     * segmenten): hergebruiken in plaats van alles opnieuw te meten.
+     */
+    graphicsRegel?: KeuringRegel;
   } = {},
 ): Promise<Keuringsrapport> {
   const regels: KeuringRegel[] = [
@@ -546,7 +556,9 @@ export async function keurMontage(
     await keurNaden(montagePad, segmenten, bronWoorden),
     ...(opties.retentie ? [opties.retentie] : []),
     ...(opties.kader ? [keurLeesbaar(segmenten, opties.kader), keurOverlay(segmenten, opties.kader)] : []),
-    ...(opties.kader && (opties.gezichtMeter || opties.bronPad)
+    ...(opties.ondertitelPlekken !== undefined ? [keurOndertitelPlek(opties.ondertitelPlekken)] : []),
+    ...(opties.graphicsRegel ? [opties.graphicsRegel] : []),
+    ...(!opties.graphicsRegel && opties.kader && (opties.gezichtMeter || opties.bronPad)
       ? [
           await keurGraphics(
             segmenten,

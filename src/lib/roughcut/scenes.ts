@@ -3,7 +3,7 @@ import { resolveBinary } from '../ingest/binaries';
 import { instelling } from './instellingen';
 import type { Kader } from './kader';
 import type { Shot } from './index';
-import { graphicMeterVia, lijktGraphic, oppervlak, unie, type Box, type GraphicMeter, type GraphicMeting } from './graphics';
+import { graphicMeterVia, lijktGraphic, margeBox, oppervlak, unie, type Box, type GraphicMeter, type GraphicMeting } from './graphics';
 
 /**
  * Kaderkeuze per scène binnen een shot.
@@ -22,6 +22,8 @@ import { graphicMeterVia, lijktGraphic, oppervlak, unie, type Box, type GraphicM
 
 /** Een scène in bróntijd (absoluut), met of er een gezicht in staat; null = niet gemeten. */
 export type Scene = {
+  /** Waar de inhoudsbox vandaan komt: een stilstaande meting, de marges van een animerende graphic, of verbreed door het zelfherstel. */
+  inhoudBron?: 'meting' | 'marges' | 'verbreed';
   van: number;
   tot: number;
   gezicht: boolean | null;
@@ -351,6 +353,18 @@ export async function vulScenes(
           // geen enkele vaste uitsnede en blijft het passende kader.
           scene.inhoud = meting.stabiel ? meting.box : null;
           if (meting.box && !meting.stabiel) animerend++;
+          // Geen vaste box (de graphic animeert), maar wél duidelijke egale
+          // marges rondom alles wat er ooit in beeld komt: dan een milde
+          // inzoom tot die marges. Nooit inhoud eraf — de keuring meet het na
+          // de render opnieuw en het zelfherstel verbreedt of valt terug.
+          if (!scene.inhoud) {
+            const marges = margeBox(meting.boxen ?? []);
+            if (marges) {
+              scene.inhoud = marges;
+              scene.inhoudBron = 'marges';
+            }
+          }
+          if (scene.inhoud && !scene.inhoudBron) scene.inhoudBron = 'meting';
           scene.leeswoorden = meting.woorden;
           if (scene.inhoud) ingezoomd++;
           // Het beeld dat bij een verlengde leestijd blijft staan: het laatste

@@ -13,6 +13,7 @@ import { inhoudOpBeeld } from './graphics';
 import { leestijdPlan, vastgehoudenOp } from './leestijd';
 import type { Kader } from './kader';
 import type { BronWoord } from './woorden';
+import type { KeuringRegel } from './keuring';
 
 /**
  * Ondertitels op woordniveau, ingebrand in de mp4.
@@ -215,7 +216,7 @@ function assTijd(seconden: number): string {
  * loopt alleen de kleur mee met de stem. `plaatsing` is per regel de
  * onderrand in px (anker onder-midden); zonder plaatsing de standaardhoogte.
  */
-export function bouwAss(regels: OndertitelRegel[], stijl?: Huisstijl | null, plaatsing?: number[]): string {
+export function bouwAss(regels: OndertitelRegel[], stijl?: Huisstijl | null, plaatsing?: number[], schalen?: number[]): string {
   const font = ondertitelFont(stijl);
   const maat = ondertitelMaat(stijl);
   const accent = assKleur(stijl?.accent, '&H0000D7FF&'); // geel als er geen huisstijl is
@@ -246,7 +247,8 @@ export function bouwAss(regels: OndertitelRegel[], stijl?: Huisstijl | null, pla
     // Te breed voor het beeld? Dan kleiner, niet afbreken: een regel die
     // halverwege een woordgroep naar een tweede regel springt leest slecht.
     const breedte = regelBreedte(regel.woorden.map((w) => w.w).join(' '), stijl);
-    const schaal = breedte > instelling('ONDERTITEL_MAX_BREEDTE') ? Math.floor((instelling('ONDERTITEL_MAX_BREEDTE') / breedte) * 100) : 100;
+    const extra = schalen?.[r] ?? 1;
+    const schaal = Math.floor(Math.min(1, instelling('ONDERTITEL_MAX_BREEDTE') / (breedte * extra)) * extra * 100);
     const opmaak = `{\\an2\\pos(540,${y})${schaal < 100 ? `\\fscx${schaal}\\fscy${schaal}` : ''}}`;
     regel.woorden.forEach((woord, k) => {
       const van = woord.s;
@@ -275,7 +277,12 @@ function regelBreedte(tekst: string, stijl?: Huisstijl | null): number {
   return ctx.measureText(tekst).width + 2 * instelling('ONDERTITEL_RAND');
 }
 
-export type Plek = 'standaard' | 'onder_kin' | 'boven_hoofd' | 'overlap';
+export type Plek = 'standaard' | 'onder_kin' | 'lager' | 'kleiner' | 'zoom_terug' | 'boven_hoofd' | 'overlap';
+
+/** Lege telling per plek, voor log en keuring. */
+export function legePlekTelling(): Record<Plek, number> {
+  return { standaard: 0, onder_kin: 0, lager: 0, kleiner: 0, zoom_terug: 0, boven_hoofd: 0, overlap: 0 };
+}
 
 /**
  * Waar het gezicht op dit brontijdstip in het eindbeeld staat (fracties van
@@ -317,11 +324,13 @@ export function plaatsRegels(
   segmenten: Shot[],
   kader: Kader,
   stijl?: Huisstijl | null,
-): { plaatsing: number[]; plekken: Plek[] } {
+): { plaatsing: number[]; plekken: Plek[]; schalen: number[] } {
   const regelH = ondertitelMaat(stijl).assGrootte;
   const marge = instelling('ONDERTITEL_KIN_MARGE') * H;
   const maxOnder = instelling('ONDERTITEL_Y_MAX') * H;
+  const noodOnder = Math.max(maxOnder, instelling('ONDERTITEL_Y_MAX_NOOD') * H);
   const minBoven = instelling('ONDERTITEL_Y_MIN_BOVEN') * H;
+  const kleiner = instelling('ONDERTITEL_KLEINER');
   const standaard = standaardOnderrand(regelH);
   const begin: number[] = [];
   let cursor = 0;
@@ -331,13 +340,14 @@ export function plaatsRegels(
   }
   const plaatsing: number[] = [];
   const plekken: Plek[] = [];
+  const schalen: number[] = [];
   // Tijdens een vastgehouden graphic (leestijd) staat de graphic nog in
   // beeld, ook al hoort de tijd al bij het volgende deelstuk.
   const lees = leestijdPlan(segmenten, kader);
-  for (const regel of regels) {
-    // Het gezicht op een paar momenten binnen de regel: begin, midden, eind.
+  const meet = (regel: OndertitelRegel) => {
     let boven = Infinity;
     let onder = -Infinity;
+    let oorzaak: Shot | null = null;
     for (const t of [regel.s + 0.05, (regel.s + regel.e) / 2, regel.e - 0.05]) {
       const i = begin.findIndex((b, k) => t >= b && t < b + (segmenten[k].end - segmenten[k].start));
       if (i < 0) continue;
@@ -349,28 +359,92 @@ export function plaatsRegels(
         : gezichtOpBeeld(segmenten[i], kader, segmenten[i].start + (t - begin[i]));
       if (!g) continue;
       boven = Math.min(boven, g.boven * H);
-      onder = Math.max(onder, g.onder * H);
+      if (g.onder * H > onder) {
+        onder = g.onder * H;
+        oorzaak = vast ? null : segmenten[i];
+      }
     }
-    const botst = (y: number) => onder > -Infinity && y - regelH < onder + marge && y > boven - marge;
+    return { boven, onder, oorzaak };
+  };
+  for (const regel of regels) {
+    let { boven, onder, oorzaak } = meet(regel);
+    const botst = (y: number, h: number) => onder > -Infinity && y - h < onder + marge && y > boven - marge;
     let y = standaard;
     let plek: Plek = 'standaard';
-    if (botst(y)) {
+    let schaal = 1;
+    if (botst(y, regelH)) {
       const onderKin = onder + marge + regelH;
+      const onderKinKlein = onder + marge + regelH * kleiner;
       if (onderKin <= maxOnder) {
+        // (a) gewoon onder de kin.
         y = Math.max(standaard, onderKin);
         plek = 'onder_kin';
+      } else if (onderKin <= noodOnder) {
+        // (b) de onderste veilige positie: iets lager dan normaal, nog boven
+        // de knoppen van het platform.
+        y = onderKin;
+        plek = 'lager';
+      } else if (onderKinKlein <= noodOnder) {
+        // (c) de regel iets kleiner, zodat hij onder de kin past.
+        y = onderKinKlein;
+        schaal = kleiner;
+        plek = 'kleiner';
+      } else if (oorzaak && terugZoomen(oorzaak, (z) => {
+        const oud = oorzaak!.zoom;
+        oorzaak!.zoom = z;
+        const m = meet(regel);
+        oorzaak!.zoom = oud;
+        return m.onder + marge + regelH <= maxOnder;
+      })) {
+        // (d) het punch-in-kader van dit shot iets terugnemen, zodat de kin
+        // hoger komt te staan (hoogstens terug tot de basiszoom).
+        ({ boven, onder } = meet(regel));
+        y = Math.max(standaard, onder + marge + regelH);
+        plek = 'zoom_terug';
       } else if (boven - marge - regelH >= minBoven) {
+        // (e) pas als niets anders kan: boven het hoofd.
         y = boven - marge;
         plek = 'boven_hoofd';
       } else {
-        y = maxOnder;
+        y = noodOnder;
         plek = 'overlap';
       }
     }
-    plaatsing.push(Math.round(Math.min(maxOnder, y)));
+    plaatsing.push(Math.round(Math.min(noodOnder, y)));
     plekken.push(plek);
+    schalen.push(schaal);
   }
-  return { plaatsing, plekken };
+  return { plaatsing, plekken, schalen };
+}
+
+/**
+ * Neemt de punch-in van een shot stapsgewijs terug tot `past` klopt, nooit
+ * wijder dan de basiszoom. Alleen voor een shot dat boven zijn basiszoom
+ * staat (retentiewissel, naadbump); muteert de zoom als het lukt.
+ */
+function terugZoomen(seg: Shot, past: (zoom: number) => boolean): boolean {
+  const basis = basisZoom(seg);
+  const nu = seg.zoom ?? basis;
+  if (nu <= basis + 0.01) return false;
+  for (let z = nu - 0.02; z >= basis - 1e-6; z -= 0.02) {
+    const zr = Math.round(Math.max(basis, z) * 1000) / 1000;
+    if (past(zr)) {
+      seg.zoom = zr;
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Keuringsregel: geen ondertitelregel over een gezicht of graphic-inhoud. */
+export function keurOndertitelPlek(plekken: Record<Plek, number> | null | undefined): KeuringRegel {
+  const naam = 'ondertitel over gezicht';
+  if (!plekken) return { naam, goed: null, detail: 'geen ondertitels' };
+  const n = (p: Plek) => plekken[p] ?? 0;
+  const detail = `${n('standaard')} standaard, ${n('onder_kin')} onder kin, ${n('lager')} lager, ${n('kleiner')} kleiner, ${n('zoom_terug')} zoom terug, ${n('boven_hoofd')} boven hoofd`;
+  return n('overlap') > 0
+    ? { naam, goed: false, detail: `${n('overlap')} regel(s) over het gezicht; ${detail}` }
+    : { naam, goed: true, detail };
 }
 
 /** SRT uit dezelfde regels, voor de download naast de mp4. */
@@ -410,14 +484,14 @@ export function assFilter(assPad: string): string {
 }
 
 /** Terugval zonder libass: één PNG per regel, zelfde plek, font en grootte. */
-async function tekenRegelPng(tekst: string, pad: string, yOnder: number, stijl?: Huisstijl | null): Promise<void> {
+async function tekenRegelPng(tekst: string, pad: string, yOnder: number, stijl?: Huisstijl | null, extra = 1): Promise<void> {
   const font = ondertitelFont(stijl);
   const maat = ondertitelMaat(stijl);
   const m = fontMaat(font.bestand);
   const canvas = createCanvas(B, H);
   const ctx = canvas.getContext('2d');
   const breedte = regelBreedte(tekst, stijl);
-  const schaal = Math.min(1, instelling('ONDERTITEL_MAX_BREEDTE') / breedte);
+  const schaal = Math.min(1, instelling('ONDERTITEL_MAX_BREEDTE') / (breedte * extra)) * extra;
   const em = maat.emPx * schaal;
   ctx.font = `${em}px "${font.familie}", "Helvetica Neue", Arial, sans-serif`;
   ctx.textAlign = 'center';
@@ -465,22 +539,22 @@ export async function maakOndertitels(
   const srt = bouwSrtUitRegels(regels);
   const font = ondertitelFont(stijl);
   const maat = ondertitelMaat(stijl);
-  const { plaatsing, plekken } = plaatsRegels(regels, segmenten, opties.kader ?? 'vullend', stijl);
-  const telling: Record<Plek, number> = { standaard: 0, onder_kin: 0, boven_hoofd: 0, overlap: 0 };
+  const { plaatsing, plekken, schalen } = plaatsRegels(regels, segmenten, opties.kader ?? 'vullend', stijl);
+  const telling = legePlekTelling();
   for (const p of plekken) telling[p]++;
   const stijlInfo = { familie: font.familie, bestand: font.bestand, assGrootte: maat.assGrootte, kapPx: maat.kapPx, plekken: telling };
   if (regels.length === 0) return { regels, overlays: [], srt, stijl: stijlInfo };
 
   if (heeftAssFilter()) {
     const assPad = join(map, `${voorvoegsel}-ondertitels.ass`);
-    await writeFile(assPad, bouwAss(regels, stijl, plaatsing));
+    await writeFile(assPad, bouwAss(regels, stijl, plaatsing, schalen));
     return { regels, assPad, overlays: [], srt, stijl: stijlInfo };
   }
 
   const overlays: BurnOverlay[] = [];
   for (const [i, regel] of regels.entries()) {
     const pad = join(map, `${voorvoegsel}-ot-${String(i).padStart(3, '0')}.png`);
-    await tekenRegelPng(regel.woorden.map((w) => w.w).join(' '), pad, plaatsing[i], stijl);
+    await tekenRegelPng(regel.woorden.map((w) => w.w).join(' '), pad, plaatsing[i], stijl, schalen[i]);
     overlays.push({ pad, start: regel.s, end: regel.e });
   }
   return { regels, overlays, srt, stijl: stijlInfo };

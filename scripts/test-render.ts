@@ -21,7 +21,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { resolveBinary } from '../src/lib/ingest/binaries';
-import { brandOverlays, fpsVoorRender, maakRuweMontage, pasNaadZoomToe, probeBron, type Shot } from '../src/lib/roughcut';
+import { brandHookVarianten, brandOverlays, fpsVoorRender, maakRuweMontage, pasNaadZoomToe, probeBron, type Shot } from '../src/lib/roughcut';
 import { effectKeten } from '../src/lib/roughcut/kader';
 import { bouwAss, groepeerRegels, heeftAssFilter, maakOndertitels, woordenOpTijdlijn } from '../src/lib/roughcut/ondertitels';
 import { tekenHookKaart, hookDuur } from '../src/lib/roughcut/tekstkaarten';
@@ -33,7 +33,7 @@ import { STANDAARD_DOELEN } from '../src/lib/vault/normen';
 import { deelstukken, detecteerSceneKnippen, graphicWissels, strijkGlad, vulScenes, type GezichtMeter } from '../src/lib/roughcut/scenes';
 import { leestijdPlan } from '../src/lib/roughcut/leestijd';
 import { keurGraphics } from '../src/lib/roughcut/keuring';
-import { plaatsRegels, ondertitelMaat, gezichtOpBeeld, fontKlopt } from '../src/lib/roughcut/ondertitels';
+import { plaatsRegels, ondertitelMaat, gezichtOpBeeld, fontKlopt, keurOndertitelPlek, legePlekTelling } from '../src/lib/roughcut/ondertitels';
 import { kaderKeten } from '../src/lib/roughcut/kader';
 import { readFile } from 'node:fs/promises';
 import { createCanvas } from '@napi-rs/canvas';
@@ -184,6 +184,51 @@ async function main() {
         toets('brandOverlays slaagt', false, (e as Error).message.slice(-300));
       }
     }
+    // 3b. Hookvarianten via kop + staart: alleen de kop opnieuw encoderen,
+    //     de staart één keer, en stream-copy aan elkaar. Frame-exact, en het
+    //     geluid bit-voor-bit uit de basis (geen klik op de naad).
+    console.log('hookvarianten: kop opnieuw, staart gedeeld');
+    if (!fout) {
+      const frames = (pad: string) => {
+        const r = spawnSync(resolveBinary('ffprobe'), ['-v', 'error', '-count_frames', '-select_streams', 'v:0', '-show_entries', 'stream=nb_read_frames', '-of', 'csv=p=0', pad], { encoding: 'utf8' });
+        return Number((r.stdout ?? '').trim());
+      };
+      const grijs = (pad: string, n: number) => {
+        const r = spawnSync(resolveBinary('ffmpeg'), ['-v', 'error', '-i', pad, '-vf', `select=eq(n\\,${n}),scale=64:36`, '-frames:v', '1', '-f', 'rawvideo', '-pix_fmt', 'gray', '-'], { maxBuffer: 1e7 });
+        return r.stdout as Buffer;
+      };
+      const d = (a: Buffer, b: Buffer) => (a.length && a.length === b.length ? a.reduce((t, x, i) => t + Math.abs(x - b[i]), 0) / a.length : 255);
+      const pcm = (pad: string) => spawnSync(resolveBinary('ffmpeg'), ['-v', 'error', '-i', pad, '-map', '0:a', '-f', 's16le', '-ac', '1', '-'], { maxBuffer: 1e8 }).stdout as Buffer;
+      const uitA = join(map, 'var-a.mp4');
+      const uitB = join(map, 'var-b.mp4');
+      const t0 = Date.now();
+      const r = await brandHookVarianten(basis, [{ hookPad, eind: 2.4, uitPad: uitA }, { hookPad, eind: 3.1, uitPad: uitB }], { duur: 10.8, werkmap: map, maxBytes: 50 * 1024 * 1024 });
+      const nieuwMs = Date.now() - t0;
+      const t1 = Date.now();
+      for (const [i, eind] of [2.4, 3.1].entries()) await brandOverlays(basis, [{ pad: hookPad, start: 0, end: eind }], join(map, `oud-${i}.mp4`), { maxBytes: 50 * 1024 * 1024, duur: 10.8 });
+      const oudMs = Date.now() - t1;
+      console.log(`  (twee varianten: oude manier ${(oudMs / 1000).toFixed(1)} s, kop+staart ${(nieuwMs / 1000).toFixed(1)} s; kop tot ${r.kopTot.toFixed(3)} s)`);
+      toets('kop + staart gebruikt', r.manier === 'concat');
+      const nb = frames(basis);
+      toets('variant heeft exact evenveel frames als de basis', frames(uitA) === nb && frames(uitB) === nb, `${frames(uitA)}/${frames(uitB)} vs ${nb}`);
+      const fps = 25;
+      const naad = Math.round(r.kopTot * fps);
+      let naadGoed = true;
+      let detail = '';
+      for (const n of [naad - 2, naad - 1, naad, naad + 1, naad + 2]) {
+        const eigen = d(grijs(uitA, n), grijs(basis, n));
+        const buur = d(grijs(uitA, n), grijs(basis, n + 1));
+        detail += `${n}: ${eigen.toFixed(1)}/${buur.toFixed(1)} `;
+        // Na de hookkaart moet elk frame op zijn eigen frame in de basis lijken.
+        if (n >= naad && !(eigen < 3 && eigen < buur)) naadGoed = false;
+      }
+      toets('rond de naad frame-exact (geen dubbel of verloren frame)', naadGoed, detail);
+      const pa = pcm(uitA);
+      const pb = pcm(basis);
+      toets('geluid bit-identiek aan de basis (geen klik op de naad)', pa.length === pb.length && pa.equals(pb), `${pa.length} vs ${pb.length}`);
+      toets('sneller dan de oude manier', nieuwMs < oudMs, `${nieuwMs} vs ${oudMs} ms`);
+    }
+
     // 4. Retentie-render: dezelfde bron, één lang shot met twee lange pauzes.
     //    De retentie-editor knipt de pauzes weg en zet kaderwissels; daarna
     //    naadbump en poort zoals in de worker, en dan de echte ffmpeg-keten.
@@ -625,7 +670,22 @@ async function main() {
       toets('ondertitel onder de kin (niet over het gezicht)', p.plekken[0] !== 'overlap' && (y - regelH >= opBeeld.onder * 1920 || y <= opBeeld.boven * 1920), `regel ${Math.round(y - regelH)}-${y}px, gezicht ${Math.round(opBeeld.boven * 1920)}-${Math.round(opBeeld.onder * 1920)}px (${p.plekken[0]})`);
       const closeUp = seg({ x: 0.5, breedte: 0.2, top: 0.25, hoogte: 0.5 }, 1.5);
       const pc = plaatsRegels(regels, [closeUp], 'vullend');
-      toets('close-up: nooit onder 78%, en een overlap wordt benoemd of vermeden', pc.plaatsing[0] <= 0.78 * 1920 + 0.5 && ['boven_hoofd', 'overlap', 'onder_kin'].includes(pc.plekken[0]), JSON.stringify(pc));
+      toets('close-up: nooit onder de noodgrens (80%), en een overlap wordt benoemd of vermeden', pc.plaatsing[0] <= 0.8 * 1920 + 0.5 && ['boven_hoofd', 'overlap', 'onder_kin', 'lager', 'kleiner', 'zoom_terug'].includes(pc.plekken[0]), JSON.stringify(pc));
+      // De nieuwe volgorde: onder de kin → lager (tot 80%) → kleiner →
+      // punch-in terug → pas dan boven het hoofd.
+      const vlak = (top: number, hoogte: number, zoom: number): Shot => ({ volgorde: 1, start: 10, end: 14, functie: 'setup', focusX: 0.5, zoom, focusY: 0.5, gezicht: { x: 0.5, breedte: 0.12, top, hoogte } });
+      const plek = (sg: Shot) => plaatsRegels(regels, [sg], 'vullend');
+      const lager = plek(vlak(0.3, 0.41, 1));
+      toets('kin net te laag: iets lager geplaatst (≤ 80%)', lager.plekken[0] === 'lager' && lager.plaatsing[0] <= 0.8 * 1920, JSON.stringify(lager));
+      const klein = plek(vlak(0.3, 0.425, 1));
+      toets('ook dat niet: de regel kleiner (85%)', klein.plekken[0] === 'kleiner' && klein.schalen[0] === 0.85, JSON.stringify(klein));
+      const punch = vlak(0.3, 0.39, 1.3);
+      const zt = plek(punch);
+      toets('met punch-in: zoom terug zodat de regel onder de kin past', zt.plekken[0] === 'zoom_terug' && (punch.zoom ?? 9) < 1.3 && (punch.zoom ?? 0) >= 1, JSON.stringify({ zt, zoom: punch.zoom }));
+      const hoofd = plek(vlak(0.45, 0.31, 1));
+      toets('zonder punch-in en zonder ruimte: pas dan boven het hoofd', hoofd.plekken[0] === 'boven_hoofd', JSON.stringify(hoofd));
+      toets('keuring "ondertitel over gezicht" groen zonder overlap', keurOndertitelPlek({ ...legePlekTelling(), onder_kin: 3, lager: 1, boven_hoofd: 1 }).goed === true);
+      toets('en rood bij een regel over het gezicht', keurOndertitelPlek({ ...legePlekTelling(), overlap: 1 }).goed === false);
       const graphicShot: Shot = { ...midden, scenes: [{ van: 10, tot: 14, gezicht: false }] };
       toets('graphic-deelstuk: ondertitel op de standaardhoogte', plaatsRegels(regels, [graphicShot], 'vullend').plekken[0] === 'standaard');
     }

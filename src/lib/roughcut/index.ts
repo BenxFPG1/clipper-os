@@ -9,7 +9,8 @@ import { snapShots, verwijderDodeLucht, type SnapSegment, type Stilte } from './
 import { encodePreset, instelling } from './instellingen';
 import { assFilter } from './ondertitels';
 import { deelstukken, type Scene } from './scenes';
-import { inhoudKader } from './graphics';
+import { inhoudKader, schaalTovPassend } from './graphics';
+import { bewaarInBronCache, bronSleutel, haalUitBronCache } from './broncache';
 import { leesLogregel, leestijdPlan } from './leestijd';
 import { haalRenderSecties, sectieBeeldTijd, sectiePlan, sectieTijd, sectieVoor, type RenderBron } from './renderbron';
 
@@ -216,6 +217,8 @@ export async function maakRuweMontage(opties: {
   renderSecties?: boolean;
   /** Al opgehaalde renderbron (tests, of een aanroeper die de secties zelf beheert); wint van renderSecties. */
   renderBron?: RenderBron;
+  /** Video-id: dan worden 4K-secties ook in de R2-cache gezocht en bewaard. */
+  videoId?: string;
   onVoortgang?: (bericht: string) => void;
 }): Promise<{ pad: string; duur: number; bron: BronEigenschappen | null; kwaliteit: RenderKwaliteit }> {
   const { sourceUrl, shots, outputPad, werkmap } = opties;
@@ -271,7 +274,7 @@ export async function maakRuweMontage(opties: {
   const invoer: string[] = [];
   const delenVideo: string[] = [];
   const delenAudio: string[] = [];
-  const kwaliteit: RenderKwaliteit = { opschaalMax: 0, persoonDelen: 0, graphicDelen: 0, graphicsIngezoomd: 0, renderbron: null };
+  const kwaliteit: RenderKwaliteit = { opschaalMax: 0, persoonDelen: 0, graphicDelen: 0, graphicsIngezoomd: 0, graphicSchalen: [], renderbron: null };
   const verhouding = bronInfo && bronInfo.hoogte > 0 ? bronInfo.breedte / bronInfo.hoogte : 16 / 9;
 
   // De renderbron: alleen de stukken die deze clip gebruikt, in de hoogste
@@ -287,6 +290,7 @@ export async function maakRuweMontage(opties: {
         plan: sectiePlan(gesorteerd.map((sh) => ({ start: sh.start - OVERLAP, end: sh.end + OVERLAP }))),
         map: join(werkmap, 'secties'),
         videoDuur: await duurVan(bronBestand),
+        videoId: opties.videoId,
         log,
       });
     } catch (e) {
@@ -355,6 +359,13 @@ export async function maakRuweMontage(opties: {
       // Een graphic met gemeten inhoud: ingezoomd op die inhoud (graphics.ts).
       const inhoud = deel.kader === 'blur' && deel.inhoud ? inhoudKader(deel.inhoud, verhouding) : undefined;
       if (inhoud) kwaliteit.graphicsIngezoomd++;
+      if (deel.kader === 'blur' && deel.gezicht === false) {
+        const schaal = deel.inhoud ? schaalTovPassend(deel.inhoud, verhouding) : 1;
+        const sleutel = `shot ${shot.volgorde} ${(shot.start + deel.van).toFixed(1)} s`;
+        if (!kwaliteit.graphicSchalen.some((x) => x.startsWith(sleutel))) {
+          kwaliteit.graphicSchalen.push(`${sleutel} ×${schaal.toFixed(2).replace('.', ',')}${deel.inhoud ? '' : ' (passend)'}`);
+        }
+      }
       if (deel.gezicht === false || (deel.gezicht === null && deel.kader === 'blur' && shot.beeldtype === 'graphic')) kwaliteit.graphicDelen++;
       else kwaliteit.persoonDelen++;
       return (
@@ -713,6 +724,8 @@ export type RenderKwaliteit = {
   graphicDelen: number;
   /** Graphic-deelstukken die op hun gemeten inhoud zijn ingezoomd. */
   graphicsIngezoomd: number;
+  /** Per graphic de schaal van de inhoud t.o.v. het passende kader (1 = passend). */
+  graphicSchalen: string[];
   /** De leestijd-logregel (leestijd.ts). */
   leestijd?: string;
   renderbron: {
@@ -757,9 +770,19 @@ export async function zorgVoorBron(
   sourceUrl: string,
   werkmap: string,
   log: (m: string) => void = () => {},
+  opties: { videoId?: string } = {},
 ): Promise<string> {
   await mkdir(werkmap, { recursive: true });
   const bronBestand = join(werkmap, 'bron.mp4');
+
+  // Eerst de R2-cache (broncache.ts): een tweede render van dezelfde video
+  // hoeft niet opnieuw van YouTube te downloaden.
+  if (!existsSync(bronBestand) && opties.videoId) {
+    if (await haalUitBronCache(bronSleutel(opties.videoId, 'analyse.mp4'), bronBestand)) {
+      log('Bronvideo uit de R2-cache.');
+      return bronBestand;
+    }
+  }
 
   if (!existsSync(bronBestand)) {
     log('Bronvideo downloaden…');
@@ -778,6 +801,9 @@ export async function zorgVoorBron(
       '-o', bronBestand,
       sourceUrl,
     ], { log });
+    if (opties.videoId && (await bewaarInBronCache(bronSleutel(opties.videoId, 'analyse.mp4'), bronBestand))) {
+      log('Bronvideo in de R2-cache gezet.');
+    }
   } else {
     log('Bronvideo staat al klaar.');
   }
@@ -1067,6 +1093,70 @@ export async function brandOverlays(
     '-movflags', '+faststart',
     uitPad,
   ]);
+}
+
+/**
+ * Alle hookvarianten van één montage, zonder de hele clip per variant
+ * opnieuw te encoderen.
+ *
+ * Voorheen: drie keer de volledige clip opnieuw encoderen (medium, crf 17),
+ * alleen om er een andere kaart over de eerste seconden te leggen — bijna
+ * twee minuten per clip. Nu: de staart (vanaf het eerste frame ná de langste
+ * hookkaart) één keer encoderen, per variant alleen de kop (0 → dat frame)
+ * met zijn eigen kaart, en die twee met stream-copy aan elkaar zetten. De
+ * staart begint per definitie op een keyframe, de naad valt precies op een
+ * framegrens, en het geluid komt ongewijzigd uit de basis (stream-copy): geen
+ * tweede AAC-encode, dus geen klik of gat op de naad.
+ *
+ * Valt de kop bijna samen met het einde (heel korte clip), dan terug naar de
+ * oude manier per variant.
+ */
+export async function brandHookVarianten(
+  basisPad: string,
+  varianten: { hookPad: string; eind: number; uitPad: string }[],
+  opties: { maxBytes?: number; duur: number; werkmap: string },
+): Promise<{ kopTot: number; manier: 'concat' | 'volledig' }> {
+  const bron = await probeBron(basisPad).catch(() => null);
+  const fps = bron?.fps && bron.fps > 1 ? bron.fps : 25;
+  const langste = Math.max(...varianten.map((v) => v.eind));
+  // Het eerste frame ná de langste hookkaart (+ één frame speling).
+  const frames = Math.ceil((langste + 1 / fps) * fps);
+  const kopTot = frames / fps;
+  const encode = encodeArgs({ maxBytes: opties.maxBytes, duur: opties.duur });
+  if (kopTot >= opties.duur - 0.5) {
+    for (const v of varianten) await brandOverlays(basisPad, [{ pad: v.hookPad, start: 0, end: v.eind }], v.uitPad, { maxBytes: opties.maxBytes, duur: opties.duur });
+    return { kopTot, manier: 'volledig' };
+  }
+  const staart = join(opties.werkmap, `staart-${Date.now()}.mp4`);
+  // De staart: frame-exact vanaf kopTot (invoer-seek met decode), alleen beeld.
+  await run(resolveBinary('ffmpeg'), [
+    '-y', '-ss', kopTot.toFixed(6), '-i', basisPad, '-map', '0:v', '-an', ...encode, '-movflags', '+faststart', staart,
+  ]);
+  try {
+    for (const v of varianten) {
+      const kop = join(opties.werkmap, `kop-${Date.now()}-${Math.random().toString(36).slice(2)}.mp4`);
+      const lijst = `${kop}.txt`;
+      await run(resolveBinary('ffmpeg'), [
+        '-y', '-i', basisPad, '-i', v.hookPad,
+        '-filter_complex', `[0:v]trim=end_frame=${frames},setpts=PTS-STARTPTS[b];[b][1:v]overlay=0:0:enable='between(t,0,${v.eind.toFixed(2)})'[v]`,
+        '-map', '[v]', '-an', ...encode, kop,
+      ]);
+      const { writeFile } = await import('node:fs/promises');
+      await writeFile(lijst, `file '${kop.replace(/'/g, "'\\''")}'\nfile '${staart.replace(/'/g, "'\\''")}'\n`);
+      try {
+        await run(resolveBinary('ffmpeg'), [
+          '-y', '-f', 'concat', '-safe', '0', '-i', lijst, '-i', basisPad,
+          '-map', '0:v', '-map', '1:a?', '-c', 'copy', '-movflags', '+faststart', v.uitPad,
+        ]);
+      } finally {
+        await rm(kop, { force: true });
+        await rm(lijst, { force: true });
+      }
+    }
+  } finally {
+    await rm(staart, { force: true });
+  }
+  return { kopTot, manier: 'concat' };
 }
 
 function runMetStderr(command: string, args: string[]): Promise<string> {

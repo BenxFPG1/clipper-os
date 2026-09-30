@@ -460,3 +460,25 @@ export function inhoudOpBeeld(box: Box, verhouding = 16 / 9): { boven: number; o
 export function boxBinnen(box: Box, r: Box, tolerantie = 0.01): boolean {
   return box.x0 >= r.x0 - tolerantie && box.y0 >= r.y0 - tolerantie && box.x1 <= r.x1 + tolerantie && box.y1 <= r.y1 + tolerantie;
 }
+
+/**
+ * De inhoud van een animerende graphic als unie van álle gemeten frames,
+ * maar alleen als er rondom duidelijke egale marge overblijft
+ * (GRAPHIC_MIN_MARGE per kant) — anders levert inzoomen te weinig op om het
+ * risico waard te zijn.
+ */
+export function margeBox(boxen: (Box | null)[]): Box | null {
+  const echt = boxen.filter((b): b is Box => b !== null);
+  if (echt.length === 0) return null;
+  const u = unie(echt);
+  if (!u) return null;
+  const m = instelling('GRAPHIC_MIN_MARGE');
+  if (u.x0 < m || u.y0 < m || 1 - u.x1 < m || 1 - u.y1 < m) return null;
+  return u;
+}
+
+/** Hoeveel groter de inhoud in beeld staat dan in het gewone passende kader (1 = passend). */
+export function schaalTovPassend(box: Box, verhouding = 16 / 9): number {
+  const k = inhoudKader(box, verhouding);
+  return Math.round((k.fgB / 1080 / (k.r.x1 - k.r.x0)) * 100) / 100;
+}

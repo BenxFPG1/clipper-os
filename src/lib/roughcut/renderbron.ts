@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { resolveBinary } from '../ingest/binaries';
 import { voerYtdlpUit } from '../ingest/youtube';
 import { instelling } from './instellingen';
+import { bewaarInBronCache, bronSleutel, haalUitBronCache, lijstBronCache } from './broncache';
 
 /**
  * Analysebron en renderbron gescheiden.
@@ -366,6 +367,8 @@ export async function haalRenderSecties(opties: {
   log?: (m: string) => void;
   /** Voor tests: vervangt yt-dlp. Moet het bestand op `pad` neerzetten. */
   downloader?: (sectie: Sectie, pad: string) => Promise<void>;
+  /** Met een video-id worden secties ook in de R2-cache gezocht en bewaard (broncache.ts). */
+  videoId?: string;
 }): Promise<RenderBron> {
   const log = opties.log ?? (() => {});
   await mkdir(opties.map, { recursive: true });
@@ -377,11 +380,26 @@ export async function haalRenderSecties(opties: {
   const timeout = instelling('RENDERBRON_TIMEOUT') * 1000;
   const minCorrelatie = instelling('RENDERBRON_MIN_CORRELATIE');
 
+  // Secties van eerdere renders in R2: de metadata (uitlijning) eerst, het
+  // bestand pas als hij het gevraagde stuk dekt.
+  const remote = opties.videoId ? await remoteSecties(opties.videoId, opties.map) : [];
   for (const sectie of opties.plan) {
     const hergebruik = bekend.find((b) => b.bronStart <= sectie.van + 0.5 && b.bronStart + b.duur >= sectie.tot - 0.5);
     if (hergebruik) {
       secties.push(hergebruik);
       continue;
+    }
+    const uitCache = remote.find((b) => b.bronStart <= sectie.van + 0.5 && b.bronStart + b.duur >= sectie.tot - 0.5);
+    if (uitCache && opties.videoId) {
+      const lokaal = join(opties.map, uitCache.pad.split('/').pop() as string);
+      if (await haalUitBronCache(bronSleutel(opties.videoId, `secties/${lokaal.split('/').pop()}`), lokaal)) {
+        const b = { ...uitCache, pad: lokaal };
+        writeFileSync(metaPad(lokaal), JSON.stringify(b));
+        secties.push(b);
+        bekend.push(b);
+        log(`renderbron: sectie ${uitCache.van.toFixed(1)}-${uitCache.tot.toFixed(1)} s uit de R2-cache`);
+        continue;
+      }
     }
     const pad = join(opties.map, `sectie-${sectie.van.toFixed(1)}-${sectie.tot.toFixed(1)}.mp4`);
     try {
@@ -438,6 +456,11 @@ export async function haalRenderSecties(opties: {
       };
       writeFileSync(metaPad(pad), JSON.stringify(bestand));
       secties.push(bestand);
+      if (opties.videoId) {
+        const naam = pad.split('/').pop() as string;
+        await bewaarInBronCache(bronSleutel(opties.videoId, `secties/${naam}`), pad);
+        await bewaarInBronCache(bronSleutel(opties.videoId, `secties/${naam.replace(/\.mp4$/, '.json')}`), metaPad(pad));
+      }
       log(
         `renderbron: sectie ${sectie.van.toFixed(1)}-${sectie.tot.toFixed(1)} s → ${info.breedte}x${info.hoogte} ${info.codec}, ` +
           `${(bytes / 1e6).toFixed(1)} MB, geluid begint op ${bestand.bronStart.toFixed(3)} s (correlatie ${uitgelijnd.correlatie}), ` +
@@ -459,4 +482,21 @@ export async function haalRenderSecties(opties: {
   const geschatVolMb =
     opties.videoDuur && totaalDuur > 0 ? Math.round(((totaalBytes / totaalDuur) * opties.videoDuur) / 1e6) : null;
   return { secties, mbGedownload: Math.round((bytesNieuw / 1e6) * 10) / 10, geschatVolMb, fouten };
+}
+
+/** De uitlijningsmetadata van secties die al in R2 staan (alleen de kleine json-bestanden). */
+async function remoteSecties(videoId: string, map: string): Promise<SectieBestand[]> {
+  const lijst = await lijstBronCache(bronSleutel(videoId, 'secties/'));
+  const uit: SectieBestand[] = [];
+  for (const o of lijst.filter((x) => x.sleutel.endsWith('.json'))) {
+    const lokaal = join(map, `remote-${o.sleutel.split('/').pop()}`);
+    if (!(await haalUitBronCache(o.sleutel, lokaal))) continue;
+    try {
+      uit.push(JSON.parse(readFileSync(lokaal, 'utf8')) as SectieBestand);
+    } catch {
+      // kapotte metadata: negeren
+    }
+    await rm(lokaal, { force: true });
+  }
+  return uit;
 }
