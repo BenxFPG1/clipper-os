@@ -99,6 +99,12 @@ export type Shot = {
    * één-gezicht-meting en het spoor mogen dit niet meer overschrijven.
    */
   sprekerBepaald?: boolean;
+  /**
+   * Scherp begin (scherpbegin.ts): de eerste `tot` seconden van dit shot
+   * tonen het (verwerkte) frame op brontijd `bron` bevroren; het geluid loopt
+   * gewoon door. Alleen op het eerste shot van de clip.
+   */
+  bevriesBegin?: { tot: number; bron: number };
   beeld_effect?: string;
   /**
    * De emotiecurve (bouwsteen D), 1-10, uit het plan. Stuurt de muziek-
@@ -555,6 +561,25 @@ export async function maakRuweMontage(opties: {
   //
   // Beeld en geluid worden als twee losse grafen opgebouwd: de geluidsgraaf
   // draait straks een keer extra, alleen om de luidheid te meten.
+  // Scherp begin: het eerste stuk van het eerste shot vervangen door het
+  // eerste scherpe frame (bevroren). Uit de al verwerkte keten [v0] gepakt,
+  // dus met hetzelfde kader en dezelfde kleur; daarna loopt het beeld door
+  // vanaf precies dat frame — geen sprong.
+  const bevries = gesorteerd[0]?.bevriesBegin;
+  if (bevries && bevries.tot > 0 && bevries.tot < gesorteerd[0].end - gesorteerd[0].start - 0.2) {
+    const rel = Math.max(0, bevries.bron - gesorteerd[0].start);
+    const frameDuur = 1 / (Number(fpsUit) || 25);
+    const laatste = delenVideo[0].lastIndexOf('[v0]');
+    if (laatste >= 0) {
+      delenVideo[0] =
+        `${delenVideo[0].slice(0, laatste)}[v0x]${delenVideo[0].slice(laatste + 4)}` +
+        `;[v0x]split=2[v0p][v0q]` +
+        `;[v0p]trim=start=${rel.toFixed(3)}:duration=${frameDuur.toFixed(4)},setpts=PTS-STARTPTS,tpad=stop_mode=clone:stop_duration=${Math.max(0, bevries.tot - frameDuur).toFixed(3)}[v0f]` +
+        `;[v0q]trim=start=${bevries.tot.toFixed(3)},setpts=PTS-STARTPTS[v0r]` +
+        `;[v0f][v0r]concat=n=2:v=1:a=0,setsar=1[v0]`;
+      log(`scherp begin: eerste ${bevries.tot.toFixed(2)} s bevroren op bron ${bevries.bron.toFixed(2)} s`);
+    }
+  }
   const beeldKoppel = gesorteerd.map((_, i) => `[v${i}]`).join('');
   let videoFilter = `${delenVideo.join(';')};${beeldKoppel}concat=n=${gesorteerd.length}:v=1:a=0[vuit]`;
   let filter = delenAudio.join(';');

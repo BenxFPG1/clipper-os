@@ -104,6 +104,20 @@ const STANDAARD = {
    * snelle pan (s) en de maximale breedte van een tweeshot (fractie).
    */
   SPREKER_STAP: 0.1,
+  /** Zelfherstel op de spreker: vanaf welk aandeel hoofd buiten beeld / afwijking van het midden het kader verplaatst wordt. */
+  ZELFHERSTEL_SPREKER_BUITEN: 0.25,
+  ZELFHERSTEL_SPREKER_MIDDEN: 0.2,
+  /** Tweeshot alleen als elk gezicht minstens dit aandeel van de beeldbreedte (9:16) krijgt. */
+  TWEESHOT_MIN_GEZICHT: 0.12,
+  /**
+   * Scherp begin (Laplacian-variantie, gezichtsuitsnede op 160 px): onder deze
+   * waarde is een gezicht onscherp. Gemeten: scherpe gezichten 56–86,
+   * bewegingsonscherpte/zwiep 4–15. Beeld als geheel: zwiep 40–80, normaal 250+.
+   */
+  SCHERP_MIN_GEZICHT: 18,
+  SCHERP_MIN_BEELD: 120,
+  /** Hoogstens zoveel seconden aan het begin bevriezen op het eerste scherpe frame. */
+  SCHERP_BEVRIES_MAX: 0.6,
   SPREKER_VENSTER: 0.5,
   SPREKER_MIN_VAST: 1.2,
   SPREKER_MIN_DEEL: 0.6,

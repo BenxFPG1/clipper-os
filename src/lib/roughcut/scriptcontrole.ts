@@ -100,6 +100,23 @@ export function vindKopIndex(
   return null;
 }
 
+/**
+ * Staat de kop van het fragment in de bronwoorden vlak na het begin van het
+ * shot? Dan zit hij in de montage — dat segment dekt precies dat stuk bron —
+ * en is een "niet terug te horen" in de terugluistering een meetfout: het
+ * kleine controlemodel verstaat straattaal en Engels slecht (MUKBANG clip 4:
+ * shots 4 en 6 "niet te horen" terwijl de woorden in de bron op de knip staan).
+ */
+export function kopInBron(fragment: string, seg: { start: number; end: number }, bronWoorden: { w: string; s: number; e: number }[] | null): boolean {
+  if (!bronWoorden?.length || !fragment) return false;
+  const woorden = bronWoorden
+    .filter((w) => w.s >= seg.start - 0.3 && w.s <= Math.min(seg.end, seg.start + 4))
+    .sort((a, b) => a.s - b.s)
+    .map((w) => ({ n: norm(w.w) }))
+    .filter((w) => w.n);
+  return vindKopIndex(fragment, woorden, 6) !== null;
+}
+
 export async function controleerScript(
   montagePad: string,
   segmenten: (Shot & { transcript_fragment?: string })[],

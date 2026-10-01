@@ -37,12 +37,13 @@ DREMPEL = 0.7         # zekerheid waarboven YuNet-detecties meetellen
 
 pad = sys.argv[1]
 SPREKERMODUS = len(sys.argv) > 2 and sys.argv[2] == "--sprekers"
-tijden = [] if SPREKERMODUS else json.loads(sys.argv[2])
+SCHERPTEMODUS = len(sys.argv) > 2 and sys.argv[2] == "--scherpte"
+tijden = [] if (SPREKERMODUS or SCHERPTEMODUS) else json.loads(sys.argv[2])
 # Optioneel derde argument: hoeveel frames per tijdstip. Voor het volgen van een
 # spreker vragen we véél tijdstippen met één frame elk (snel en fijnmazig); voor
 # het bepalen van de kadrering juist weinig tijdstippen met vijf frames (robuust
 # tegen één ongelukkig frame).
-if len(sys.argv) > 3 and not SPREKERMODUS:
+if len(sys.argv) > 3 and not SPREKERMODUS and not SCHERPTEMODUS:
     MONSTERS = max(1, int(sys.argv[3]))
 cap = cv2.VideoCapture(pad)
 
@@ -233,6 +234,51 @@ def mondbeweging(frames, vak):
     return sum(verschillen) / len(verschillen)
 
 
+def scherpte(frame, vak=None):
+    """Laplacian-variantie: hoe scherp is dit stuk beeld?
+
+    Op een vaste maat (het gezicht of het midden van het beeld naar 160 px
+    breed geschaald), zodat een groot en een klein gezicht vergelijkbaar
+    zijn. Een wazige arm of bewegingsonscherpte geeft een lage waarde, een
+    scherp gezicht een hoge.
+    """
+    h, b = frame.shape[:2]
+    if vak is None:
+        x0, x1, y0, y1 = int(b * 0.3), int(b * 0.7), int(h * 0.2), int(h * 0.8)
+    else:
+        x, y, w, hh = [int(v) for v in vak]
+        x0, y0, x1, y1 = max(0, x), max(0, y), min(b, x + w), min(h, y + hh)
+    stuk = frame[y0:y1, x0:x1]
+    if stuk.size == 0 or stuk.shape[1] < 8 or stuk.shape[0] < 8:
+        return 0.0
+    schaal = 160.0 / stuk.shape[1]
+    stuk = cv2.resize(stuk, None, fx=schaal, fy=schaal, interpolation=cv2.INTER_AREA)
+    return float(cv2.Laplacian(cv2.cvtColor(stuk, cv2.COLOR_BGR2GRAY), cv2.CV_64F).var())
+
+
+def scherptemeting(t):
+    """Per tijdstip: scherpte van het beeld en van het grootste gezicht."""
+    cap.set(cv2.CAP_PROP_POS_MSEC, float(t) * 1000)
+    ok, frame = cap.read()
+    if not ok:
+        return None
+    b = frame.shape[1]
+    gezichten = detecteer(frame)
+    beste = None
+    for (vak, mond, kijkt, ooghoogte, visueel) in gezichten:
+        if beste is None or vak[2] > beste[2]:
+            beste = vak
+    return {
+        "t": round(float(t), 3),
+        "beeld": round(scherpte(frame), 1),
+        "gezicht": None if beste is None else {
+            "x": round((beste[0] + beste[2] / 2) / b, 4),
+            "breedte": round(beste[2] / b, 4),
+            "scherpte": round(scherpte(frame, beste), 1),
+        },
+    }
+
+
 def grijs_uitsnede(frame, vak, maat=(32, 16)):
     x, y, w, h = [max(0, int(v)) for v in vak]
     stuk = frame[y: y + h, x: x + w]
@@ -356,7 +402,9 @@ def sprekermeting(van, tot, stap):
             sp["ogen"].append((ooghoogte if ooghoogte is not None else y + h * 0.38) / kh)
             sp["tops"].append(y / kh)
             sp["hs"].append(h / kh)
-            sp["monsters"].append([round(t, 3), round(mid, 4), energie])
+            # Scherpte van dit gezicht (4e veld): bij twee even waarschijnlijke
+            # sprekers wint het gezicht dat in focus is.
+            sp["monsters"].append([round(t, 3), round(mid, 4), energie, round(scherpte(beeld, (x, y, w, h)), 1)])
     afgesloten.extend(sporen)
     med = lambda xs: sorted(xs)[len(xs) // 2]
     personen = []
@@ -364,7 +412,7 @@ def sprekermeting(van, tot, stap):
         # Alleen wie een flink deel van zijn camerastandpunt in beeld is en
         # niet piepklein op de achtergrond staat.
         totaal = monsters_per_scene.get(sp["scene"], 1)
-        if len(sp["xs"]) < max(2, totaal * 0.3) or med(sp["ws"]) < 0.035:
+        if len(sp["xs"]) < max(2, totaal * 0.3) or med(sp["ws"]) < 0.04:
             continue
         # Een gezicht dat geen millimeter beweegt en waarvan de mond stil is,
         # is geen persoon maar een afbeelding: het portret op een bankbiljet
@@ -390,6 +438,10 @@ def sprekermeting(van, tot, stap):
         p["id"] = i
     return {"van": van, "tot": tot, "stap": stap, "personen": personen, "knippen": knippen}
 
+
+if SCHERPTEMODUS:
+    print(json.dumps([scherptemeting(t) for t in json.loads(sys.argv[3])]))
+    sys.exit(0)
 
 if SPREKERMODUS:
     opdrachten = json.loads(sys.argv[3])

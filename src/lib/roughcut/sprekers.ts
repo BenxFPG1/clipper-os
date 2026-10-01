@@ -1,7 +1,8 @@
 import { spawn } from 'node:child_process';
 import { resolveBinary } from '../ingest/binaries';
 import { instelling } from './instellingen';
-import type { Shot } from './index';
+import { basisZoom, type Shot } from './index';
+import type { SprekerFout } from './keuring';
 import type { BronWoord } from './woorden';
 
 /**
@@ -30,7 +31,8 @@ import type { BronWoord } from './woorden';
  *     naast elkaar die om beurten praten: een tweeshot.
  */
 
-export type SprekerMonster = [t: number, x: number, mond: number | null];
+/** Per monster: tijd, positie, mondbeweging en (optioneel) de scherpte van het gezicht. */
+export type SprekerMonster = [t: number, x: number, mond: number | null, scherpte?: number];
 export type SprekerPersoon = {
   id: number;
   scene: number;
@@ -143,13 +145,20 @@ export function actieveSprekers(meting: SprekerMeting, spraak: number[], opties:
     const alleMond = personen.flatMap((p) => p.monsters.map((m) => m[2]).filter((x): x is number => x !== null)).sort((x, y) => x - y);
     const gedeeld = Math.max(0.5, alleMond[Math.floor(alleMond.length * 0.25)] ?? 0.5);
     const rust = new Map(personen.map((p) => [p.id, gedeeld]));
+    // Scherpte per persoon (mediaan in dit standpunt): bij twee even
+    // waarschijnlijke sprekers wint het gezicht dat in focus staat — een
+    // wazig gezicht op de voorgrond is zelden wie de camera volgt. Kleine
+    // factor (0,85–1): een duidelijke spreker blijft winnen.
+    const scherpte = new Map(personen.map((p) => [p.id, mediaan(p.monsters.map((m) => m[3]).filter((x): x is number => typeof x === 'number'))]));
+    const scherpst = Math.max(0, ...scherpte.values());
+    const focusFactor = (p: SprekerPersoon) => (scherpst > 0 ? 0.85 + 0.15 * Math.min(1, (scherpte.get(p.id) ?? 0) / scherpst) : 1);
     const score = (p: SprekerPersoon, m0: number, m1: number) => {
       const ms = p.monsters.filter((m) => m[0] >= m0 && m[0] <= m1 && m[2] !== null);
       if (ms.length < 2) return -1;
       const mond = ms.map((m) => (m[2] as number) / rust.get(p.id)!);
       const sp = ms.map((m) => actief(m[0]));
       const gewogen = mond.reduce((t, x, i) => t + x * sp[i], 0) / ms.length;
-      return gewogen + 0.5 * Math.max(0, pearson(mond, sp));
+      return (gewogen + 0.5 * Math.max(0, pearson(mond, sp))) * focusFactor(p);
     };
     const keuzes: { t: number; p: SprekerPersoon }[] = [];
     let huidig: SprekerPersoon | null = null;
@@ -196,7 +205,7 @@ export function actieveSprekers(meting: SprekerMeting, spraak: number[], opties:
     const ids = new Set(eigen.map((x) => x.persoon?.id));
     if (eigen.length >= 3 && ids.size === 2) {
       const [p, q] = personen.filter((x) => ids.has(x.id));
-      if (p && q && Math.abs(p.x - q.x) + Math.max(p.breedte, q.breedte) <= instelling('SPREKER_TWEESHOT_MAX')) {
+      if (p && q && tweeshotPast(p, q)) {
         stukken.splice(stukken.length - eigen.length, eigen.length, { van: a, tot: b, scene: s, persoon: p, tweeshot: [p, q], opKnip });
       }
     }
@@ -227,6 +236,21 @@ export function voegDubbeleSamen(personen: SprekerPersoon[]): SprekerPersoon[] {
     }
   }
   return uit.sort((a, b) => a.x - b.x);
+}
+
+/**
+ * Werkt een tweeshot in 9:16? Beide gezichten moeten in één vullende
+ * uitsnede passen (met wat ruimte), en elk gezicht moet daarin minstens
+ * TWEESHOT_MIN_GEZICHT van de beeldbreedte krijgen — anders zijn het twee
+ * postzegels en is één persoon groot beter. Nooit via een passend kader.
+ */
+export function tweeshotPast(p: { x: number; breedte: number }, q: { x: number; breedte: number }): boolean {
+  const VOL = 1080 / (1920 * (16 / 9)); // uitsnedebreedte bij zoom 1, als fractie van de bron
+  const nodig = (Math.abs(p.x - q.x) + Math.max(p.breedte, q.breedte)) * 1.15;
+  if (nodig > Math.min(VOL, instelling('SPREKER_TWEESHOT_MAX'))) return false;
+  const uitsnede = Math.max(nodig, VOL / instelling('ZOOM_MAX'));
+  const min = instelling('TWEESHOT_MIN_GEZICHT');
+  return p.breedte / uitsnede >= min && q.breedte / uitsnede >= min;
 }
 
 /** Positie van een persoon op tijd t (lineair tussen zijn monsters). */
@@ -462,4 +486,55 @@ export async function meetSprekers(
     .reverse()
     .find((r) => r.startsWith('['));
   return JSON.parse(regel || '[]') as SprekerMeting[];
+}
+
+/**
+ * Zelfherstel op de spreker: de keuring meet per moment waar het hoofd van
+ * de actieve spreker in het eindbeeld valt. Staat het daar te ver buiten
+ * beeld (> ZELFHERSTEL_SPREKER_BUITEN) of uit het midden
+ * (> ZELFHERSTEL_SPREKER_MIDDEN), of staat er niemand op de plek van het
+ * kader, dan gaat het kader van dat (deel)stuk naar het gemeten gezicht op
+ * die momenten — met een zoom waarbij het hele hoofd erin past. Muteert de
+ * segmenten; levert een logregel per aangepast shot.
+ */
+export function herstelSprekerKader(segmenten: Shot[], fouten: SprekerFout[]): { log: string[]; shots: Shot[] } {
+  const BUITEN = instelling('ZELFHERSTEL_SPREKER_BUITEN');
+  const MIDDEN = instelling('ZELFHERSTEL_SPREKER_MIDDEN');
+  const telt = fouten.filter((f) => f.soort === 'niet_in_beeld' || (f.soort === 'buiten' && f.waarde > BUITEN) || (f.soort === 'uit_midden' && f.waarde > MIDDEN));
+  const log: string[] = [];
+  const shots: Shot[] = [];
+  const perShot = new Map<number, SprekerFout[]>();
+  for (const f of telt) perShot.set(f.volgorde, [...(perShot.get(f.volgorde) ?? []), f]);
+  for (const [volgorde, eigen] of perShot) {
+    const seg = segmenten.find((s) => s.volgorde === volgorde);
+    if (!seg) continue;
+    const med = (xs: number[]) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)];
+    const x = med(eigen.map((f) => f.gezicht.x));
+    const breedte = Math.max(...eigen.map((f) => f.gezicht.breedte));
+    if (seg.spoor?.length) {
+      // Alleen het stuk spoor rond de foute momenten naar het gezicht; de
+      // rest volgde al goed.
+      seg.spoor = seg.spoor.map((p) => {
+        const f = eigen.find((g) => Math.abs(g.t - p.t) <= 0.8);
+        return f ? { t: p.t, x: f.gezicht.x } : p;
+      });
+      for (const f of eigen) if (!seg.spoor.some((p) => Math.abs(p.t - f.t) < 0.05)) seg.spoor.push({ t: f.t, x: f.gezicht.x });
+      seg.spoor.sort((a, b) => a.t - b.t);
+    } else {
+      seg.focusX = x;
+    }
+    seg.focus = undefined;
+    seg.breed = false;
+    seg.focusW = breedte;
+    seg.focusWmin = Math.min(seg.focusWmin ?? breedte, breedte);
+    seg.gezicht = { x, breedte, top: med(eigen.map((f) => f.gezicht.top)), hoogte: med(eigen.map((f) => f.gezicht.hoogte)) };
+    // Het hele hoofd in beeld: hoogstens ~60% van de uitsnedebreedte.
+    const huidig = seg.zoom ?? basisZoom(seg);
+    const maxZoom = (0.6 * (1080 / (1920 * (16 / 9)))) / Math.max(0.01, breedte);
+    seg.zoom = Math.max(1, Math.min(huidig, maxZoom, instelling('ZOOM_MAX')));
+    seg.sprekerBepaald = true;
+    shots.push(seg);
+    log.push(`zelfherstel spreker: shot ${volgorde} → kader naar gezicht op ${x.toFixed(2)} (${eigen.length} moment(en): ${eigen.map((f) => `${f.t.toFixed(1)} s ${f.soort}`).join(', ')}; zoom ${seg.zoom.toFixed(2)})`);
+  }
+  return { log, shots };
 }

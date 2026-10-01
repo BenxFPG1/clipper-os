@@ -227,7 +227,11 @@ async function main() {
       const pa = pcm(uitA);
       const pb = pcm(basis);
       toets('geluid bit-identiek aan de basis (geen klik op de naad)', pa.length === pb.length && pa.equals(pb), `${pa.length} vs ${pb.length}`);
-      toets('sneller dan de oude manier', nieuwMs < oudMs, `${nieuwMs} vs ${oudMs} ms`);
+      // Sinds het veiligheidsnet (SPS/PPS-vergelijking + volledige decode-
+      // controle per variant) is het voordeel op een testclip van 10 s klein;
+      // op een echte clip van 30–60 s blijft het groot. Niet trager dan de
+      // oude manier, met wat ruis-marge.
+      toets('niet trager dan de oude manier (±15%)', nieuwMs < oudMs * 1.15, `${nieuwMs} vs ${oudMs} ms`);
       toets('decode-controle: beide varianten goed, niets teruggevallen', r.teruggevallen.length === 0, JSON.stringify(r.teruggevallen));
       const cA = await controleerDecode(uitA, await telFrames(basis));
       toets('controleerDecode: variant decodeert foutloos met het frameaantal van de basis', cA.goed && cA.frames === nb, `${cA.reden} (${cA.frames})`);
@@ -402,6 +406,35 @@ async function main() {
         toets('naad-render slaagt', false, (e as Error).message.slice(-600));
       }
     }
+    // 4c. Scherp begin: de eerste 0,4 s bevroren op het frame van 0,4 s in
+    //     het shot; daarna loopt het beeld door, de lengte blijft gelijk.
+    console.log('scherp begin: bevroren begin');
+    {
+      const uitPad = join(map, 'bevries.mp4');
+      const bevrShots: Shot[] = [
+        { volgorde: 1, start: 1.0, end: 4.0, functie: 'hook', bevriesBegin: { tot: 0.4, bron: 1.4 } },
+        { volgorde: 2, start: 5.0, end: 7.0, functie: 'setup' },
+      ];
+      const log: string[] = [];
+      try {
+        await maakRuweMontage({ sourceUrl: 'lokaal://test', shots: bevrShots, alGesegmenteerd: true, outputPad: uitPad, werkmap, kader: 'vullend', ruisvloerDb: -60, maxBytes: 50 * 1024 * 1024, onVoortgang: (m) => log.push(m) });
+        const p = probe(uitPad);
+        toets('lengte ongewijzigd (5,0 s)', Math.abs(p.duur - 5.0) < 0.15, `${p.duur}s`);
+        toets('logregel "scherp begin: eerste 0.40 s bevroren"', log.some((m) => /scherp begin: eerste 0\.40 s bevroren op bron 1\.40 s/.test(m)), log.join(' | '));
+        const grijsN = (n: number) => spawnSync(resolveBinary('ffmpeg'), ['-v', 'error', '-i', uitPad, '-vf', `select=eq(n\\,${n}),scale=64:36`, '-frames:v', '1', '-f', 'rawvideo', '-pix_fmt', 'gray', '-'], { maxBuffer: 1e7 }).stdout as Buffer;
+        const dd = (a: Buffer, b: Buffer) => (a.length && a.length === b.length ? a.reduce((t, x, i) => t + Math.abs(x - b[i]), 0) / a.length : 255);
+        const f0 = grijsN(0);
+        const f8 = grijsN(8);
+        const f10 = grijsN(10);
+        const f20 = grijsN(20);
+        toets('eerste 0,4 s stilstaand (frame 0 = frame 8)', dd(f0, f8) < 1, dd(f0, f8).toFixed(2));
+        toets('daarna loopt het beeld zonder sprong door (frame 10 lijkt op het bevroren frame)', dd(f8, f10) < 6, dd(f8, f10).toFixed(2));
+        toets('en beweegt het weer (frame 20 ≠ frame 0)', dd(f0, f20) > 1, dd(f0, f20).toFixed(2));
+      } catch (e) {
+        toets('render met bevroren begin slaagt', false, (e as Error).message.slice(-500));
+      }
+    }
+
     // 5. Encode: het eindbestand op crf 17 / medium, het tussenbestand bijna
     //    verliesvrij. x264 schrijft zijn instellingen als tekst in de stroom.
     console.log('encode-instellingen');

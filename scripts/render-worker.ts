@@ -41,7 +41,8 @@ import { zorgVoorMuziekbed } from '../src/lib/muziek';
 import { afwerkingAan, afwerkingOverzicht, type AfwerkingOnderdeel } from '../src/lib/roughcut/afwerking';
 import { kleurCorrectie, meetKleur } from '../src/lib/roughcut/kleur';
 import { planJL, planSfx, zetHit } from '../src/lib/roughcut/sounddesign';
-import { actieveSprekers, meetSprekers, pasSprekersToe, spraakEnergie, type SprekerMeting } from '../src/lib/roughcut/sprekers';
+import { besluitScherpBegin, pasScherpBeginToe, scherpteMeterVia } from '../src/lib/roughcut/scherpbegin';
+import { actieveSprekers, herstelSprekerKader, meetSprekers, pasSprekersToe, spraakEnergie, type SprekerMeting } from '../src/lib/roughcut/sprekers';
 import { analyseerBeats, beatsOpTijdlijn, kiesTrack, knipOpBeat, BEAT_MIN_ZEKERHEID } from '../src/lib/roughcut/muziektracks';
 
 import { kiesHuisstijl } from '../src/lib/agents/huisstijl';
@@ -59,10 +60,10 @@ import {
   verschuifNaarPauze,
   zoekStilstePunt,
 } from '../src/lib/roughcut/knipcontrole';
-import { controleerScript } from '../src/lib/roughcut/scriptcontrole';
+import { controleerScript, kopInBron } from '../src/lib/roughcut/scriptcontrole';
 import { haalBronWoorden, vindFragment } from '../src/lib/roughcut/woorden';
 import { poort, verzetGrens } from '../src/lib/roughcut/poort';
-import { herhaaldInBron, keurGraphicsDetail, keurMontage, type Keuringsrapport } from '../src/lib/roughcut/keuring';
+import { herhaaldInBron, keurGezichtDetail, keurGraphicsDetail, keurMontage, type Keuringsrapport } from '../src/lib/roughcut/keuring';
 import { zelfherstelStap } from '../src/lib/roughcut/herstel';
 import { corrigeerWoorden, verfijnWoorden } from '../src/lib/roughcut/ondertitelwoorden';
 import { ruimBronCacheOp } from '../src/lib/roughcut/broncache';
@@ -284,6 +285,17 @@ async function verwerk(job: Job) {
       .map((t) => t.text.trim())
       .filter(Boolean);
     return regels.length ? regels.join(' ') : null;
+  };
+  // Scherptemetingen op de bron, gecachet per tijdstip (scherp begin draait
+  // elke poging opnieuw; de bron verandert niet).
+  const scherpteGemeten = new Map<string, import('../src/lib/roughcut/scherpbegin').ScherpteMeting>();
+  const scherpteCache = async (tijden: number[]) => {
+    const nodig = tijden.filter((t) => !scherpteGemeten.has(t.toFixed(2)));
+    if (nodig.length) {
+      const m = await scherpteMeterVia(bronPad, pythonMetOpenCV())(nodig);
+      nodig.forEach((t, i) => scherpteGemeten.set(t.toFixed(2), m[i]));
+    }
+    return tijden.map((t) => scherpteGemeten.get(t.toFixed(2)) ?? null);
   };
   // Lengte van de bron: voor de eindschermcontrole (laatste halve minuut).
   const bronLengte = bronDuur(bronPad);
@@ -1287,6 +1299,48 @@ async function verwerk(job: Job) {
         console.log(`     retentie: ${w.hersteld} kaderwissel(s) teruggezet na kadercorrectie${w.niet ? `, ${w.niet} niet mogelijk binnen het kader` : ''}`);
       }
     }
+    // Zelfherstel op de spreker (sprekers.ts): de keuring "actieve spreker in
+    // beeld" is meetkundig — gezicht in de bron, uitsnede uit de montage — en
+    // kan dus vóór de render al. Staat het hoofd ergens ver buiten beeld of
+    // uit het midden, dan gaat het kader naar het gemeten gezicht, en meten
+    // we opnieuw (de metingen zijn gecachet, alleen het rekenwerk herhaalt).
+    if (process.env.ZELFHERSTEL_SPREKER !== '0') {
+      for (let ronde = 1; ronde <= instelling('ZELFHERSTEL_RONDES'); ronde++) {
+        try {
+          const { fouten } = await keurGezichtDetail({ segmenten, bronPad, python: pythonMetOpenCV() });
+          const { log: regels, shots: hersteld } = herstelSprekerKader(segmenten, fouten);
+          for (const r of regels) console.log(`     ${r}`);
+          if (regels.length === 0) break;
+          // Ook verticaal en qua zoom het hele hoofd in beeld (kadercontrole).
+          corrigeerKadrering(hersteld);
+        } catch (e) {
+          console.log(`     zelfherstel spreker overgeslagen (${(e as Error).message.slice(0, 80)})`);
+          break;
+        }
+      }
+    }
+
+    // Scherp begin (scherpbegin.ts): het eerste frame moet een scherp gezicht
+    // (of een graphic) tonen. Zo niet: kader op het eerste scherpe gezicht
+    // in het eerste shot, en als dat vroeg genoeg is het begin bevroren op
+    // dat frame.
+    {
+      const eerste = [...segmenten].sort((a, b) => a.volgorde - b.volgorde)[0];
+      const graphicBegin = eerste?.beeldtype === 'graphic' || eerste?.scenes?.find((sc) => sc.van <= eerste.start + 0.05)?.gezicht === false;
+      if (eerste && !graphicBegin && process.env.SCHERP_BEGIN !== '0') {
+        try {
+          const tijden: number[] = [];
+          for (let t = eerste.start + 0.04; t < Math.min(eerste.end - 0.3, eerste.start + 3); t += 0.1) tijden.push(Math.round(t * 100) / 100);
+          const metingen = await scherpteCache(tijden);
+          const besluit = besluitScherpBegin(eerste, tijden, metingen);
+          pasScherpBeginToe(eerste, besluit);
+          console.log(`     scherp begin: ${besluit.detail}`);
+        } catch (e) {
+          console.log(`     scherp begin overgeslagen (${(e as Error).message.slice(0, 80)})`);
+        }
+      }
+    }
+
     // Op de definitieve grenzen van deze ronde: knippen op de beat, dan de
     // hit-zoom, J/L-naden en het sfx-plan (die hangen van de tijdlijn af).
     let sfxPlan: import('../src/lib/roughcut/index').SfxPlek[] | undefined;
@@ -1455,6 +1509,13 @@ async function verwerk(job: Job) {
           for (const ps of zoek) {
             const seg = segmenten.find((sg) => sg.volgorde === ps.volgorde);
             if (!seg || seg.planStart === undefined) continue;
+            // Staat de kop in de bron op de knip, dan zit hij in de montage en
+            // verstond het controlemodel hem gewoon niet: niets verschuiven.
+            const fragment = (seg as { transcript_fragment?: string }).transcript_fragment;
+            if (fragment && kopInBron(fragment, seg, bronWoorden)) {
+              console.log(`     scriptcontrole shot ${ps.volgorde}: kop niet verstaan bij het terugluisteren, maar staat in de bron op de knip; grens blijft staan`);
+              continue;
+            }
             if (seg.start > seg.planStart + 0.3) {
               // De uitlijning zat later dan het plan: terug naar het plan.
               console.log(
@@ -2542,7 +2603,12 @@ async function vulGezichtsFocus(bronPad: string, segmenten: Shot[]): Promise<voi
 
     let breedGeteld = 0;
     zonderScriptFocus.forEach((s, i) => {
-      const groep = posities.slice(i * PUNTEN_PER_SHOT, (i + 1) * PUNTEN_PER_SHOT).filter(Boolean) as Meting[];
+      // Piepkleine gezichten (picture-in-picture in een graphic, iemand ver
+      // weg) zijn geen kaderreferentie: een uitsnede daarop toont twee
+      // postzegels boven een zwart vlak (Michelle, "Zou jij dit").
+      const groep = (posities.slice(i * PUNTEN_PER_SHOT, (i + 1) * PUNTEN_PER_SHOT).filter(Boolean) as Meting[]).filter(
+        (m) => m.breedte >= instelling('SCENE_MIN_GEZICHT'),
+      );
       if (groep.length === 0) return;
 
       const xs = groep.map((m) => m.x).sort((a, b) => a - b);

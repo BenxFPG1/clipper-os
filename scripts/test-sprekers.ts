@@ -14,7 +14,9 @@ import { join } from 'node:path';
 import { resolveBinary } from '../src/lib/ingest/binaries';
 import { pythonMetOpenCV } from '../src/lib/python';
 import type { Shot } from '../src/lib/roughcut';
-import { actieveSprekers, meetSprekers, pasSprekersToe, voegDubbeleSamen, type SprekerMeting, type SprekerPersoon } from '../src/lib/roughcut/sprekers';
+import { actieveSprekers, herstelSprekerKader, meetSprekers, pasSprekersToe, tweeshotPast, voegDubbeleSamen, type SprekerMeting, type SprekerPersoon } from '../src/lib/roughcut/sprekers';
+import { keurGezichtDetail, type GezichtPuntMeting } from '../src/lib/roughcut/keuring';
+import { besluitScherpBegin, pasScherpBeginToe, scherpteMeterVia, type ScherpteMeting } from '../src/lib/roughcut/scherpbegin';
 import { instelling } from '../src/lib/roughcut/instellingen';
 import { poort } from '../src/lib/roughcut/poort';
 import { herhaaldInBron, keurKnippen } from '../src/lib/roughcut/keuring';
@@ -98,6 +100,69 @@ async function main() {
     toets('deel zonder persoon: geen sprekerkader, oorspronkelijke focus', r2.delen.length === 2 && r2.delen[0].sprekerBepaald === true && !r2.delen[1].sprekerBepaald && r2.delen[1].focusX === 0.5, JSON.stringify(r2.delen.map((d) => [d.start, d.focusX, d.sprekerBepaald])));
     const r3 = pasSprekersToe({ ...shot(0.5, 5.5), volgorde: 2.5 }, st, null, { volgendeVolgorde: 3 });
     toets('volgnummers blijven vóór het volgende shot', r3.delen.every((d) => d.volgorde >= 2.5 && d.volgorde < 3) && r3.delen.every((d, i) => i === 0 || d.volgorde > r3.delen[i - 1].volgorde), r3.delen.map((d) => d.volgorde).join(','));
+  }
+
+  console.log('zelfherstel spreker');
+  {
+    // Kader op 0,30, de spreker staat op 0,62: de keuring ziet het hoofd
+    // buiten beeld; het herstel zet het kader op het gezicht.
+    const seg: Shot = { ...shot(10, 16), focusX: 0.3, focusW: 0.08, gezicht: { x: 0.3, breedte: 0.08, top: 0.3, hoogte: 0.2 } };
+    const vak = { x: 0.62, breedte: 0.09, top: 0.28, hoogte: 0.22 };
+    const meter = async (t: number[]): Promise<GezichtPuntMeting[]> => t.map(() => ({ ...vak, gezichten: [vak] }));
+    const voor = await keurGezichtDetail({ segmenten: [seg], sprekerMeter: meter });
+    toets('keuring ziet het hoofd naast het kader, met structuur', voor.regel.goed === false && voor.fouten.length > 0 && voor.fouten[0].gezicht.x === 0.62, voor.regel.detail);
+    const { log, shots } = herstelSprekerKader([seg], voor.fouten);
+    console.log(`    ${log[0]}`);
+    toets('kader naar het gemeten gezicht', seg.focusX === 0.62 && shots.length === 1 && /zelfherstel spreker: shot 1 → kader naar gezicht op 0\.62/.test(log[0] ?? ''));
+    toets('zoom zodat het hele hoofd erin past (≤ 60% van de uitsnede)', 0.09 / ((1080 / (1920 * (16 / 9))) / (seg.zoom ?? 1)) <= 0.6 + 1e-6, String(seg.zoom));
+    const na = await keurGezichtDetail({ segmenten: [seg], sprekerMeter: meter });
+    toets('daarna: actieve spreker in beeld', na.regel.goed === true, na.regel.detail);
+    const klein = herstelSprekerKader([{ ...shot(0, 5) }], [{ volgorde: 1, t: 1, soort: 'uit_midden', waarde: 0.15, gezicht: vak }]);
+    toets('kleine afwijking (15% uit het midden): niet aanpassen', klein.log.length === 0);
+    // Op een spoor: alleen het stuk rond het foute moment.
+    const metSpoor: Shot = { ...shot(0, 6), spoor: [{ t: 0, x: 0.4 }, { t: 2, x: 0.4 }, { t: 4, x: 0.4 }, { t: 6, x: 0.4 }] };
+    herstelSprekerKader([metSpoor], [{ volgorde: 1, t: 4.1, soort: 'niet_in_beeld', waarde: 0.4, gezicht: vak }]);
+    toets('spoor: alleen rond het foute moment naar het gezicht', metSpoor.spoor!.find((p) => p.t === 0)!.x === 0.4 && metSpoor.spoor!.find((p) => p.t === 4)!.x === 0.62, JSON.stringify(metSpoor.spoor));
+  }
+
+  console.log('tweeshot alleen als het werkt in 9:16');
+  {
+    toets('dicht bij elkaar, grote gezichten: tweeshot', tweeshotPast({ x: 0.45, breedte: 0.07 }, { x: 0.58, breedte: 0.07 }));
+    toets('kleine gezichten (3%): geen tweeshot (twee postzegels)', !tweeshotPast({ x: 0.45, breedte: 0.025 }, { x: 0.62, breedte: 0.025 }));
+    toets('ver uit elkaar: geen tweeshot', !tweeshotPast({ x: 0.2, breedte: 0.08 }, { x: 0.8, breedte: 0.08 }));
+  }
+
+  console.log('scherp gezicht wint bij gelijke kans');
+  {
+    const spraak = spraakVan(0, 6, () => true);
+    const zelfde = (t: number) => praat(t);
+    const metScherpte = (p: SprekerPersoon, sc: number): SprekerPersoon => ({ ...p, monsters: p.monsters.map((m) => [m[0], m[1], m[2], sc] as [number, number, number | null, number]) });
+    const wazig = metScherpte(persoon(0, 0, 0.3, 0, 6, zelfde), 8);
+    const scherp = metScherpte(persoon(1, 0, 0.7, 0, 6, zelfde), 70);
+    const st = actieveSprekers({ van: 0, tot: 6, stap: STAP, personen: [wazig, scherp], knippen: [] }, spraak);
+    toets('twee even sprekende gezichten: het scherpe wordt gekozen', st[0]?.persoon?.id === 1, JSON.stringify(st.map((x) => x.persoon?.id)));
+    const duidelijk = metScherpte(persoon(0, 0, 0.3, 0, 6, praat), 8);
+    const stil = metScherpte(persoon(1, 0, 0.7, 0, 6, rustig), 70);
+    const st2 = actieveSprekers({ van: 0, tot: 6, stap: STAP, personen: [duidelijk, stil], knippen: [] }, spraak);
+    toets('maar een duidelijke (wazige) spreker blijft winnen van een scherpe zwijger', st2[0]?.persoon?.id === 0);
+  }
+
+  console.log('scherp begin');
+  {
+    const eerste: Shot = { ...shot(100, 106), focusX: 0.3 };
+    const tijden = [100.04, 100.14, 100.24, 100.34, 100.44, 100.54];
+    const m = (beeld: number, sc: number | null, x = 0.6): ScherpteMeting => ({ t: 0, beeld, gezicht: sc === null ? null : { x, breedte: 0.08, scherpte: sc } });
+    const ok = besluitScherpBegin(eerste, tijden, [m(400, 60), m(400, 60), m(400, 60), m(400, 60), m(400, 60), m(400, 60)]);
+    toets('scherp gezicht vanaf het begin: niets doen', ok.status === 'ok');
+    const laat = besluitScherpBegin(eerste, tijden, [m(60, 4), m(70, 5), m(400, 10), m(420, 40), m(420, 50), m(420, 50)]);
+    toets('wazig begin, scherp na 0,3 s: bevriezen op dat frame', laat.status === 'bevries' && 't' in laat && Math.abs(laat.t - 100.34) < 1e-9, laat.detail);
+    pasScherpBeginToe(eerste, laat);
+    toets('bevroren begin gezet, kader op het scherpe gezicht', eerste.bevriesBegin?.tot === 0.34 && eerste.bevriesBegin?.bron === 100.34 && eerste.focusX === 0.6, JSON.stringify(eerste.bevriesBegin));
+    const veelLater = [...tijden, 100.64, 100.74, 100.84];
+    const ref = besluitScherpBegin({ ...shot(100, 106) }, veelLater, [m(60, 4), m(60, 4), m(60, 4), m(60, 4), m(60, 4), m(60, 4), m(60, 4), m(60, 4), m(400, 40)]);
+    toets('scherp pas na > 0,6 s: alleen kaderreferentie, niet bevriezen', ref.status === 'referentie', ref.detail);
+    const geen = besluitScherpBegin(eerste, tijden, tijden.map(() => m(400, null)));
+    toets('nergens een gezicht: melden, niets forceren', geen.status === 'geen_scherp_gezicht');
   }
 
   console.log('splitdelen en de poort');
@@ -237,6 +302,14 @@ async function main() {
         };
         toets('gewone meting: pixelstil gezicht → geen gezicht', gewoon(stil) === null);
         toets('gewone meting: bewegend beeld → wel een gezicht', gewoon(bron) !== null && gewoon(bron) !== 'fout');
+        // Scherpte: hetzelfde beeld scherp en met bewegingsonscherpte.
+        const wazig = join(map, 'wazig.mp4');
+        spawnSync(resolveBinary('ffmpeg'), ['-v', 'error', '-y', '-i', stil, '-vf', 'gblur=sigma=6', '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', wazig]);
+        const [sc] = await scherpteMeterVia(stil, py)([1.0]);
+        const [wz] = await scherpteMeterVia(wazig, py)([1.0]);
+        console.log(`    scherpte: scherp beeld ${sc?.beeld} / gezicht ${sc?.gezicht?.scherpte}; wazig beeld ${wz?.beeld} / gezicht ${wz?.gezicht?.scherpte ?? '—'}`);
+        toets('scherptemeting: wazig beeld scoort veel lager', Boolean(sc && wz && sc.beeld > 3 * wz.beeld), `${sc?.beeld} vs ${wz?.beeld}`);
+        toets('scherp gezicht boven de drempel, wazig eronder of niet gevonden', Boolean(sc?.gezicht && sc.gezicht.scherpte >= instelling('SCHERP_MIN_GEZICHT') && (!wz?.gezicht || wz.gezicht.scherpte < instelling('SCHERP_MIN_GEZICHT'))), JSON.stringify([sc?.gezicht, wz?.gezicht]));
         toets('monsters op 0,1 s', (m[0]?.personen[0]?.monsters.length ?? 0) >= 8);
       }
     } finally {

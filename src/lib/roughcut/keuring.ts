@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { resolveBinary } from '../ingest/binaries';
 import { controleerEindmontage } from './knipcontrole';
-import { controleerScript } from './scriptcontrole';
+import { controleerScript, kopInBron } from './scriptcontrole';
 import { TEASE_MAX_DUUR, woordOnder } from './poort';
 import { uitsnedeVan } from './kadercontrole';
 import { basisZoom } from './index';
@@ -16,6 +16,7 @@ import { boxBinnen, graphicMeterVia, inhoudKader, lijktGraphic, type Box, type G
 import type { Kader } from './kader';
 import { keurLeesbaar } from './leestijd';
 import { keurOverlay } from './eindscherm';
+import { keurScherpBegin, scherpteMeterVia } from './scherpbegin';
 import { keurOndertitelOverlap, keurOndertitelPlek, type OndertitelRegel, type Plek } from './ondertitels';
 
 /** Breedte/hoogte van een normale bron. */
@@ -165,6 +166,44 @@ type GezichtMeting = { x: number; breedte: number; top: number; hoogte: number }
  * uitsnede de montage neemt. Waar het gezicht in het eindbeeld terechtkomt is
  * dan rekenwerk, geen schatting.
  */
+export type GezichtVak = { x: number; breedte: number; top: number; hoogte: number };
+export type GezichtPuntMeting = (GezichtVak & { gezichten?: GezichtVak[] }) | null;
+/** Meet per brontijd het gezicht (de spreker volgens de mondbeweging) en alle gezichten. */
+export type SprekerPuntMeter = (tijden: number[]) => Promise<GezichtPuntMeting[] | null>;
+
+/** Een moment waarop de actieve spreker niet goed in beeld staat, met het gezicht waar het kader heen moet. */
+export type SprekerFout = {
+  volgorde: number;
+  t: number;
+  soort: 'buiten' | 'uit_midden' | 'niet_in_beeld';
+  /** Aandeel van het hoofd buiten beeld, of afwijking van het midden (0..1+). */
+  waarde: number;
+  gezicht: GezichtVak;
+};
+
+const puntCache = new Map<string, GezichtPuntMeting>();
+
+/** De standaardmeter: gezichten.py (3 frames per punt), gecachet per bron en tijd — de meting hangt niet van het kader af. */
+export function sprekerPuntMeterVia(bronPad: string, py: { cmd: string; voor: string[] }): SprekerPuntMeter {
+  return async (tijden) => {
+    const sleutel = (t: number) => `${bronPad}|${t.toFixed(2)}`;
+    const nodig = [...new Set(tijden.filter((t) => !puntCache.has(sleutel(t))))];
+    if (nodig.length) {
+      const res = spawnSync(py.cmd, [...py.voor, 'scripts/gezichten.py', bronPad, JSON.stringify(nodig), '3'], { encoding: 'utf8', maxBuffer: 20_000_000 });
+      try {
+        // OpenCV schrijft soms zelf naar stdout; pak de laatste regel die JSON is.
+        const regel = (res.stdout ?? '').split('\n').map((r) => r.trim()).reverse().find((r) => r.startsWith('['));
+        const m = JSON.parse(regel || '[]') as GezichtPuntMeting[];
+        if (m.length !== nodig.length) return null;
+        nodig.forEach((t, i) => puntCache.set(sleutel(t), m[i]));
+      } catch {
+        return null;
+      }
+    }
+    return tijden.map((t) => puntCache.get(sleutel(t)) ?? null);
+  };
+}
+
 export async function keurGezicht(
   montagePad: string,
   opties: {
@@ -173,11 +212,26 @@ export async function keurGezicht(
     segmenten?: Shot[];
     /** Bronbestand; nodig om de gezichtspositie betrouwbaar te meten. */
     bronPad?: string;
+    sprekerMeter?: SprekerPuntMeter;
   } = {},
 ): Promise<KeuringRegel> {
+  void montagePad;
+  return (await keurGezichtDetail(opties)).regel;
+}
+
+/** Als keurGezicht, met de foute momenten als structuur: die voeden het zelfherstel op de spreker. */
+export async function keurGezichtDetail(
+  opties: {
+    python?: { cmd: string; voor: string[] };
+    segmenten?: Shot[];
+    bronPad?: string;
+    sprekerMeter?: SprekerPuntMeter;
+  } = {},
+): Promise<{ regel: KeuringRegel; fouten: SprekerFout[] }> {
+  const metFout = (regel: KeuringRegel) => ({ regel, fouten: [] as SprekerFout[] });
   const segmenten = opties.segmenten ?? [];
-  if (!opties.bronPad || segmenten.length === 0) {
-    return { naam: 'actieve spreker in beeld', goed: null, detail: 'geen bron of segmenten; niet te toetsen' };
+  if ((!opties.bronPad && !opties.sprekerMeter) || segmenten.length === 0) {
+    return metFout({ naam: 'actieve spreker in beeld', goed: null, detail: 'geen bron of segmenten; niet te toetsen' });
   }
   const py = opties.python ?? { cmd: 'python3', voor: [] };
 
@@ -185,42 +239,32 @@ export async function keurGezicht(
   // en daarna elke anderhalve seconde.
   const punten: { seg: Shot; t: number }[] = [];
   for (const seg of segmenten) {
-    for (let t = seg.start + 0.15; t < seg.end - 0.1; t += 1.5) punten.push({ seg, t });
+    for (let t = seg.start + 0.15; t < seg.end - 0.1; t += 1.5) punten.push({ seg, t: Math.round(t * 100) / 100 });
   }
   if (punten.length === 0) {
-    return { naam: 'actieve spreker in beeld', goed: null, detail: 'te kort om te toetsen' };
+    return metFout({ naam: 'actieve spreker in beeld', goed: null, detail: 'te kort om te toetsen' });
   }
 
-  const res = spawnSync(
-    py.cmd,
-    [...py.voor, 'scripts/gezichten.py', opties.bronPad, JSON.stringify(punten.map((p) => p.t)), '3'],
-    { encoding: 'utf8', maxBuffer: 20_000_000 },
-  );
-  type Vak = { x: number; breedte: number; top: number; hoogte: number };
-  let metingen: (Vak & { gezichten?: Vak[] } | null)[] = [];
-  try {
-    // OpenCV schrijft soms zelf naar stdout; pak de laatste regel die JSON is.
-    const regel = (res.stdout ?? '')
-      .split('\n')
-      .map((r) => r.trim())
-      .reverse()
-      .find((r) => r.startsWith('['));
-    metingen = JSON.parse(regel || '[]');
-  } catch {
-    return { naam: 'actieve spreker in beeld', goed: null, detail: 'meting mislukt; niet te toetsen' };
+  const meter = opties.sprekerMeter ?? sprekerPuntMeterVia(opties.bronPad as string, py);
+  type Vak = GezichtVak;
+  const gemetenPunten = await meter(punten.map((p) => p.t));
+  if (!gemetenPunten) {
+    return metFout({ naam: 'actieve spreker in beeld', goed: null, detail: 'meting mislukt; niet te toetsen' });
   }
+  const metingen: GezichtPuntMeting[] = gemetenPunten;
   if (metingen.length !== punten.length) {
-    return {
+    return metFout({
       naam: 'actieve spreker in beeld',
       goed: null,
       detail: `meting onvolledig (${metingen.length}/${punten.length}); niet te toetsen — draait OpenCV op deze machine?`,
-    };
+    });
   }
 
   const UIT_MIDDEN_MAX = instelling('KEURING_UIT_MIDDEN_MAX');
   const BUITEN_MAX = instelling('KEURING_BUITEN_MAX');
   const ANDERE_PERSOON = instelling('KEURING_ANDERE_PERSOON');
   const fouten: string[] = [];
+  const structuur: SprekerFout[] = [];
   let getoetst = 0;
   let genegeerd = 0;
   let zonderGezicht = 0;
@@ -255,6 +299,9 @@ export async function keurGezicht(
       const naast = m0.gezichten.reduce((a, b) => (Math.abs(b.x - verwacht) < Math.abs(a.x - verwacht) ? b : a));
       if (Math.abs(naast.x - verwacht) > ANDERE_PERSOON) {
         fouten.push(`${punten[i].t.toFixed(1)}s: actieve spreker niet in beeld (kader op ${verwacht.toFixed(2)}, dichtstbijzijnde gezicht ${naast.x.toFixed(2)})`);
+        // Naar wie moet het kader? De spreker volgens de mondbeweging op dit
+        // moment (gezichten.py kiest die), niet de dichtstbijzijnde buur.
+        structuur.push({ volgorde: sg0.volgorde, t: punten[i].t, soort: 'niet_in_beeld', waarde: Math.abs(naast.x - verwacht), gezicht: { x: m0.x, breedte: m0.breedte, top: m0.top, hoogte: m0.hoogte } });
         getoetst++;
         continue;
       }
@@ -296,21 +343,21 @@ export async function keurGezicht(
 
     if (buiten > fb * BUITEN_MAX) {
       fouten.push(`${t.toFixed(1)}s: ${Math.round((buiten / fb) * 100)}% van het hoofd buiten beeld`);
+      structuur.push({ volgorde: seg.volgorde, t, soort: 'buiten', waarde: buiten / fb, gezicht: { x: m.x, breedte: m.breedte, top: m.top, hoogte: m.hoogte } });
     } else if (Math.abs(inBeeld - 0.5) > UIT_MIDDEN_MAX) {
       const kant = inBeeld < 0.5 ? 'links' : 'rechts';
       fouten.push(`${t.toFixed(1)}s: ${Math.round(Math.abs(inBeeld - 0.5) * 100)}% uit het midden (${kant})`);
+      structuur.push({ volgorde: seg.volgorde, t, soort: 'uit_midden', waarde: Math.abs(inBeeld - 0.5), gezicht: { x: m.x, breedte: m.breedte, top: m.top, hoogte: m.hoogte } });
     }
   }
 
-  void montagePad;
-
   const gemeten = getoetst + genegeerd;
   if (gemeten === 0) {
-    return {
+    return metFout({
       naam: 'actieve spreker in beeld',
       goed: null,
       detail: `geen gezicht gevonden op ${zonderGezicht} meetmomenten; niet te toetsen`,
-    };
+    });
   }
   const aandeelGenegeerd = genegeerd / gemeten;
   const teVeelGenegeerd = aandeelGenegeerd > instelling('KEURING_MAX_GENEGEERD');
@@ -325,7 +372,7 @@ export async function keurGezicht(
     );
   }
 
-  return {
+  const regel: KeuringRegel = {
     naam: 'actieve spreker in beeld',
     goed: fouten.length === 0,
     detail:
@@ -333,6 +380,7 @@ export async function keurGezicht(
         ? `${telling}, spreker overal binnen ${Math.round(UIT_MIDDEN_MAX * 100)}% van het midden`
         : `${telling}; ` + fouten.slice(0, 6).join('; ') + (fouten.length > 6 ? ` (+${fouten.length - 6})` : ''),
   };
+  return { regel, fouten: structuur };
 }
 
 /**
@@ -492,7 +540,15 @@ export async function keurScript(
     return [{ naam: 'script gevolgd', goed: null, detail: 'niet te transcriberen; niet te toetsen' }];
   }
 
-  const ontbreekt = (script.perShot ?? []).filter((ps) => !ps.gevonden);
+  // Niet teruggehoord maar wél in de bron op de knip: meetfout van de
+  // terugluistering, geen ontbrekend fragment.
+  const kopBron = (ps: { volgorde: number }) => {
+    const seg = segmenten.find((sg) => sg.volgorde === ps.volgorde) as (Shot & { transcript_fragment?: string }) | undefined;
+    return Boolean(seg?.transcript_fragment && kopInBron(seg.transcript_fragment, seg, bronWoorden));
+  };
+  const nietGehoord = (script.perShot ?? []).filter((ps) => !ps.gevonden);
+  const inBronGezien = nietGehoord.filter(kopBron);
+  const ontbreekt = nietGehoord.filter((ps) => !inBronGezien.includes(ps));
   // De cold open herhaalt de payoff met opzet; alleen herhalingen buiten het
   // eerste segment tellen.
   const teaseGrens = (segmenten[0] as { tease?: boolean } | undefined)?.tease
@@ -509,9 +565,10 @@ export async function keurScript(
       naam: 'script gevolgd',
       goed: ontbreekt.length === 0,
       detail:
-        ontbreekt.length === 0
+        (ontbreekt.length === 0
           ? `alle ${script.perShot?.length ?? 0} fragmenten terug te horen (${Math.round(script.dekking * 100)}% woorddekking)`
-          : `niet terug te horen: shot ${ontbreekt.map((o) => o.volgorde).join(', ')}`,
+          : `niet terug te horen: shot ${ontbreekt.map((o) => o.volgorde).join(', ')}`) +
+        (inBronGezien.length ? ` (shot ${inBronGezien.map((o) => o.volgorde).join(', ')}: kop niet verstaan bij het terugluisteren, maar staat in de bron op de knip)` : ''),
     },
     {
       naam: 'geen dubbele zinnen',
@@ -634,6 +691,9 @@ export async function keurMontage(
     await keurGezicht(montagePad, { ...opties, segmenten }),
     ...(await keurScript(montagePad, segmenten, bronWoorden)),
     await keurNaden(montagePad, segmenten, bronWoorden),
+    ...(opties.python
+      ? [await keurScherpBegin(montagePad, [...segmenten].sort((a, b) => a.volgorde - b.volgorde)[0], scherpteMeterVia(montagePad, opties.python))]
+      : []),
     ...(opties.retentie ? [opties.retentie] : []),
     ...(opties.kader ? [keurLeesbaar(segmenten, opties.kader), keurOverlay(segmenten, opties.kader)] : []),
     ...(opties.ondertitelPlekken !== undefined ? [keurOndertitelPlek(opties.ondertitelPlekken)] : []),
