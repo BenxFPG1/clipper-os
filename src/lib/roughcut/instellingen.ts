@@ -150,6 +150,12 @@ const STANDAARD = {
   ONDERTITEL_Y_MAX_NOOD: 0.8,
   /** Past ook dat niet, dan eerst de regel zoveel kleiner (fractie) voordat hij boven het hoofd gaat. */
   ONDERTITEL_KLEINER: 0.85,
+  // Hoeveel een close-up voor ondertitelruimte wijder mag dan zijn basiszoom.
+  ONDERTITEL_ZOOM_RUIMTE: 0.15,
+  // Hoe ver het kader voor ondertitelruimte omlaag mag schuiven (gezicht hoger
+  // in beeld), en hoeveel ruimte er minstens boven het hoofd moet blijven.
+  ONDERTITEL_MAX_OMHOOG: 0.15,
+  ONDERTITEL_MIN_KOPRUIMTE: 0.03,
   /** Ruimte tussen kin en ondertitel (fractie van de hoogte). */
   ONDERTITEL_KIN_MARGE: 0.015,
   /** Boven het hoofd mag een regel alleen als hij dan niet in de hookzone valt (fractie). */

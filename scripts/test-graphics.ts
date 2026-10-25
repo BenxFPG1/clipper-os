@@ -372,6 +372,13 @@ async function vervolg() {
       toets('"Zuid" + "-Afrika." → "Zuid-Afrika."', w[0].w === 'Zuid-Afrika.' && w[0].e === 0.7, JSON.stringify(w));
       toets('"EV-" + "adoptie" → "EV-adoptie"', w[1].w === 'EV-adoptie', JSON.stringify(w));
       toets('gewone woorden blijven los', w.length === 3 && w[2].w === 'groeit');
+      const g = plakKoppeltekens([
+        { w: 'circa', s: 0, e: 0.3 }, { w: '297', s: 0.35, e: 0.7 }, { w: '.000', s: 0.7, e: 1.0 },
+        { w: '8', s: 1.2, e: 1.3 }, { w: '%', s: 1.3, e: 1.4 }, { w: 'meer.', s: 1.5, e: 1.8 }, { w: '5', s: 2, e: 2.1 }, { w: '.', s: 2.1, e: 2.15 },
+      ]);
+      toets('"297" + ".000" → "297.000"', g[1].w === '297.000' && g[1].e === 1.0, JSON.stringify(g));
+      toets('"8" + "%" → "8%"', g[2].w === '8%', JSON.stringify(g));
+      toets('een los punt na een getal blijft geen getal', g.some((x) => x.w === '.'), JSON.stringify(g));
     }
   } finally {
     rmSync(map, { recursive: true, force: true });

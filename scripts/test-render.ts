@@ -21,7 +21,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { resolveBinary } from '../src/lib/ingest/binaries';
-import { brandHookVarianten, brandOverlays, controleerDecode, telFrames, fpsVoorRender, maakRuweMontage, pasNaadZoomToe, probeBron, type Shot } from '../src/lib/roughcut';
+import { basisZoom, brandHookVarianten, brandOverlays, controleerDecode, telFrames, fpsVoorRender, maakRuweMontage, pasNaadZoomToe, probeBron, type Shot } from '../src/lib/roughcut';
 import { effectKeten } from '../src/lib/roughcut/kader';
 import { bouwAss, groepeerRegels, heeftAssFilter, maakOndertitels, woordenOpTijdlijn } from '../src/lib/roughcut/ondertitels';
 import { tekenHookKaart, hookDuur } from '../src/lib/roughcut/tekstkaarten';
@@ -830,7 +830,20 @@ async function main() {
       toets('ook dat niet: de regel kleiner (85%)', klein.plekken[0] === 'kleiner' && klein.schalen[0] === 0.85, JSON.stringify(klein));
       const punch = vlak(0.3, 0.39, 1.3);
       const zt = plek(punch);
-      toets('met punch-in: zoom terug zodat de regel onder de kin past', zt.plekken[0] === 'zoom_terug' && (punch.zoom ?? 9) < 1.3 && (punch.zoom ?? 0) >= 1, JSON.stringify({ zt, zoom: punch.zoom }));
+      // Eerst het kader omhoog (punch-in blijft), pas als dat niet kan de zoom terug.
+      toets('met punch-in: kader omhoog of zoom terug zodat de regel onder de kin past', (zt.plekken[0] === 'kader_omhoog' && punch.zoom === 1.3) || (zt.plekken[0] === 'zoom_terug' && (punch.zoom ?? 9) < 1.3 && (punch.zoom ?? 0) >= 1), JSON.stringify({ zt, zoom: punch.zoom }));
+      // Kan het kader niet verder omhoog (gezicht al aan de bovenrand), dan alsnog de zoom terug.
+      const hoog = vlak(0.08, 0.6, 1.3);
+      const zt2 = plek(hoog);
+      toets('geen ruimte om omhoog te schuiven: zoom terug', zt2.plekken[0] === 'zoom_terug' || zt2.plekken[0] === 'boven_hoofd' || zt2.plekken[0] === 'overlap' || zt2.plekken[0] === 'kleiner' || zt2.plekken[0] === 'lager', JSON.stringify({ zt2, zoom: hoog.zoom }));
+      // Close-up op basiszoom met de kin te laag (PLATINA plan-7.0 clip 2: 13
+      // regels over de mond): eerst het kader omhoog (gezicht hoger in beeld,
+      // zelfde formaat), en nooit meer een overlap.
+      const basisShot: Shot = { volgorde: 1, start: 10, end: 14, functie: 'setup', focusX: 0.5, focusW: 0.1, focusY: 0.5, gezicht: { x: 0.5, breedte: 0.1, top: 0.4, hoogte: 0.26 } };
+      const bz = basisZoom(basisShot);
+      basisShot.zoom = bz;
+      const ruim = plek(basisShot);
+      toets('close-up op basiszoom: kader omhoog zodat de regel onder de kin past', ruim.plekken[0] === 'kader_omhoog' && (basisShot.focusY ?? 0) > 0.5 && basisShot.zoom === bz, JSON.stringify({ ruim, bz, focusY: basisShot.focusY }));
       const hoofd = plek(vlak(0.45, 0.31, 1));
       toets('zonder punch-in en zonder ruimte: pas dan boven het hoofd', hoofd.plekken[0] === 'boven_hoofd', JSON.stringify(hoofd));
       toets('keuring "ondertitel over gezicht" groen zonder overlap', keurOndertitelPlek({ ...legePlekTelling(), onder_kin: 3, lager: 1, boven_hoofd: 1 }).goed === true);

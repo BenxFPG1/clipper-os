@@ -192,6 +192,13 @@ export function plakKoppeltekens(woorden: OndertitelWoord[]): OndertitelWoord[] 
       if (kaal) uit.push({ ...w, w: kaal });
       continue;
     }
+    // Een getal dat de spraakherkenning in tweeën knipte ("297" + ".000",
+    // "1" + ",5", "5" + "%") hoort als één woord in beeld: anders stond er
+    // "circa 297 .000" (PLATINA plan-7.0).
+    if (vorige && /\d$/.test(vorige.w) && /^([.,]\d|%)/.test(w.w) && w.s - vorige.e < 0.6) {
+      uit[uit.length - 1] = { w: `${vorige.w}${w.w}`, s: vorige.s, e: w.e };
+      continue;
+    }
     if (vorige && (w.w.startsWith('-') || vorige.w.endsWith('-')) && w.s - vorige.e < 0.6) {
       uit[uit.length - 1] = { w: `${vorige.w}${w.w}`.replace(/--/g, '-'), s: vorige.s, e: w.e };
     } else {
@@ -391,11 +398,11 @@ function regelBreedte(tekst: string, stijl?: Huisstijl | null): number {
   return ctx.measureText(tekst).width + 2 * instelling('ONDERTITEL_RAND');
 }
 
-export type Plek = 'standaard' | 'onder_kin' | 'lager' | 'kleiner' | 'zoom_terug' | 'boven_hoofd' | 'overlap';
+export type Plek = 'standaard' | 'onder_kin' | 'lager' | 'kleiner' | 'kader_omhoog' | 'zoom_terug' | 'boven_hoofd' | 'overlap';
 
 /** Lege telling per plek, voor log en keuring. */
 export function legePlekTelling(): Record<Plek, number> {
-  return { standaard: 0, onder_kin: 0, lager: 0, kleiner: 0, zoom_terug: 0, boven_hoofd: 0, overlap: 0 };
+  return { standaard: 0, onder_kin: 0, lager: 0, kleiner: 0, kader_omhoog: 0, zoom_terug: 0, boven_hoofd: 0, overlap: 0 };
 }
 
 /**
@@ -503,6 +510,18 @@ export function plaatsRegels(
         y = onderKinKlein;
         schaal = kleiner;
         plek = 'kleiner';
+      } else if (oorzaak && kaderOmhoog(oorzaak, (dy) => {
+        // (d) het kader iets omlaag in de bron schuiven, zodat het gezicht
+        // hoger in beeld staat: kost geen formaat, alleen wat ruimte boven
+        // het hoofd. Voorkeur boven uitzoomen.
+        const sp = schuif(oorzaak!, dy);
+        const m = meet(regel);
+        sp();
+        return m.onder + marge + regelH <= maxOnder && m.boven >= instelling('ONDERTITEL_MIN_KOPRUIMTE') * H;
+      })) {
+        ({ boven, onder } = meet(regel));
+        y = Math.max(standaard, onder + marge + regelH);
+        plek = 'kader_omhoog';
       } else if (oorzaak && terugZoomen(oorzaak, (z) => {
         const oud = oorzaak!.zoom;
         oorzaak!.zoom = z;
@@ -531,17 +550,52 @@ export function plaatsRegels(
   return { plaatsing, plekken, schalen };
 }
 
+/** Schuift focusY (en een verticaal spoor) tijdelijk op; geeft een functie terug die het terugzet. */
+function schuif(seg: Shot, dy: number): () => void {
+  const oudY = seg.focusY;
+  const oudSpoor = seg.spoorY;
+  seg.focusY = Math.min(0.95, (oudY ?? 0.5) + dy);
+  if (oudSpoor?.length) seg.spoorY = oudSpoor.map((p) => ({ ...p, x: Math.min(0.95, p.x + dy) }));
+  return () => {
+    seg.focusY = oudY;
+    seg.spoorY = oudSpoor;
+  };
+}
+
 /**
- * Neemt de punch-in van een shot stapsgewijs terug tot `past` klopt, nooit
- * wijder dan de basiszoom. Alleen voor een shot dat boven zijn basiszoom
- * staat (retentiewissel, naadbump); muteert de zoom als het lukt.
+ * Zoekt de kleinste verticale verschuiving (tot ONDERTITEL_MAX_OMHOOG) waarbij
+ * `past` klopt en houdt die vast. Het gezicht komt hoger in beeld; uitsnedeVan
+ * klemt het kader binnen de bron, dus aan de onderrand van de bron stopt het
+ * vanzelf.
+ */
+function kaderOmhoog(seg: Shot, past: (dy: number) => boolean): boolean {
+  const max = instelling('ONDERTITEL_MAX_OMHOOG');
+  for (let dy = 0.02; dy <= max + 1e-6; dy += 0.02) {
+    if (past(dy)) {
+      schuif(seg, dy);
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Neemt de zoom van een shot stapsgewijs terug tot `past` klopt: eerst de
+ * punch-in, en zo nodig tot ONDERTITEL_ZOOM_RUIMTE onder de basiszoom (nooit
+ * wijder dan de bron). Muteert de zoom als het lukt.
  */
 function terugZoomen(seg: Shot, past: (zoom: number) => boolean): boolean {
   const basis = basisZoom(seg);
   const nu = seg.zoom ?? basis;
-  if (nu <= basis + 0.01) return false;
-  for (let z = nu - 0.02; z >= basis - 1e-6; z -= 0.02) {
-    const zr = Math.round(Math.max(basis, z) * 1000) / 1000;
+  // Ook een shot dat al op zijn basiszoom staat mag voor ondertitelruimte iets
+  // wijder: een close-up waarin de kin onder de veilige zone valt, kreeg de
+  // regel anders over de mond (PLATINA plan-7.0 clip 2: 13 regels). Een editor
+  // zoomt dan een fractie uit. Hoogstens ONDERTITEL_ZOOM_RUIMTE onder de
+  // basiszoom en nooit wijder dan de bron (zoom 1).
+  const vloer = Math.max(1, basis * (1 - instelling('ONDERTITEL_ZOOM_RUIMTE')));
+  if (nu <= vloer + 0.01) return false;
+  for (let z = nu - 0.02; z >= vloer - 1e-6; z -= 0.02) {
+    const zr = Math.round(Math.max(vloer, z) * 1000) / 1000;
     if (past(zr)) {
       seg.zoom = zr;
       return true;
@@ -555,7 +609,7 @@ export function keurOndertitelPlek(plekken: Record<Plek, number> | null | undefi
   const naam = 'ondertitel over gezicht';
   if (!plekken) return { naam, goed: null, detail: 'geen ondertitels' };
   const n = (p: Plek) => plekken[p] ?? 0;
-  const detail = `${n('standaard')} standaard, ${n('onder_kin')} onder kin, ${n('lager')} lager, ${n('kleiner')} kleiner, ${n('zoom_terug')} zoom terug, ${n('boven_hoofd')} boven hoofd`;
+  const detail = `${n('standaard')} standaard, ${n('onder_kin')} onder kin, ${n('lager')} lager, ${n('kleiner')} kleiner, ${n('kader_omhoog')} kader omhoog, ${n('zoom_terug')} zoom terug, ${n('boven_hoofd')} boven hoofd`;
   return n('overlap') > 0
     ? { naam, goed: false, detail: `${n('overlap')} regel(s) over het gezicht; ${detail}` }
     : { naam, goed: true, detail };
