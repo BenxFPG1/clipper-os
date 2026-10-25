@@ -96,6 +96,9 @@ jobs:
 
       - run: npm ci
 
+      - name: Stream-overlays (chat, teller) uit beeld
+        run: npm run test:streamoverlay
+
       - name: Keuring tegen de basislijn
         env:
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}

@@ -682,6 +682,8 @@ export async function keurMontage(
      * segmenten): hergebruiken in plaats van alles opnieuw te meten.
      */
     graphicsRegel?: KeuringRegel;
+    /** Informatief: staan er nog stream-overlays (chat, teller) in beeld (streamoverlay.ts)? */
+    streamOverlay?: KeuringRegel;
   } = {},
 ): Promise<Keuringsrapport> {
   const regels: KeuringRegel[] = [
@@ -699,6 +701,7 @@ export async function keurMontage(
     ...(opties.ondertitelPlekken !== undefined ? [keurOndertitelPlek(opties.ondertitelPlekken)] : []),
     ...(opties.ondertitelRegels !== undefined ? [keurOndertitelOverlap(opties.ondertitelRegels)] : []),
     ...(opties.graphicsRegel ? [opties.graphicsRegel] : []),
+    ...(opties.streamOverlay ? [opties.streamOverlay] : []),
     ...(!opties.graphicsRegel && opties.kader && (opties.gezichtMeter || opties.bronPad)
       ? [
           await keurGraphics(

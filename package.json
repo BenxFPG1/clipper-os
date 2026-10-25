@@ -31,6 +31,7 @@
     "test:claude": "tsx scripts/test-claude.ts",
     "test:bronwoorden": "tsx scripts/test-bronwoorden.ts",
     "test:sprekers": "tsx scripts/test-sprekers.ts",
+    "test:streamoverlay": "tsx scripts/test-streamoverlay.ts",
     "test:clipregels": "tsx scripts/test-clipregels.ts",
     "test:trends": "tsx scripts/test-trends.ts",
     "test:normen": "tsx scripts/test-normen.ts",

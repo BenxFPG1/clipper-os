@@ -38,12 +38,13 @@ DREMPEL = 0.7         # zekerheid waarboven YuNet-detecties meetellen
 pad = sys.argv[1]
 SPREKERMODUS = len(sys.argv) > 2 and sys.argv[2] == "--sprekers"
 SCHERPTEMODUS = len(sys.argv) > 2 and sys.argv[2] == "--scherpte"
-tijden = [] if (SPREKERMODUS or SCHERPTEMODUS) else json.loads(sys.argv[2])
+OVERLAYMODUS = len(sys.argv) > 2 and sys.argv[2] == "--overlays"
+tijden = [] if (SPREKERMODUS or SCHERPTEMODUS or OVERLAYMODUS) else json.loads(sys.argv[2])
 # Optioneel derde argument: hoeveel frames per tijdstip. Voor het volgen van een
 # spreker vragen we véél tijdstippen met één frame elk (snel en fijnmazig); voor
 # het bepalen van de kadrering juist weinig tijdstippen met vijf frames (robuust
 # tegen één ongelukkig frame).
-if len(sys.argv) > 3 and not SPREKERMODUS and not SCHERPTEMODUS:
+if len(sys.argv) > 3 and not SPREKERMODUS and not SCHERPTEMODUS and not OVERLAYMODUS:
     MONSTERS = max(1, int(sys.argv[3]))
 cap = cv2.VideoCapture(pad)
 
@@ -65,7 +66,105 @@ if yunet is None:
     profiel = cv2.CascadeClassifier(haar_dir + "haarcascade_profileface.xml")
 
 
+def stream_overlays():
+    """Vaste stream-overlays: chat, teller, watermerk (genormaliseerde vakken).
+
+    Een IRL-stream (TOTA) heeft linksboven een chatvenster met avatars en
+    emoji's, rechtsboven een teller en onderin een watermerk. YuNet zag de
+    avatars als gezichten, en het zelfherstel kadreerde de "spreker" daarna
+    midden in de chat. Herkenning: cellen waar bijna altijd randen (tekst)
+    staan terwijl de rest van het beeld beweegt, aan de rand van het beeld,
+    compact en niet te groot.
+
+    Bij een vaste camera (studio, podcast) is een stilstaande achtergrond niet
+    van een logo te onderscheiden; dan levert dit niets op, zodat er nooit een
+    echt gezicht wegvalt. Eén keer per bron, bewaard naast het bestand.
+    """
+    cache = pad + ".overlays.json"
+    try:
+        with open(cache) as f:
+            return json.load(f)
+    except Exception:
+        pass
+    vakken = []
+    # Een eigen capture: deze meting kan midden in een sprekermeting vallen,
+    # en die leest de gedeelde capture frame voor frame door.
+    eigen = cv2.VideoCapture(pad)
+    try:
+        n = int(eigen.get(cv2.CAP_PROP_FRAME_COUNT))
+        B, H, C = 384, 216, 8
+        gx, gy = B // C, H // C
+        dichtheid, gem = [], []
+        N = 48
+        for k in range(N):
+            eigen.set(cv2.CAP_PROP_POS_FRAMES, int(n * (0.03 + 0.94 * k / (N - 1))))
+            ok, fr = eigen.read()
+            if not ok:
+                continue
+            g = cv2.cvtColor(cv2.resize(fr, (B, H), interpolation=cv2.INTER_AREA), cv2.COLOR_BGR2GRAY)
+            e = cv2.Canny(g, 80, 160) > 0
+            dichtheid.append(e.reshape(gy, C, gx, C).mean(axis=(1, 3)))
+            gem.append(g.reshape(gy, C, gx, C).mean(axis=(1, 3)))
+        if len(dichtheid) >= 24:
+            D, G = np.array(dichtheid), np.array(gem)
+            vast = (D >= 0.08).mean(axis=0)
+            beweegt = (np.abs(G - np.median(G, axis=0)) > 10).mean(axis=0)
+            # Studio of podcast: de achtergrond staat stil, dus niets te zeggen.
+            if float(np.median(beweegt)) >= 0.35:
+                masker = (vast >= 0.8).astype(np.uint8)
+                aantal, _, st, _ = cv2.connectedComponentsWithStats(masker, 8)
+                for i in range(1, aantal):
+                    x, y, w, h, a = [int(v) for v in st[i]]
+                    rand = x <= 1 or y <= 1 or x + w >= gx - 1 or y + h >= gy - 1
+                    opp = a / (gx * gy)
+                    if not rand or opp < 0.002 or opp > 0.12 or a / (w * h) < 0.35:
+                        continue
+                    # Een cel marge: de randen van het chatvenster wisselen.
+                    vakken.append({
+                        "x0": round(max(0, x - 1) / gx, 3),
+                        "y0": round(max(0, y - 1) / gy, 3),
+                        "x1": round(min(gx, x + w + 1) / gx, 3),
+                        "y1": round(min(gy, y + h + 1) / gy, 3),
+                    })
+    except Exception:
+        vakken = []
+    finally:
+        eigen.release()
+    try:
+        tijdelijk = cache + ".%d" % os.getpid()
+        with open(tijdelijk, "w") as f:
+            json.dump(vakken, f)
+        os.replace(tijdelijk, cache)
+    except Exception:
+        pass
+    return vakken
+
+
+OVERLAYS = None
+
+
+def in_overlay(vak, frame):
+    """Valt dit gezichtsvak (pixels) binnen een stream-overlay? Dan is het een avatar of emoji."""
+    global OVERLAYS
+    if OVERLAYS is None:
+        OVERLAYS = stream_overlays()
+    if not OVERLAYS:
+        return False
+    h, b = frame.shape[:2]
+    x, y, w, hh = vak
+    cx, cy, bw = (x + w / 2) / b, (y + hh / 2) / h, w / b
+    for o in OVERLAYS:
+        if o["x0"] <= cx <= o["x1"] and o["y0"] <= cy <= o["y1"] and bw <= 0.6 * (o["x1"] - o["x0"]):
+            return True
+    return False
+
+
 def detecteer(frame):
+    """Gezichten zoals detecteer_alle, zonder die in een stream-overlay (chat-avatars)."""
+    return [d for d in detecteer_alle(frame) if not in_overlay(d[0], frame)]
+
+
+def detecteer_alle(frame):
     """Gezichten als (x, y, w, h) in pixels, plus de mondzone als die bekend is.
 
     Vindt de eerste ronde niets, dan nog één keer op een twee keer vergroot
@@ -438,6 +537,12 @@ def sprekermeting(van, tot, stap):
         p["id"] = i
     return {"van": van, "tot": tot, "stap": stap, "personen": personen, "knippen": knippen}
 
+
+if OVERLAYMODUS:
+    # Waar staan chat, teller en watermerk? Het kader blijft er zo veel
+    # mogelijk uit (kadercontrole.ts, wijkVoorOverlays).
+    print(json.dumps(stream_overlays()))
+    sys.exit(0)
 
 if SCHERPTEMODUS:
     print(json.dumps([scherptemeting(t) for t in json.loads(sys.argv[3])]))

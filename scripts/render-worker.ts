@@ -80,6 +80,8 @@ import {
 import { editDoelen, type NormContext } from '../src/lib/vault/normen';
 import { resolveBinary } from '../src/lib/ingest/binaries';
 import { pythonMetOpenCV } from '../src/lib/python';
+import { begrensOpschaal, keurStreamOverlay, meetStreamOverlays, wijkVoorOverlays } from '../src/lib/roughcut/streamoverlay';
+import { isDirecteBron } from '../src/lib/ingest/bron-url';
 import { pakFrames } from '../src/lib/roughcut/frames';
 import { r2Upload } from '../src/lib/r2';
 
@@ -174,7 +176,7 @@ async function verwerk(job: Job) {
 
   const { data: videoRij } = await supabase
     .from('videos')
-    .select('transcript, transcript_source, stiltes, character_map')
+    .select('transcript, transcript_source, stiltes, character_map, hoogte')
     .eq('id', job.video_id)
     .single();
 
@@ -276,6 +278,17 @@ async function verwerk(job: Job) {
     bereiken: teDoen.flatMap((x) => x.clip.shots ?? []),
     transcript: (videoRij?.transcript as import('../src/lib/roughcut/woorden').TranscriptSegmentTijd[] | null) ?? null,
   });
+  // Stream-overlays (chat, teller, watermerk) van een IRL-stream: één meting
+  // per bron. gezichten.py telt de avatars erin al niet meer als gezicht;
+  // het kader wijkt er per ronde voor uit (streamoverlay.ts).
+  const streamVakken = meetStreamOverlays(bronPad, pythonMetOpenCV());
+  if (streamVakken.length) {
+    console.log(`  stream-overlays: ${streamVakken.map((v) => `${v.x0.toFixed(2)}-${v.x1.toFixed(2)} × ${v.y0.toFixed(2)}-${v.y1.toFixed(2)}`).join(', ')}`);
+  }
+  // Drive/WeTransfer: het origineel is de renderbron, en die resolutie is
+  // bekend; daarop begrenst het zoomplafond de opschaling. Bij YouTube komt
+  // de render uit 4K-secties en is er geen plafond nodig.
+  const bronHoogteRender = isDirecteBron(video.source_url) ? ((videoRij as { hoogte?: number | null } | null)?.hoogte ?? null) : null;
   // De captions van de video (YouTube of handmatig) voor een reeks
   // brontijden: extra context voor de ondertitelcorrectie. Een eigen
   // Whisper-transcript voegt niets toe en blijft weg.
@@ -1254,6 +1267,7 @@ async function verwerk(job: Job) {
     let beeldRondeGedaan = false;
     let keuringsuitslag: Awaited<ReturnType<typeof keurMontage>> | null = null;
     let ondertitels: Ondertitels | null = null;
+    let streamNogInBeeld: number[] = [];
     const basisPad = join(werkmap, `basis-${naam}`);
     // Touwtrek-detectie: dezelfde poort-ingreep op hetzelfde shot in
     // opeenvolgende rondes betekent dat een correctielaag en een poortregel
@@ -1342,6 +1356,18 @@ async function verwerk(job: Job) {
         } catch (e) {
           console.log(`     scherp begin overgeslagen (${(e as Error).message.slice(0, 80)})`);
         }
+      }
+    }
+
+    // Opschaalplafond en stream-overlays, per ronde (het zelfherstel kan het
+    // kader verzet hebben) en vóór de ondertitels, die op dit kader rekenen.
+    {
+      const plafond = begrensOpschaal(segmenten, kaderClip, bronHoogteRender);
+      if (plafond.length) console.log(`     zoomplafond: ${plafond.join('; ')}`);
+      const wijk = wijkVoorOverlays(segmenten, streamVakken, kaderClip, { bronHoogte: bronHoogteRender });
+      streamNogInBeeld = wijk.nogInBeeld;
+      if (wijk.regels.length || wijk.nogInBeeld.length) {
+        console.log(`     stream-overlay: ${[...wijk.regels, ...(wijk.nogInBeeld.length ? [`nog in beeld: shot ${wijk.nogInBeeld.join(', ')}`] : [])].join('; ')}`);
       }
     }
 
@@ -1826,6 +1852,7 @@ async function verwerk(job: Job) {
         ondertitelPlekken: ondertitels?.stijl.plekken ?? null,
         ondertitelRegels: ondertitels?.regels ?? null,
         graphicsRegel: laatsteGraphicsKeuring && laatsteGraphicsKeuring.sleutel === segmentSleutel(segmenten) ? laatsteGraphicsKeuring.regel : undefined,
+        streamOverlay: streamVakken.length ? keurStreamOverlay(streamVakken, streamNogInBeeld) : undefined,
       });
       tijd.keuring = (Date.now() - tKeuring) / 1000;
       if (retentieEind) await vulMontageplanAan(supabase, job.video_id, nummer, { retentie_eind: retentieEind });

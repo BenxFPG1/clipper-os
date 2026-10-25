@@ -22,6 +22,13 @@ const STANDAARD = {
   ZOOM_GEWENST_HOOFDBREEDTE: 0.45,
   /** Verder inzoomen dan dit kost zichtbaar scherpte. */
   ZOOM_MAX: 1.7,
+  /**
+   * Hoogste opschaling van een persoonshot op een bron met bekende, lage
+   * resolutie (Drive/WeTransfer, vaak 1080p): bij 1080p een zoom van ~1,35.
+   */
+  PERSOON_MAX_OPSCHAAL: 2.4,
+  /** Hoe ver de spreker uit het midden mag om een stream-overlay uit beeld te houden (onder KEURING_UIT_MIDDEN_MAX). */
+  STREAM_MIDDEN_MARGE: 0.12,
   /** Schaalverschil dat een naadknip als bewuste punch-in laat lezen. */
   ZOOM_NAADBUMP: 0.12,
   /** Onder dit schaalverschil leest een naad als "niet smooth". */
