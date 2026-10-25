@@ -46,7 +46,8 @@ import type { KeuringRegel } from './keuring';
  * (daar zit de platform-UI). Past het onder de kin niet, dan boven het hoofd.
  */
 
-export type OndertitelWoord = { w: string; s: number; e: number };
+/** `knip`: het eerste woord na een echte knip in de bron; daar begint altijd een nieuwe regel. */
+export type OndertitelWoord = { w: string; s: number; e: number; knip?: boolean };
 export type OndertitelRegel = { s: number; e: number; woorden: OndertitelWoord[] };
 
 const B = 1080;
@@ -129,6 +130,7 @@ export function woordenOpTijdlijn(segmenten: Shot[], bronWoorden: BronWoord[]): 
     // kaderwissel binnen één stuk spraak), of is het een echte knip?
     const aansluitendVoor = k > 0 && Math.abs(inRender[k - 1].end - seg.start) < 0.01;
     const aansluitendNa = k + 1 < inRender.length && Math.abs(inRender[k + 1].start - seg.end) < 0.01;
+    let eersteVanShot = true;
     for (const w of woorden) {
       if (w.s >= seg.end) break;
       // Een woord hoort bij het shot waar zijn midden in valt. Met de oude
@@ -160,7 +162,8 @@ export function woordenOpTijdlijn(segmenten: Shot[], bronWoorden: BronWoord[]): 
       let t0 = s;
       for (const d of delen) {
         const t1 = t0 + ((e - s) * (d.length + 1)) / totaal;
-        uit.push({ w: d, s: t0, e: t1 });
+        uit.push({ w: d, s: t0, e: t1, ...(eersteVanShot && k > 0 && !aansluitendVoor ? { knip: true } : {}) });
+        eersteVanShot = false;
         t0 = t1;
       }
     }
@@ -248,10 +251,30 @@ export function groepeerRegels(woorden: OndertitelWoord[]): OndertitelRegel[] {
     const vorige = huidig[huidig.length - 1];
     const tekens = huidig.reduce((n, x) => n + x.w.length + 1, 0) + w.w.length;
     const pauze = vorige ? w.s - vorige.e : 0;
-    if (huidig.length >= maxWoorden || (huidig.length > 0 && tekens > maxTekens) || pauze > breekPauze) sluit();
+    // Na een knip in de bron begint altijd een nieuwe regel: "Afrika De" las
+    // als één zin terwijl er twee minuten tussen zaten (PLATINA clip 2).
+    if (huidig.length >= maxWoorden || (huidig.length > 0 && tekens > maxTekens) || pauze > breekPauze || w.knip) sluit();
     huidig.push(w);
-    // Een zinseinde is een natuurlijke regelgrens, ook bij een korte regel.
-    if (/[.!?]$/.test(w.w) && huidig.length >= 2) sluit();
+    // Een zinseinde sluit de regel altijd. Staat het slotwoord dan alleen, dan
+    // schuift het bij de vorige regel als dat past — liever "komt uit
+    // Zuid-Afrika." dan een flits van één woord of een regel over twee zinnen.
+    if (/[.!?]$/.test(w.w)) {
+      const vorigeRegel = regels[regels.length - 1];
+      const past =
+        huidig.length === 1 &&
+        vorigeRegel &&
+        !w.knip &&
+        !/[.!?]$/.test(vorigeRegel.woorden[vorigeRegel.woorden.length - 1].w) &&
+        w.s - vorigeRegel.e <= breekPauze &&
+        vorigeRegel.woorden.reduce((n, x) => n + x.w.length + 1, 0) + w.w.length <= maxTekens + 4;
+      if (past) {
+        vorigeRegel.woorden.push(w);
+        vorigeRegel.e = w.e;
+        huidig = [];
+      } else {
+        sluit();
+      }
+    }
   }
   sluit();
 

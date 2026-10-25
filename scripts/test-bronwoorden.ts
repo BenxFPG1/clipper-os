@@ -168,6 +168,13 @@ async function main() {
         [{ w: 'te', s: 128.94, e: 129.08 }, { w: 'draaien.', s: 129.08, e: 129.48 }, { w: 'Ten', s: 129.48, e: 129.94 }, { w: 'tweede', s: 129.94, e: 130.34 }, { w: 'ruimte.', s: 201.98, e: 202.34 }, { w: 'Bij', s: 202.48, e: 202.68 }, { w: 'goud', s: 202.68, e: 203.12 }],
       );
       toets('bij een echte knip alleen woorden die je hoort ("draaien. Bij goud")', gerekt.map((w) => w.w).join(' ') === 'te draaien. Bij goud', JSON.stringify(gerekt.map((w) => w.w)));
+      // Een ondertitelregel loopt nooit over een knip heen ("Afrika De").
+      const overKnip = groepeerRegels(woordenOpTijdlijn(
+        [{ volgorde: 3, start: 135, end: 137.2, functie: 'setup' }, { volgorde: 4, start: 164.5, end: 166.5, functie: 'setup' }],
+        [{ w: 'wereld', s: 135.2, e: 135.6 }, { w: 'komt', s: 135.6, e: 135.9 }, { w: 'uit', s: 135.9, e: 136.2 }, { w: 'Zuid-Afrika.', s: 136.3, e: 137.1 }, { w: 'De', s: 164.58, e: 164.7 }, { w: 'Platinamarkt', s: 164.7, e: 165.4 }, { w: 'heeft', s: 165.4, e: 165.7 }],
+      ));
+      toets('nieuwe regel na een knip, nooit "Afrika De"', overKnip.every((r) => !(r.woorden.some((w) => /Afrika/.test(w.w)) && r.woorden.some((w) => w.w === 'De'))), JSON.stringify(overKnip.map((r) => r.woorden.map((w) => w.w).join(' '))));
+      toets('een losse slotzin-staart schuift bij de vorige regel als dat past', groepeerRegels([{ w: 'Het', s: 0, e: 0.2 }, { w: 'is', s: 0.2, e: 0.4 }, { w: 'zo', s: 0.4, e: 0.6 }, { w: 'klaar.', s: 0.6, e: 0.9 }]).map((r) => r.woorden.map((w) => w.w).join(' ')).join(' | ') === 'Het is zo klaar.', JSON.stringify(groepeerRegels([{ w: 'Het', s: 0, e: 0.2 }, { w: 'is', s: 0.2, e: 0.4 }, { w: 'zo', s: 0.4, e: 0.6 }, { w: 'klaar.', s: 0.6, e: 0.9 }]).map((r) => r.woorden.map((w) => w.w))));
     }
 
     console.log('correctie mag één fout in twee woorden splitsen');
