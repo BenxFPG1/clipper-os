@@ -459,9 +459,6 @@ export function plaatsRegels(
     begin.push(cursor);
     cursor += seg.end - seg.start;
   }
-  const plaatsing: number[] = [];
-  const plekken: Plek[] = [];
-  const schalen: number[] = [];
   // Tijdens een vastgehouden graphic (leestijd) staat de graphic nog in
   // beeld, ook al hoort de tijd al bij het volgende deelstuk.
   const lees = leestijdPlan(segmenten, kader);
@@ -487,66 +484,99 @@ export function plaatsRegels(
     }
     return { boven, onder, oorzaak };
   };
-  for (const regel of regels) {
-    let { boven, onder, oorzaak } = meet(regel);
-    const botst = (y: number, h: number) => onder > -Infinity && y - h < onder + marge && y > boven - marge;
-    let y = standaard;
-    let plek: Plek = 'standaard';
-    let schaal = 1;
-    if (botst(y, regelH)) {
-      const onderKin = onder + marge + regelH;
-      const onderKinKlein = onder + marge + regelH * kleiner;
-      if (onderKin <= maxOnder) {
-        // (a) gewoon onder de kin.
-        y = Math.max(standaard, onderKin);
-        plek = 'onder_kin';
-      } else if (onderKin <= noodOnder) {
-        // (b) de onderste veilige positie: iets lager dan normaal, nog boven
-        // de knoppen van het platform.
-        y = onderKin;
-        plek = 'lager';
-      } else if (onderKinKlein <= noodOnder) {
-        // (c) de regel iets kleiner, zodat hij onder de kin past.
-        y = onderKinKlein;
-        schaal = kleiner;
-        plek = 'kleiner';
-      } else if (oorzaak && kaderOmhoog(oorzaak, (dy) => {
-        // (d) het kader iets omlaag in de bron schuiven, zodat het gezicht
-        // hoger in beeld staat: kost geen formaat, alleen wat ruimte boven
-        // het hoofd. Voorkeur boven uitzoomen.
-        const sp = schuif(oorzaak!, dy);
-        const m = meet(regel);
-        sp();
-        return m.onder + marge + regelH <= maxOnder && m.boven >= instelling('ONDERTITEL_MIN_KOPRUIMTE') * H;
-      })) {
-        ({ boven, onder } = meet(regel));
-        y = Math.max(standaard, onder + marge + regelH);
-        plek = 'kader_omhoog';
-      } else if (oorzaak && terugZoomen(oorzaak, (z) => {
-        const oud = oorzaak!.zoom;
-        oorzaak!.zoom = z;
-        const m = meet(regel);
-        oorzaak!.zoom = oud;
-        return m.onder + marge + regelH <= maxOnder;
-      })) {
-        // (d) het punch-in-kader van dit shot iets terugnemen, zodat de kin
-        // hoger komt te staan (hoogstens terug tot de basiszoom).
-        ({ boven, onder } = meet(regel));
-        y = Math.max(standaard, onder + marge + regelH);
-        plek = 'zoom_terug';
-      } else if (boven - marge - regelH >= minBoven) {
-        // (e) pas als niets anders kan: boven het hoofd.
-        y = boven - marge;
-        plek = 'boven_hoofd';
-      } else {
-        y = noodOnder;
-        plek = 'overlap';
+  // Een kaderwijziging (omhoog schuiven, terugzoomen) geldt voor het hele
+  // shot, dus ook voor de regels die al geplaatst waren. Daarom: één
+  // wijziging tegelijk, daarna alles opnieuw plaatsen, en de wijziging alleen
+  // houden als het totaal beter wordt (minder overlap, dan minder regels
+  // boven het hoofd). PLATINA clip 2: omhoog schuiven voor één regel zette
+  // eerdere regels boven het hoofd alsnog over het gezicht.
+  const oorspronkelijkY = new Map<Shot, number>();
+  for (const seg of segmenten) oorspronkelijkY.set(seg, seg.focusY ?? 0.5);
+  const verboden = new Set<number>();
+  const gewijzigd = new Map<number, Plek>();
+  type Uitkomst = { plaatsing: number[]; plekken: Plek[]; schalen: number[]; terug: (() => void) | null };
+  const plaatsAlles = (wijzigen: boolean): Uitkomst => {
+    const plaatsing: number[] = [];
+    const plekken: Plek[] = [];
+    const schalen: number[] = [];
+    for (const [r, regel] of regels.entries()) {
+      const { boven, onder, oorzaak } = meet(regel);
+      const botst = (y: number, h: number) => onder > -Infinity && y - h < onder + marge && y > boven - marge;
+      let y = standaard;
+      let plek: Plek = 'standaard';
+      let schaal = 1;
+      if (botst(y, regelH)) {
+        const onderKin = onder + marge + regelH;
+        const onderKinKlein = onder + marge + regelH * kleiner;
+        const mag = wijzigen && oorzaak && !verboden.has(r);
+        let terug: (() => void) | null = null;
+        if (onderKin <= maxOnder) {
+          // (a) gewoon onder de kin.
+          y = Math.max(standaard, onderKin);
+          plek = gewijzigd.get(r) ?? 'onder_kin';
+        } else if (onderKin <= noodOnder) {
+          // (b) de onderste veilige positie: iets lager dan normaal, nog boven
+          // de knoppen van het platform.
+          y = onderKin;
+          plek = 'lager';
+        } else if (onderKinKlein <= noodOnder) {
+          // (c) de regel iets kleiner, zodat hij onder de kin past.
+          y = onderKinKlein;
+          schaal = kleiner;
+          plek = 'kleiner';
+        } else if (mag && (terug = kaderOmhoog(oorzaak!, oorspronkelijkY.get(oorzaak!) ?? 0.5, (dy) => {
+          // (d) het kader iets omlaag in de bron schuiven, zodat het gezicht
+          // hoger in beeld staat: kost geen formaat, alleen wat ruimte boven
+          // het hoofd. Voorkeur boven uitzoomen.
+          const sp = schuif(oorzaak!, dy);
+          const m = meet(regel);
+          sp();
+          return m.onder + marge + regelH <= maxOnder && m.boven >= instelling('ONDERTITEL_MIN_KOPRUIMTE') * H;
+        }))) {
+          gewijzigd.set(r, 'kader_omhoog');
+          return { plaatsing, plekken, schalen, terug };
+        } else if (mag && (terug = terugZoomen(oorzaak!, (z) => {
+          const oud = oorzaak!.zoom;
+          oorzaak!.zoom = z;
+          const m = meet(regel);
+          oorzaak!.zoom = oud;
+          return m.onder + marge + regelH <= maxOnder;
+        }))) {
+          // (e) het kader van dit shot iets terugnemen, zodat de kin hoger
+          // komt te staan (hoogstens ONDERTITEL_ZOOM_RUIMTE onder de basiszoom).
+          gewijzigd.set(r, 'zoom_terug');
+          return { plaatsing, plekken, schalen, terug };
+        } else if (boven - marge - regelH >= minBoven) {
+          // (f) pas als niets anders kan: boven het hoofd.
+          y = boven - marge;
+          plek = 'boven_hoofd';
+        } else {
+          y = noodOnder;
+          plek = 'overlap';
+        }
       }
+      plaatsing.push(Math.round(Math.min(noodOnder, y)));
+      plekken.push(plek);
+      schalen.push(schaal);
     }
-    plaatsing.push(Math.round(Math.min(noodOnder, y)));
-    plekken.push(plek);
-    schalen.push(schaal);
+    return { plaatsing, plekken, schalen, terug: null };
+  };
+  const score = (u: Uitkomst) => u.plekken.reduce((n, p) => n + (p === 'overlap' ? 1000 : p === 'boven_hoofd' ? 1 : 0), 0);
+  let beste = plaatsAlles(false);
+  for (let ronde = 0; ronde < 4 * regels.length + 10; ronde++) {
+    const poging = plaatsAlles(true);
+    if (!poging.terug) break;
+    const regel = poging.plaatsing.length;
+    const na = plaatsAlles(false);
+    if (score(na) < score(beste)) {
+      beste = na;
+    } else {
+      poging.terug();
+      gewijzigd.delete(regel);
+      verboden.add(regel);
+    }
   }
+  const { plaatsing, plekken, schalen } = plaatsAlles(false);
   return { plaatsing, plekken, schalen };
 }
 
@@ -564,27 +594,42 @@ function schuif(seg: Shot, dy: number): () => void {
 
 /**
  * Zoekt de kleinste verticale verschuiving (tot ONDERTITEL_MAX_OMHOOG) waarbij
- * `past` klopt en houdt die vast. Het gezicht komt hoger in beeld; uitsnedeVan
+ * `past` klopt, voert die uit en geeft terug hoe hij ongedaan wordt. Het gezicht komt hoger in beeld; uitsnedeVan
  * klemt het kader binnen de bron, dus aan de onderrand van de bron stopt het
  * vanzelf.
  */
-function kaderOmhoog(seg: Shot, past: (dy: number) => boolean): boolean {
-  const max = instelling('ONDERTITEL_MAX_OMHOOG');
+function kaderOmhoog(seg: Shot, oorspronkelijk: number, past: (dy: number) => boolean): (() => void) | null {
+  // De grens geldt voor de totale verschuiving van het shot, niet per stap.
+  const max = instelling('ONDERTITEL_MAX_OMHOOG') - ((seg.focusY ?? 0.5) - oorspronkelijk);
   for (let dy = 0.02; dy <= max + 1e-6; dy += 0.02) {
-    if (past(dy)) {
-      schuif(seg, dy);
-      return true;
-    }
+    const terug = schuif(seg, dy);
+    const vrij = overlayVrij(seg);
+    terug();
+    if (vrij && past(dy)) return schuif(seg, dy);
   }
-  return false;
+  return null;
+}
+
+/**
+ * Valt een gemeten eindscherm-overlay buiten de uitsnede? Dezelfde toets als
+ * keurOverlay: een kader dat voor ondertitelruimte schuift of wijder wordt,
+ * mag de overlay niet alsnog in beeld halen (PLATINA clip 2, shot 5).
+ */
+function overlayVrij(seg: Shot): boolean {
+  const o = seg.overlay;
+  if (!o) return true;
+  const paneelBreed = seg.paneel ? seg.paneel[1] - seg.paneel[0] : 1;
+  const u = uitsnedeVan(seg.focusX ?? 0.5, seg.zoom ?? basisZoom(seg), seg.focusY ?? 0.5, (16 / 9) * paneelBreed);
+  return !(u.y1 > o.y0 + 0.01 && u.x1 > o.x0 && u.x0 < o.x1);
 }
 
 /**
  * Neemt de zoom van een shot stapsgewijs terug tot `past` klopt: eerst de
  * punch-in, en zo nodig tot ONDERTITEL_ZOOM_RUIMTE onder de basiszoom (nooit
- * wijder dan de bron). Muteert de zoom als het lukt.
+ * wijder dan de bron). Muteert de zoom als het lukt en geeft terug hoe dat
+ * ongedaan wordt.
  */
-function terugZoomen(seg: Shot, past: (zoom: number) => boolean): boolean {
+function terugZoomen(seg: Shot, past: (zoom: number) => boolean): (() => void) | null {
   const basis = basisZoom(seg);
   const nu = seg.zoom ?? basis;
   // Ook een shot dat al op zijn basiszoom staat mag voor ondertitelruimte iets
@@ -593,15 +638,21 @@ function terugZoomen(seg: Shot, past: (zoom: number) => boolean): boolean {
   // zoomt dan een fractie uit. Hoogstens ONDERTITEL_ZOOM_RUIMTE onder de
   // basiszoom en nooit wijder dan de bron (zoom 1).
   const vloer = Math.max(1, basis * (1 - instelling('ONDERTITEL_ZOOM_RUIMTE')));
-  if (nu <= vloer + 0.01) return false;
+  if (nu <= vloer + 0.01) return null;
   for (let z = nu - 0.02; z >= vloer - 1e-6; z -= 0.02) {
     const zr = Math.round(Math.max(vloer, z) * 1000) / 1000;
-    if (past(zr)) {
+    const oud = seg.zoom;
+    seg.zoom = zr;
+    const vrij = overlayVrij(seg);
+    seg.zoom = oud;
+    if (vrij && past(zr)) {
       seg.zoom = zr;
-      return true;
+      return () => {
+        seg.zoom = oud;
+      };
     }
   }
-  return false;
+  return null;
 }
 
 /** Keuringsregel: geen ondertitelregel over een gezicht of graphic-inhoud. */
@@ -710,6 +761,10 @@ export async function maakOndertitels(
   const { plaatsing, plekken, schalen } = plaatsRegels(regels, segmenten, opties.kader ?? 'vullend', stijl);
   const telling = legePlekTelling();
   for (const p of plekken) telling[p]++;
+  // Welke regels toch over een gezicht vallen, met hun tijd: zo is in het
+  // renderlog terug te vinden welk shot de ondertitel niet kwijt kon.
+  const over = regels.flatMap((r, i) => (plekken[i] === 'overlap' ? [`${r.s.toFixed(1)} s "${r.woorden.map((w) => w.w).join(' ').slice(0, 30)}"`] : []));
+  if (over.length) console.log(`     ondertitel over gezicht: ${over.join(', ')}`);
   const stijlInfo = { familie: font.familie, bestand: font.bestand, assGrootte: maat.assGrootte, kapPx: maat.kapPx, plekken: telling };
   if (regels.length === 0) return { regels, overlays: [], srt, stijl: stijlInfo };
 

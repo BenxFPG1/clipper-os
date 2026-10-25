@@ -15,6 +15,8 @@
 // De leestijd-toetsen gebruiken graphics van 1,3 s; de productiedrempel voor
 // 'graphic is een leesmoment' (1,5 s) zou ze allemaal als overgang overslaan.
 process.env.MONTAGE_GRAPHIC_MIN_VOOR_LEESTIJD ??= '1.2';
+import { uitsnedeVan } from '../src/lib/roughcut/kadercontrole';
+import { keurOverlay } from '../src/lib/roughcut/eindscherm';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -844,6 +846,31 @@ async function main() {
       basisShot.zoom = bz;
       const ruim = plek(basisShot);
       toets('close-up op basiszoom: kader omhoog zodat de regel onder de kin past', ruim.plekken[0] === 'kader_omhoog' && (basisShot.focusY ?? 0) > 0.5 && basisShot.zoom === bz, JSON.stringify({ ruim, bz, focusY: basisShot.focusY }));
+      // Een eindscherm vlak onder de uitsnede: omhoog schuiven zou het in beeld
+      // halen (PLATINA clip 2, shot 5) — dan niet schuiven.
+      const metOverlay: Shot = { volgorde: 1, start: 10, end: 14, functie: 'setup', focusX: 0.5, focusW: 0.1, focusY: 0.5, gezicht: { x: 0.5, breedte: 0.1, top: 0.4, hoogte: 0.26 } };
+      metOverlay.zoom = basisZoom(metOverlay);
+      const u0 = uitsnedeVan(0.5, metOverlay.zoom, 0.5, 16 / 9);
+      metOverlay.overlay = { x0: 0, y0: u0.y1, x1: 1, y1: 1 };
+      const po = plek(metOverlay);
+      toets('eindscherm onder de uitsnede: kader schuift niet over de overlay', po.plekken[0] !== 'kader_omhoog' && keurOverlay([metOverlay], 'vullend').goed === true, JSON.stringify({ po, focusY: metOverlay.focusY, zoom: metOverlay.zoom }));
+      // Twee regels in één shot: wat het kader voor de tweede doet, geldt ook
+      // voor de eerste. Het eindtotaal mag nooit meer overlap hebben dan zonder
+      // kaderwijziging (één regel boven het hoofd, één onder de kin = 0).
+      const tweeRegels = [regels[0], { s: 2.2, e: 3.2, woorden: [{ w: 'nog', s: 2.2, e: 2.5 }, { w: 'eens', s: 2.5, e: 3.2 }] }];
+      const spoorShot: Shot = { volgorde: 1, start: 10, end: 14, functie: 'setup', focusX: 0.5, focusW: 0.1, focusY: 0.5, gezicht: { x: 0.5, breedte: 0.1, top: 0.45, hoogte: 0.26 }, spoorY: [{ t: 10.7, x: 0.4 }, { t: 12.7, x: 0.5 }] };
+      spoorShot.zoom = basisZoom(spoorShot);
+      const p2 = plaatsRegels(tweeRegels, [spoorShot], 'vullend');
+      // Elke regel getoetst tegen het úiteindelijke kader: een eerdere regel
+      // mag niet tegen het oude kader gemeten zijn.
+      const vrijVanGezicht = p2.plaatsing.every((y, i) => {
+        const r = tweeRegels[i];
+        return [r.s + 0.05, (r.s + r.e) / 2, r.e - 0.05].every((t) => {
+          const g = gezichtOpBeeld(spoorShot, 'vullend', spoorShot.start + t)!;
+          return y - regelH >= g.onder * 1920 - 1 || y <= g.boven * 1920 + 1;
+        });
+      });
+      toets('kaderwijziging telt voor alle regels in het shot (geen overlap erbij)', !p2.plekken.includes('overlap') && vrijVanGezicht, JSON.stringify({ p2, focusY: spoorShot.focusY }));
       const hoofd = plek(vlak(0.45, 0.31, 1));
       toets('zonder punch-in en zonder ruimte: pas dan boven het hoofd', hoofd.plekken[0] === 'boven_hoofd', JSON.stringify(hoofd));
       toets('keuring "ondertitel over gezicht" groen zonder overlap', keurOndertitelPlek({ ...legePlekTelling(), onder_kin: 3, lager: 1, boven_hoofd: 1 }).goed === true);
