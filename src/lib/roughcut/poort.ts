@@ -81,6 +81,9 @@ function zelfdeWoord(a: string, b: string): boolean {
   if (!x || !y) return false;
   if (x === y) return true;
   if (Math.min(x.length, y.length) >= 3 && (x.startsWith(y) || y.startsWith(x))) return true;
+  // Het tweede deel van een gesplitst samengesteld woord ("-Afrika." bij
+  // "Zuid-Afrika.") is ook dat woord.
+  if (Math.min(x.length, y.length) >= 4 && (x.endsWith(y) || y.endsWith(x))) return true;
   if (Math.min(x.length, y.length) < 4 || Math.abs(x.length - y.length) > 2) return false;
   // Hoogstens twee letters verschil.
   const d: number[] = Array.from({ length: y.length + 1 }, (_, j) => j);
@@ -118,6 +121,11 @@ function kantVanWoord(
   binnenBuur: BronWoord | null,
   kant: 'start' | 'eind',
 ): 'mee' | 'erbuiten' {
+  // Een gesplitst samengesteld woord ("Zuid" + "-Afrika.", "Troy" + "-ounce.")
+  // is één woord: nooit doormidden. Zonder deze regel eindigde PLATINA clip 2
+  // op "…komt uit Zuid." en "…297.000 troy.".
+  if (kant === 'eind' && (w.w.startsWith('-') || binnenBuur?.w.endsWith('-'))) return 'mee';
+  if (kant === 'start' && (w.w.endsWith('-') || binnenBuur?.w.startsWith('-'))) return 'mee';
   // Eerst de buur: bij korte woorden ("en", "de") zegt het woord zelf weinig,
   // de plek ten opzichte van het randwoord van het fragment wel.
   if (randwoorden.length && binnenBuur && zelfdeWoord(binnenBuur.w, randwoorden[0]) && !zelfdeWoord(w.w, randwoorden[0])) return 'erbuiten';

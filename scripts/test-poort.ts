@@ -143,6 +143,20 @@ console.log('poort — regel 1: een woord van de buurzin blijft erbuiten');
   toets('valt de knip in het eerste woord van het fragment, dan komt dat mee', poort([s3b], bron).segmenten[0].start <= 132.3, `start=${poort([s3b], bron).segmenten[0].start}`);
 }
 
+{
+  // Whisper splitst samengestelde woorden: "Zuid" + "-Afrika.". De knip viel
+  // in "-Afrika." en de test-render eindigde op "…komt uit Zuid.".
+  const bron: BronWoord[] = [
+    ['komt', 136.1, 136.3], ['uit', 136.3, 136.42], ['Zuid', 136.42, 136.7], ['-Afrika.', 136.7, 137.14], ['Ten', 137.9, 138.1],
+  ].map(([w, s, e]) => ({ w: w as string, s: s as number, e: e as number }));
+  const sz = { ...shot(3, 133, 136.9), transcript_fragment: 'Meer dan 70 procent van alle platina ter wereld komt uit Zuid-Afrika.' } as Shot;
+  const { segmenten } = poort([sz], bron);
+  toets('gesplitst samengesteld woord blijft heel ("Zuid-Afrika.")', segmenten[0].end >= 137.14, `eind=${segmenten[0].end}`);
+  const tr: BronWoord[] = [['circa', 171, 171.3], ['297.000', 171.3, 171.9], ['Troy', 171.9, 172.1], ['-ounce.', 172.1, 172.5]].map(([w, s, e]) => ({ w: w as string, s: s as number, e: e as number }));
+  const st = { ...shot(4, 165, 172.2), transcript_fragment: 'een tekort van circa 297.000 Troi-ounce.' } as Shot;
+  toets('…en "Troy-ounce." ook', poort([st], tr).segmenten[0].end >= 172.5, `eind=${poort([st], tr).segmenten[0].end}`);
+}
+
 console.log('poort — regel 1b: ademruimte rond de knip');
 {
   // Knip pal op de grenzen van "mijn ... zat": er hoort lucht omheen te komen,
