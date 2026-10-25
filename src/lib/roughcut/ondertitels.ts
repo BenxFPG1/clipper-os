@@ -123,8 +123,12 @@ export function woordenOpTijdlijn(segmenten: Shot[], bronWoorden: BronWoord[]): 
   // elkaar in beeld.
   const inRender = [...segmenten].sort((a, b) => a.volgorde - b.volgorde).filter((s) => s.end > s.start);
   const woorden = [...bronWoorden].sort((a, b) => a.s - b.s);
-  for (const seg of inRender) {
+  for (const [k, seg] of inRender.entries()) {
     const duur = seg.end - seg.start;
+    // Sluit dit shot in de bron naadloos aan op het vorige of volgende (een
+    // kaderwissel binnen één stuk spraak), of is het een echte knip?
+    const aansluitendVoor = k > 0 && Math.abs(inRender[k - 1].end - seg.start) < 0.01;
+    const aansluitendNa = k + 1 < inRender.length && Math.abs(inRender[k + 1].start - seg.end) < 0.01;
     for (const w of woorden) {
       if (w.s >= seg.end) break;
       // Een woord hoort bij het shot waar zijn midden in valt. Met de oude
@@ -134,6 +138,14 @@ export function woordenOpTijdlijn(segmenten: Shot[], bronWoorden: BronWoord[]): 
       // (PLATINA clip 4: "2,238,238", "Ten Bij goud").
       const midden = (w.s + Math.max(w.e, w.s + 0.08)) / 2;
       if (midden < seg.start || midden >= seg.end) continue;
+      // Bij een echte knip aan het eind: alleen een woord dat binnen het shot
+      // afloopt is te horen. Whisper rekt het begin van een woord na een pauze
+      // terug de stilte in ("Ten" van 129,48 in plaats van 129,80), het einde
+      // klopt wel; met alleen het midden stond "Ten" in beeld terwijl het
+      // geluid al vóór dat woord was afgeknipt (PLATINA clip 4).
+      if (!aansluitendNa && w.e > seg.end + 0.1) continue;
+      // En aan het begin: een woord dat al vóór de knip afloopt, klinkt niet.
+      if (!aansluitendVoor && w.e < seg.start + 0.1) continue;
       // Een woord dat over de knip heen loopt wordt afgekapt op het segment;
       // de poort zorgt dat dat vrijwel niet voorkomt.
       const s = cursor + Math.max(0, w.s - seg.start);

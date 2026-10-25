@@ -160,6 +160,14 @@ async function main() {
       // Een woord dat grotendeels vóór de knip klinkt, staat niet in beeld ("Ten Bij goud").
       const voor = woordenOpTijdlijn([{ volgorde: 1, start: 0.95, end: 2, functie: 'setup' }], [{ w: 'Ten', s: 0.905, e: 0.96 }, { w: 'Bij', s: 1.1, e: 1.3 }]);
       toets('woord dat vóór de knip klinkt valt weg', voor.map((w) => w.w).join(' ') === 'Bij', JSON.stringify(voor));
+      // Whisper rekt het begin van een woord na een pauze de stilte in: "Ten"
+      // van 129,48 (echt 129,80) tot 129,94. Het geluid stopt op 129,71; het
+      // midden (129,71) lag net binnen het shot en "Ten" stond in beeld.
+      const gerekt = woordenOpTijdlijn(
+        [{ volgorde: 3, start: 126.72, end: 129.72, functie: 'setup' }, { volgorde: 4, start: 202.36, end: 205.3, functie: 'payoff' }],
+        [{ w: 'te', s: 128.94, e: 129.08 }, { w: 'draaien.', s: 129.08, e: 129.48 }, { w: 'Ten', s: 129.48, e: 129.94 }, { w: 'tweede', s: 129.94, e: 130.34 }, { w: 'ruimte.', s: 201.98, e: 202.34 }, { w: 'Bij', s: 202.48, e: 202.68 }, { w: 'goud', s: 202.68, e: 203.12 }],
+      );
+      toets('bij een echte knip alleen woorden die je hoort ("draaien. Bij goud")', gerekt.map((w) => w.w).join(' ') === 'te draaien. Bij goud', JSON.stringify(gerekt.map((w) => w.w)));
     }
 
     console.log('correctie mag één fout in twee woorden splitsen');

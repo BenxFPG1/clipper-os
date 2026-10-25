@@ -29,7 +29,9 @@ export const TEASE_MAX_DUUR = 4.5;
  *
  *  1. Geen knip valt binnen een woord. We kennen de woordtijden van de hele
  *     bron; ligt een grens strikt tussen begin en eind van een woord, dan
- *     wordt hij naar buiten geschoven naar de rand van dat woord.
+ *     gaat hij naar de rand die het woord bij zijn eigen zin laat: hoort het
+ *     bij het scriptfragment van het shot (het eerste of laatste woord), dan
+ *     komt het mee, anders valt het erbuiten.
  *  1b. Rond elke knip staat ademruimte, begrensd door de werkelijke stilte tot
  *     het buurwoord — een knip pal op de woordgrens klinkt afgebeten.
  *  2. Geen twee segmenten delen bronmateriaal, want dan hoort de kijker
@@ -68,6 +70,69 @@ export function verzetGrens(seg: Shot, wijziging: { start?: number; end?: number
     seg.end = wijziging.end;
     seg.ankerEind = wijziging.end;
   }
+}
+
+const kaal = (w: string) => w.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+
+/** Zelfde woord, met de spelling van spraakherkenning en plan ernaast ("Platina-markt" / "Platinamarkt", "verspelbaar" / "voorspelbaar"). */
+function zelfdeWoord(a: string, b: string): boolean {
+  const x = kaal(a);
+  const y = kaal(b);
+  if (!x || !y) return false;
+  if (x === y) return true;
+  if (Math.min(x.length, y.length) >= 3 && (x.startsWith(y) || y.startsWith(x))) return true;
+  if (Math.min(x.length, y.length) < 4 || Math.abs(x.length - y.length) > 2) return false;
+  // Hoogstens twee letters verschil.
+  const d: number[] = Array.from({ length: y.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= x.length; i++) {
+    let vorige = d[0];
+    d[0] = i;
+    for (let j = 1; j <= y.length; j++) {
+      const t = d[j];
+      d[j] = Math.min(d[j] + 1, d[j - 1] + 1, vorige + (x[i - 1] === y[j - 1] ? 0 : 1));
+      vorige = t;
+    }
+  }
+  return d[y.length] <= 2;
+}
+
+/**
+ * Welke kant op met een knip die midden in een woord valt.
+ *
+ * Altijd naar buiten (het hele woord mee) was fout zodra het woord bij de
+ * buurzin hoorde. PLATINA clip 3: shot 5 begon 0,02 s vóór het einde van
+ * "politiek." (de vorige zin) en kreeg dat woord erbij; shot 4.01 eindigde in
+ * "En" (de volgende zin) en kreeg dat erbij. Daarna overlapten ze en viel
+ * shot 4.01 met zijn hele zin weg — "En platina beweegt ook daarop" zonder
+ * waarop. Clip 2: "…ter sprake komt, geconcentreerd. Meer dan 70%".
+ *
+ * Nu: is het buurwoord aan de binnenkant het randwoord van het fragment, dan
+ * hoort dit woord bij de buurzin en valt het erbuiten. Is het zelf een van de
+ * eerste (bij een start) of laatste (bij een eind) drie woorden van het
+ * fragment, dan komt het mee. Anders de dichtstbijzijnde rand.
+ */
+function kantVanWoord(
+  w: BronWoord,
+  t: number,
+  randwoorden: string[],
+  binnenBuur: BronWoord | null,
+  kant: 'start' | 'eind',
+): 'mee' | 'erbuiten' {
+  // Eerst de buur: bij korte woorden ("en", "de") zegt het woord zelf weinig,
+  // de plek ten opzichte van het randwoord van het fragment wel.
+  if (randwoorden.length && binnenBuur && zelfdeWoord(binnenBuur.w, randwoorden[0]) && !zelfdeWoord(w.w, randwoorden[0])) return 'erbuiten';
+  if (randwoorden.some((r) => zelfdeWoord(w.w, r))) return 'mee';
+  const midden = (w.s + w.e) / 2;
+  if (kant === 'start') return t <= midden ? 'mee' : 'erbuiten';
+  return t >= midden ? 'mee' : 'erbuiten';
+}
+
+/** Het scriptfragment van een shot; een deelshot (4.01) erft dat van zijn hoofdshot. */
+function fragmentVan(seg: Shot, alle: Shot[]): string | null {
+  const eigen = (seg as { transcript_fragment?: string }).transcript_fragment;
+  if (eigen) return eigen;
+  const hoofd = alle.find((x) => Math.floor(x.volgorde) === Math.floor(seg.volgorde) && (x as { transcript_fragment?: string }).transcript_fragment);
+  return (hoofd as { transcript_fragment?: string } | undefined)?.transcript_fragment ?? null;
 }
 
 /** Het woord waar dit tijdstip middenin valt, of null. */
@@ -128,26 +193,38 @@ export function poort(
       // dubbel laten klinken.
       const doorlopendVoor = i > 0 && Math.abs(uit[i - 1].end - seg.start) < 0.005;
       const doorlopendNa = i + 1 < uit.length && Math.abs(uit[i + 1].start - seg.end) < 0.005;
+      // Het fragment telt alleen aan de buitenkant van een shot: het begin
+      // van het eerste deel en het eind van het laatste deel.
+      const fragment = fragmentVan(seg, uit);
+      const woordenFragment = fragment ? fragment.split(/\s+/).filter((w) => kaal(w)) : [];
+      const eersteDeel = !uit.some((x) => x !== seg && Math.floor(x.volgorde) === Math.floor(seg.volgorde) && x.volgorde < seg.volgorde);
+      const laatsteDeel = !uit.some((x) => x !== seg && Math.floor(x.volgorde) === Math.floor(seg.volgorde) && x.volgorde > seg.volgorde);
       const bijStart = doorlopendVoor ? null : woordOnder(bronWoorden, seg.start);
       if (bijStart) {
-        // Naar buiten: het hele woord komt mee. Een knip naar binnen zou het
-        // woord juist half maken, en dat is exact wat we bestrijden.
+        // Nooit half: het hele woord mee als het bij dit fragment hoort,
+        // anders het hele woord eruit.
+        const volgend = bronWoorden.find((w) => w.s >= bijStart.e - 0.01 && w !== bijStart) ?? null;
+        const kant = kantVanWoord(bijStart, seg.start, eersteDeel ? woordenFragment.slice(0, 3) : [], volgend, 'start');
+        const nieuw = kant === 'mee' ? bijStart.s : bijStart.e;
         ingrepen.push({
           volgorde: seg.volgorde,
           regel: 'woordgrens',
-          wat: `start ${seg.start.toFixed(2)} lag in "${bijStart.w}" → ${bijStart.s.toFixed(2)}`,
+          wat: `start ${seg.start.toFixed(2)} lag in "${bijStart.w}" → ${nieuw.toFixed(2)} (${kant === 'mee' ? 'woord mee' : 'hoort bij de vorige zin'})`,
         });
-        verzetGrens(seg, { start: bijStart.s });
+        verzetGrens(seg, { start: nieuw });
       }
 
       const bijEind = doorlopendNa ? null : woordOnder(bronWoorden, seg.end);
       if (bijEind) {
+        const vorig = [...bronWoorden].reverse().find((w) => w.e <= bijEind.s + 0.01 && w !== bijEind) ?? null;
+        const kant = kantVanWoord(bijEind, seg.end, laatsteDeel ? woordenFragment.slice(-3).reverse() : [], vorig, 'eind');
+        const nieuw = kant === 'mee' ? bijEind.e : bijEind.s;
         ingrepen.push({
           volgorde: seg.volgorde,
           regel: 'woordgrens',
-          wat: `eind ${seg.end.toFixed(2)} lag in "${bijEind.w}" → ${bijEind.e.toFixed(2)}`,
+          wat: `eind ${seg.end.toFixed(2)} lag in "${bijEind.w}" → ${nieuw.toFixed(2)} (${kant === 'mee' ? 'woord mee' : 'hoort bij de volgende zin'})`,
         });
-        verzetGrens(seg, { end: bijEind.e });
+        verzetGrens(seg, { end: nieuw });
       }
     }
   }

@@ -109,6 +109,40 @@ console.log('poort — regel 1: geen knip in een woord');
     JSON.stringify(ingrepen));
 }
 
+console.log('poort — regel 1: een woord van de buurzin blijft erbuiten');
+{
+  // PLATINA clip 3, echte woordtijden. Shot 4 (+ deel 4.01) eindigt na
+  // "politiek.", shot 5 begint bij "En". De geplande grenzen vielen net in
+  // het verkeerde woord: 4.01 in "En", 5 in "politiek.".
+  const bron: BronWoord[] = [
+    ['Maar', 293.44, 293.56], ['het', 293.56, 293.72], ['is', 293.72, 293.86], ['geen', 293.86, 294.1], ['tweede', 294.1, 294.5], ['goud.', 294.5, 294.74],
+    ['Goud', 295.0, 295.26], ['beweegt', 295.26, 295.74], ['of', 295.74, 296.02], ['vertrouwen', 296.02, 296.7], ['en', 296.7, 296.88], ['monetaire', 296.88, 297.28], ['politiek.', 297.28, 297.86],
+    ['En', 297.86, 298.3], ['Platina', 298.3, 298.74], ['beweegt', 298.74, 299.12], ['ook', 299.12, 299.44], ['daarop,', 299.44, 300.02], ['maar', 300.14, 300.36],
+  ].map(([w, s, e]) => ({ w: w as string, s: s as number, e: e as number }));
+  const s4 = { ...shot(4, 293.3, 295.0), transcript_fragment: 'Maar het is geen tweede goud. Goud beweegt of vertrouwen en monetaire politiek.' } as Shot;
+  const s401 = shot(4.01, 295.0, 297.94);
+  const s5 = { ...shot(5, 297.82, 300.1), transcript_fragment: 'En Platina beweegt ook daarop, maar ook op autoverkopen.' } as Shot;
+  const { segmenten, ingrepen } = poort([s4, s401, s5], bron);
+  const d401 = segmenten.find((x) => x.volgorde === 4.01);
+  const d5 = segmenten.find((x) => x.volgorde === 5);
+  toets('deel 4.01 eindigt vóór "En" (dat hoort bij shot 5)', Boolean(d401 && d401.end <= 297.87 && d401.end >= 297.84), JSON.stringify({ d401, ingrepen }));
+  toets('shot 5 begint ná "politiek." (dat hoort bij de vorige zin)', Boolean(d5 && d5.start >= 297.83 && d5.start <= 297.87), JSON.stringify({ d5, ingrepen }));
+  toets('geen shot valt weg (de zin over goud blijft)', segmenten.length === 3 && !ingrepen.some((i) => i.regel === 'overlap'), JSON.stringify(ingrepen));
+}
+{
+  // PLATINA clip 2: shot 3 "Meer dan 70 procent…" begon in "geconcentreerd."
+  // (het einde van de vorige zin) en kreeg dat woord erbij.
+  const bron: BronWoord[] = [
+    ['aanbod', 130.66, 131.02], ['extreem', 131.02, 131.64], ['geconcentreerd.', 131.64, 132.3], ['Meer', 132.3, 132.96], ['dan', 132.96, 133.1], ['70', 133.1, 133.5],
+  ].map(([w, s, e]) => ({ w: w as string, s: s as number, e: e as number }));
+  const s3 = { ...shot(3, 132.26, 133.5), transcript_fragment: 'Meer dan 70 procent van alle platina ter wereld komt uit Zuid-Afrika.' } as Shot;
+  const { segmenten } = poort([s3], bron);
+  toets('"geconcentreerd." blijft buiten shot 3', segmenten[0].start >= 132.25, `start=${segmenten[0].start}`);
+  // En het eerste woord van het fragment zelf komt wél helemaal mee.
+  const s3b = { ...shot(3, 132.5, 133.5), transcript_fragment: 'Meer dan 70 procent' } as Shot;
+  toets('valt de knip in het eerste woord van het fragment, dan komt dat mee', poort([s3b], bron).segmenten[0].start <= 132.3, `start=${poort([s3b], bron).segmenten[0].start}`);
+}
+
 console.log('poort — regel 1b: ademruimte rond de knip');
 {
   // Knip pal op de grenzen van "mijn ... zat": er hoort lucht omheen te komen,
