@@ -236,3 +236,40 @@ ${input.characterMapJson}
 === TRANSCRIPT (formaat: [start-end] tekst, tijden in seconden) ===
 ${input.transcript}`;
 }
+
+/**
+ * Snelle route, deel 1: alleen STAP 1 van het examen (snoeien), plus de
+ * keuzes die over clips heen gaan. Kleine output; het uitschrijven gebeurt
+ * daarna per clip parallel met planExamenSystem.
+ */
+export function selectieSystem(maxClips: number, formaat?: { naam: string; min: number; max: number }): string {
+  const examen = planExamenSystem(maxClips, formaat);
+  const stap1 = examen.slice(examen.indexOf('STAP 1'), examen.indexOf('STAP 2'));
+  return `Je bent de toernooi-examinator van een clip-plan. Je krijgt een BREDE SCHETS en doet hier alleen het oordeel: welke kandidaten overleven, met welke structuur en welke hookformule. Het uitschrijven (hooks, shots, captions) gebeurt daarna per clip apart — door een collega die alleen jouw keuze en die ene kandidaat ziet. De keuzes die over clips heen gaan liggen dus bij jou:
+- geen twee overlevers op (grotendeels) hetzelfde moment in de bron; kies dan de sterkste;
+- variatie: niet alle clips dezelfde structuur of dezelfde hookformule;
+- één verhaal per clip — bevat een kandidaat twee losse anekdotes, zeg in "opdracht" welke eraf moet.
+
+${stap1}
+Lever per overlever: het kandidaatnummer (1-gebaseerd, volgorde van de schets), de score, structure_type en hook_type (exact een vault-slug), het scroll_stop-oordeel en een korte "opdracht" voor het uitschrijven (welk instappunt, waar het einde valt, wat eruit moet om binnen de lengte te blijven). Kandidaten onder de 6 noem je niet.
+
+${formaat ? clipRegels(formaat) : ''}
+
+${STORYCRAFT}
+
+${STORYSTIJLEN}`;
+}
+
+/** Snelle route, deel 2: de opdracht bovenaan elk uitschrijf-bericht. */
+export function uitschrijfOpdracht(
+  k: { kandidaat: number; score: number; structure_type: string; hook_type: string; scroll_stop: { oordeel: string; waarom: string }; opdracht: string },
+  overzicht: string,
+): string {
+  return `=== OPDRACHT (stap 1 is al gedaan) ===
+Deze kandidaat heeft het toernooi overleefd met score ${k.score}, scroll-stop "${k.scroll_stop.oordeel}" (${k.scroll_stop.waarom}). Gekozen structuur: ${k.structure_type}; hoofdhook-formule: ${k.hook_type}.
+Opdracht van de examinator: ${k.opdracht}
+Doe nu alleen STAP 2 (uitwerken) voor precies deze ene kandidaat en lever "clips" met precies één clip. Houd structure_type, hook.type, scroll_stop en de score van de examinator aan, tenzij het transcript laat zien dat het niet klopt (dan lager, nooit hoger).
+
+De andere overlevers (andere collega's schrijven die uit) — gebruik hun momenten niet en kies hooks die anders klinken:
+${overzicht}`;
+}

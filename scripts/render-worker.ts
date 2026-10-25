@@ -119,26 +119,39 @@ async function main() {
     // niet fataal
   }
 
-  const { data: jobs, error } = await supabase
-    .from('render_jobs')
-    .select('*, videos(title, source_url)')
-    .eq('status', 'wachtend')
-    .order('created_at')
-    .limit(3);
-  if (error) throw error;
-
-  if (!jobs?.length) {
-    console.log('Geen wachtende opdrachten.');
-    return;
-  }
+  // Meerdere runners tegelijk (roughcut.yml-matrix): elke runner claimt één
+  // opdracht tegelijk, atomair — de update slaagt alleen als de opdracht nog
+  // 'wachtend' is, dus twee runners kunnen nooit dezelfde pakken. Zo lang er
+  // werk is, tot RENDER_MAX_JOBS per runner.
+  const runner = process.env.RENDER_RUNNER ?? '1';
+  const maxJobs = Math.max(1, Number(process.env.RENDER_MAX_JOBS ?? '3') || 3);
+  const claim = async (): Promise<(Job & { titel?: string | null }) | null> => {
+    const { data: kandidaten, error } = await supabase
+      .from('render_jobs')
+      .select('id')
+      .eq('status', 'wachtend')
+      .order('created_at')
+      .limit(10);
+    if (error) throw error;
+    for (const k of kandidaten ?? []) {
+      const nu = new Date().toISOString();
+      const { data: geclaimd } = await supabase
+        .from('render_jobs')
+        .update({ status: 'bezig', gestart_at: nu, hartslag: nu })
+        .eq('id', k.id)
+        .eq('status', 'wachtend')
+        .select('*, videos(title, source_url)');
+      if (geclaimd?.length) return geclaimd[0] as Job & { titel?: string | null };
+    }
+    return null;
+  };
 
   let mislukt = 0;
-  for (const job of jobs) {
-    console.log(`\nOpdracht ${job.id} — ${job.titel ?? 'zonder titel'}`);
-    await supabase
-      .from('render_jobs')
-      .update({ status: 'bezig', gestart_at: new Date().toISOString(), hartslag: new Date().toISOString() })
-      .eq('id', job.id);
+  let gedaan = 0;
+  for (; gedaan < maxJobs; gedaan++) {
+    const job = await claim();
+    if (!job) break;
+    console.log(`\nOpdracht ${job.id} — ${job.titel ?? 'zonder titel'} (runner ${runner})`);
 
     try {
       const bestanden = await verwerk(job);
@@ -157,6 +170,7 @@ async function main() {
         .eq('id', job.id);
     }
   }
+  if (gedaan === 0) console.log(`Geen wachtende opdrachten (runner ${runner}).`);
   // Een mislukte opdracht is een rode run: anders staat CI groen terwijl er
   // niets gerenderd is, en zie je het pas in het dashboard.
   if (mislukt > 0) process.exitCode = 1;

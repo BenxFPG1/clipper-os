@@ -487,3 +487,61 @@ export function regelsVoorPrompt(oordelen: { titel: string; oordeel: ClipOordeel
   ]);
   return `\n\n=== CLIPREGELS (format ${formaat}: ${min}–${max} s; mechanisch gemeten) ===\n${regels.length ? regels.join('\n') : '(geen opmerkingen)'}`;
 }
+
+/**
+ * Cross-clip-check voor de snelle route: wat in één grote examen-call
+ * vanzelf meeging, nu mechanisch. Twee clips die grotendeels hetzelfde
+ * bronmateriaal gebruiken (> 50% van de kortste) → de zwakste valt; dubbele
+ * hookteksten en eentonige structuren → signaal voor de verhaaldokter.
+ */
+export function crossClipCheck(plan: ClipPlan): { plan: ClipPlan; log: string[]; signalen: string[] } {
+  const log: string[] = [];
+  const signalen: string[] = [];
+  const overlap = (a: Pick<Clip, 'shots'>, b: Pick<Clip, 'shots'>) => {
+    let o = 0;
+    for (const x of a.shots) for (const y of b.shots) o += Math.max(0, Math.min(x.end, y.end) - Math.max(x.start, y.start));
+    return o / Math.max(0.1, Math.min(clipDuur(a), clipDuur(b)));
+  };
+  const volgorde = [...plan.clips].sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+  const houden: Clip[] = [];
+  for (const c of volgorde) {
+    const botst = houden.find((h) => overlap(c, h) > 0.5);
+    if (botst) {
+      log.push(`"${c.titel_intern}" valt af: ${Math.round(overlap(c, botst) * 100)}% hetzelfde bronmateriaal als "${botst.titel_intern}" (sterker)`);
+      continue;
+    }
+    houden.push(c);
+  }
+  const hookTekst = new Map<string, string>();
+  for (const c of houden) {
+    const k = kaal(c.hook?.tekst_overlay ?? '');
+    if (k && hookTekst.has(k)) signalen.push(`"${c.titel_intern}" en "${hookTekst.get(k)}" hebben dezelfde hooktekst`);
+    else if (k) hookTekst.set(k, c.titel_intern);
+  }
+  const structuren = new Map<string, number>();
+  for (const c of houden) structuren.set(c.structure_type, (structuren.get(c.structure_type) ?? 0) + 1);
+  for (const [st, n] of structuren) if (houden.length >= 4 && n > houden.length / 2) signalen.push(`${n}/${houden.length} clips gebruiken structuur ${st} — weinig variatie`);
+  const herhaalde = houden.flatMap((c, i) => houden.slice(i + 1).filter((d) => overlap(c, d) > 0.2 && overlap(c, d) <= 0.5).map((d) => `"${c.titel_intern}" en "${d.titel_intern}" delen ${Math.round(overlap(c, d) * 100)}% bronmateriaal`));
+  signalen.push(...herhaalde);
+  return { plan: { clips: plan.clips.filter((c) => houden.includes(c)) }, log, signalen };
+}
+
+/**
+ * Telt de overtredingen van de clipregels zonder te repareren — voor de
+ * A/B-vergelijking van twee plannen.
+ */
+export function regelOvertredingen(clip: Clip, formaat: Formaat): string[] {
+  const uit: string[] = [];
+  const { max } = lengteBereik(formaat);
+  const duur = clipDuur(clip);
+  if (duur > max + 0.5) uit.push(`lengte ${duur.toFixed(0)} s > ${max} s`);
+  const shots = [...clip.shots].sort((a, b) => a.volgorde - b.volgorde);
+  const slot = zinnen(shots[shots.length - 1]?.transcript_fragment ?? '').slice(-1)[0] ?? '';
+  if (isAfsluiter(slot)) uit.push(`einde is een afsluiter ("${slot.slice(0, 40)}")`);
+  const laatste = shots[shots.length - 1];
+  if (laatste && laatste.functie !== 'payoff' && laatste.functie !== 'button') uit.push(`laatste shot is ${laatste.functie}`);
+  const opening = openingProbleem({ shots, hook: clip.hook }, formaat);
+  if (opening) uit.push(`opening zonder context ("${(zinnen(opening.shot.transcript_fragment ?? '')[0] ?? '').slice(0, 40)}")`);
+  if (tweeVerhalen({ shots })) uit.push('twee verhalen');
+  return uit;
+}

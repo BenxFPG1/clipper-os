@@ -1,0 +1,60 @@
+# A/B van de planner-route (scripts/ab-planner.ts): de snelle route
+# (selectie + per clip parallel uitschrijven) tegen het plan dat nu in
+# clip_plans staat. Overschrijft niets in clip_plans; de uitslag komt als
+# artefact en in R2 (ab/<videoId>/…).
+#
+# workflow_dispatch werkt alleen als dit bestand ook op de standaardbranch
+# staat; daarom ook een push-trigger op de A/B-branch, alleen bij een commit
+# met "[ab]" in het bericht (de video-id's staan dan in AB_VIDEOS).
+name: ab-planner
+
+on:
+  workflow_dispatch:
+    inputs:
+      video_id:
+        description: 'Video-id (meerdere: spaties)'
+        required: true
+  push:
+    branches: [snelheid-ab]
+
+concurrency:
+  group: ab-planner
+  cancel-in-progress: false
+
+jobs:
+  ab:
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[ab]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      CLAUDE_BACKEND: claude-code
+      CLAUDE_MODEL: claude-opus-5
+      CLAUDE_LICHT_MODEL: claude-sonnet-5
+      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      R2_BUCKET: ${{ secrets.R2_BUCKET }}
+      PLAN_ROUTE: parallel
+      PLAN_PARALLEL: '5'
+      PLAN_SCHETS_MODEL: claude-sonnet-5
+      AB_VIDEOS: '82df1c6f-fc95-4c5e-a78d-2a713a5fbfee ad3cfac5-b675-4d47-9f42-a0f9ec02def2'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Installeer Claude Code CLI
+        run: npm install -g @anthropic-ai/claude-code
+      - name: Dependencies
+        run: npm ci
+      - name: A/B draaien
+        run: npx tsx scripts/ab-planner.ts ${{ github.event.inputs.video_id || env.AB_VIDEOS }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ab-planner-uitslag
+          path: scripts/ab/

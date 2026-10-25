@@ -1,4 +1,5 @@
 import { structuredCall } from '../claude';
+import { optionalEnv } from '../env';
 import { CHARMAP_EFFORT, PLAN_EFFORT, PLAN_EXAMEN_EFFORT, PLAN_VERHAALDOKTER_EFFORT, PLAN_MAX_CLIPS } from '../env';
 import { geleerdeKennis } from '../vault/kennis';
 import { TranscriptSegment, renderTranscript, transcriptDuration } from '../ingest/transcript';
@@ -9,8 +10,11 @@ import {
   buildSchetsUser,
   planExamenSystem,
   schetsSystem,
+  selectieSystem,
+  uitschrijfOpdracht,
   verhaaldokterSystem,
 } from './prompts';
+import { crossClipCheck } from './clipregels';
 import { clipDuur, formaatVoorThema, knipSlot, lengteBereik, pasPlanRegelsToe, regelsVoorPrompt, zinnen } from './clipregels';
 import {
   gesprokenTekst,
@@ -41,6 +45,7 @@ import {
   characterMapSchema,
   examenPlanSchema,
   schetsPlanSchema,
+  selectieSchema,
   verhaaldokterDiffSchema,
 } from './schema';
 
@@ -73,7 +78,8 @@ export async function generateCharacterMap(input: {
   transcript: TranscriptSegment[];
   energieText?: string;
 }): Promise<CharacterMap> {
-  return structuredCall({
+  const t0 = Date.now();
+  const uit = await structuredCall({
     system: CHARACTER_MAP_SYSTEM,
     user: buildCharacterMapUser({
       title: input.title,
@@ -86,8 +92,53 @@ export async function generateCharacterMap(input: {
     toolDescription: 'Lever de narratieve analyse van de volledige video.',
     maxTokens: 32000,
     effort: CHARMAP_EFFORT,
+    // Instelbaar lichter model (CHARMAP_MODEL): de dure Opus-tijd hoort bij
+    // het uitschrijven van de clips, niet bij de analyse.
+    model: optionalEnv('CHARMAP_MODEL', '') || undefined,
     operation: 'character_map',
   });
+  laatsteCharmapSeconden = (Date.now() - t0) / 1000;
+  return uit;
+}
+
+/** Duur (s) van de laatste character-map-call in dit proces; null als hij uit de cache kwam. */
+let laatsteCharmapSeconden: number | null = null;
+
+/** Tijd per stap van het laatste plan in dit proces (voor de log en de A/B). */
+export type PlannerTijden = {
+  route: 'enkel' | 'parallel';
+  charmap: number | null;
+  schets: number;
+  signalen: number;
+  selectie: number | null;
+  uitschrijven: number;
+  uitschrijvenAantal: number;
+  verhaaldokter: number;
+  totaal: number;
+};
+export let laatstePlannerTijden: PlannerTijden | null = null;
+
+/** Hoe de examenstap loopt: één grote call ('enkel') of selectie + per clip parallel ('parallel'). */
+export function planRoute(): 'enkel' | 'parallel' {
+  return optionalEnv('PLAN_ROUTE', 'enkel') === 'parallel' ? 'parallel' : 'enkel';
+}
+
+/** Voert `taken` uit met hoogstens `max` tegelijk, in volgorde van de resultaten. */
+export async function metPlafond<T>(taken: (() => Promise<T>)[], max: number): Promise<PromiseSettledResult<T>[]> {
+  const uit: PromiseSettledResult<T>[] = new Array(taken.length);
+  let volgende = 0;
+  const werker = async () => {
+    while (volgende < taken.length) {
+      const i = volgende++;
+      try {
+        uit[i] = { status: 'fulfilled', value: await taken[i]() };
+      } catch (e) {
+        uit[i] = { status: 'rejected', reason: e };
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.max(1, Math.min(max, taken.length)) }, werker));
+  return uit;
 }
 
 /**
@@ -107,6 +158,11 @@ export async function generateCharacterMap(input: {
 export async function generateClipPlan(
   input: PlannerInput & { characterMap: CharacterMap },
 ): Promise<ClipPlan> {
+  const tStart = Date.now();
+  const sinds = (t: number) => Math.round((Date.now() - t) / 100) / 10;
+  const route = planRoute();
+  const charmapSeconden = laatsteCharmapSeconden;
+  laatsteCharmapSeconden = null;
   // De zelflerende laag komt achter de vaste kaders aan.
   const bijgeleerd = await geleerdeKennis('planner');
   // Het format (comedy / interview / uitleg) bepaalt de lengte en het tempo.
@@ -115,6 +171,7 @@ export async function generateClipPlan(
   const formaatInfo = { naam: formaat, ...bereik };
   console.log(`[planner] format ${formaat}: clips ${bereik.min}–${bereik.max} s`);
 
+  const tSchets = Date.now();
   const schets: SchetsPlan = await structuredCall({
     system: schetsSystem(PLAN_MAX_CLIPS, formaatInfo) + bijgeleerd,
     user: buildSchetsUser({
@@ -132,8 +189,12 @@ export async function generateClipPlan(
     // De schets hoeft niet perfect te zijn, alleen breed — het toernooi
     // snoeit en de uitwerking gebeurt pas voor de overlevers.
     effort: PLAN_EFFORT,
+    // PLAN_SCHETS_MODEL: de brede schets mag op het lichte model; het
+    // toernooi en het uitschrijven blijven op het hoofdmodel.
+    model: optionalEnv('PLAN_SCHETS_MODEL', '') || undefined,
     operation: 'clip_schets',
   });
+  const schetsSeconden = sinds(tSchets);
 
   // Toernooi-examen: snoeit de schets naar de sterkste kandidaten en werkt
   // precies díe volledig uit (hooks, captions, varianten). Geen try/catch —
@@ -152,12 +213,114 @@ export async function generateClipPlan(
   // Fragmentkeuze op meer dan woorden: per kandidaat een meetpakket (instap,
   // stilte vóór de onthulling, tempo, reacties, vraag→antwoord, dode woorden)
   // en — alleen als de bron lokaal staat — een beeldoordeel op de hook.
+  const tSignalen = Date.now();
   const signalen = await verzamelSignalen(schets.clips, input);
   const campagneBlok = campagneRegel(input.campaignName);
   const normenTekst = await editNormenVoorPrompt({ platform: input.vault.platform, theme: input.vault.theme }).catch(() => '');
   const bijAnderen = watWerktBijAnderen(input.vault, normenTekst);
+  const signalenSeconden = sinds(tSignalen);
 
-  const examined: ClipPlan = await structuredCall({
+  // Gedeelde context voor examen, selectie en uitschrijven.
+  const context = `Video: ${input.title}
+Duur: ${input.durationSeconds ? `${input.durationSeconds} seconden` : 'onbekend'}
+
+=== CAMPAGNEREGELS ===
+${JSON.stringify(input.campaignRules ?? {}, null, 2)}${campagneBlok}
+
+=== VAULT ===
+${renderVaultForPrompt(input.vault)}
+
+=== CHARACTER MAP (de narratieve analyse van de hele video, met tijdcodes; gebruik per persoon het voornaamwoord dat hier staat) ===
+${JSON.stringify(input.characterMap)}`;
+  const anderen = bijAnderen ? `\n\n=== WAT WERKT BIJ ANDEREN (gemeten op externe top-clips; context voor wat een opening moet doen) ===\n${bijAnderen}` : '';
+
+  const tExamen = Date.now();
+  let selectieSeconden: number | null = null;
+  let uitschrijfAantal = 1;
+  let crossSignalen: string[] = [];
+  const examined: ClipPlan =
+    route === 'parallel'
+      ? await (async () => {
+          // 1. Selectie: wie overleeft, met welke structuur en hookformule —
+          //    de cross-clip-keuzes (geen dubbele momenten, variatie) in één
+          //    kleine call, zodat het uitschrijven daarna per clip kan.
+          const tSel = Date.now();
+          const selectie = await structuredCall({
+            system: selectieSystem(PLAN_MAX_CLIPS, formaatInfo) + bijgeleerd,
+            user: `${context}
+
+=== SCHETS (de brede kandidatenset; kandidaat N = de N-de clip in deze lijst) ===
+${JSON.stringify(schets)}
+
+=== BRONTRANSCRIPT ROND DE SHOTS PER KANDIDAAT ===
+${transcriptPerKandidaat}
+
+=== MEETDATA PER KANDIDAAT (kN = kandidaat N) ===
+${signalenVoorPrompt(signalen) || '(geen meetdata beschikbaar)'}${anderen}`,
+            schema: selectieSchema,
+            toolName: 'lever_selectie',
+            toolDescription: 'Lever de overlevers van het toernooi met hun structuur en hookformule.',
+            maxTokens: 8000,
+            effort: PLAN_EXAMEN_EFFORT,
+            operation: 'clip_plan_selectie',
+          });
+          selectieSeconden = sinds(tSel);
+          const gekozen = selectie.kandidaten
+            .filter((k) => k.kandidaat >= 1 && k.kandidaat <= schets.clips.length && k.score >= 6)
+            .sort((a, b) => b.score - a.score)
+            .slice(0, PLAN_MAX_CLIPS);
+          if (gekozen.length === 0) throw new Error('selectie leverde geen enkele kandidaat met een 6 of hoger');
+          console.log(`[planner] selectie: ${gekozen.length}/${schets.clips.length} kandidaten door (${gekozen.map((k) => `k${k.kandidaat}:${k.score}`).join(', ')})`);
+          // 2. Per overlever uitschrijven, parallel.
+          const overzicht = gekozen
+            .map((k) => `- kandidaat ${k.kandidaat} "${schets.clips[k.kandidaat - 1].titel_intern}": structuur ${k.structure_type}, hook ${k.hook_type}, brontijden ${schets.clips[k.kandidaat - 1].shots.map((sh) => `${Math.round(sh.start)}-${Math.round(sh.end)}`).join(', ')}`)
+            .join('\n');
+          const plafond = Math.max(1, Number(optionalEnv('PLAN_PARALLEL', '5')) || 5);
+          uitschrijfAantal = gekozen.length;
+          const resultaten = await metPlafond(
+            gekozen.map((k) => async () => {
+              const kandidaat = schets.clips[k.kandidaat - 1];
+              const meting = signalen.filter((sg) => sg.kandidaat === k.kandidaat);
+              const r = await structuredCall({
+                system: planExamenSystem(PLAN_MAX_CLIPS, formaatInfo) + bijgeleerd,
+                user: `${context}
+
+${uitschrijfOpdracht(k, overzicht)}
+
+=== DEZE KANDIDAAT (kandidaat ${k.kandidaat} uit de schets) ===
+${JSON.stringify(kandidaat)}
+
+=== BRONTRANSCRIPT ROND DE SHOTS ===
+${transcriptRondShots(kandidaat.shots, input.transcript)}
+
+=== MEETDATA ===
+${signalenVoorPrompt(meting) || '(geen meetdata beschikbaar)'}${anderen}`,
+                schema: examenPlanSchema,
+                toolName: 'lever_clip_plan',
+                toolDescription: 'Lever precies deze ene clip, volledig uitgewerkt.',
+                maxTokens: 16000,
+                effort: PLAN_EXAMEN_EFFORT,
+                operation: 'clip_plan_uitschrijven',
+              });
+              const clip = r.clips[0];
+              // De selectie ging over deze kandidaat; houd het oordeel samen.
+              return { ...clip, score: Math.min(clip.score ?? k.score, 10) };
+            }),
+            plafond,
+          );
+          const clips = resultaten.flatMap((x, i) => {
+            if (x.status === 'fulfilled') return [x.value];
+            console.warn(`[planner] uitschrijven kandidaat ${gekozen[i].kandidaat} mislukt: ${(x.reason as Error)?.message?.slice(0, 160)}`);
+            return [];
+          });
+          if (clips.length === 0) throw new Error('uitschrijven mislukt voor elke kandidaat');
+          // 3. Mechanische cross-clip-check: geen twee clips op hetzelfde moment, geen dubbele hooks.
+          const cross = crossClipCheck({ clips });
+          for (const m of cross.log) console.log(`[planner] cross-clip: ${m}`);
+          crossSignalen = cross.signalen;
+          return cross.plan;
+        })()
+      : await structuredCall({
     system: planExamenSystem(PLAN_MAX_CLIPS, formaatInfo) + bijgeleerd,
     user: `Video: ${input.title}
 Duur: ${input.durationSeconds ? `${input.durationSeconds} seconden` : 'onbekend'}
@@ -188,6 +351,7 @@ ${signalenVoorPrompt(signalen) || '(geen meetdata beschikbaar)'}${
     effort: PLAN_EXAMEN_EFFORT,
     operation: 'clip_plan_examen',
   });
+  const uitschrijfSeconden = sinds(tExamen) - (selectieSeconden ?? 0);
 
   // De verhaaldokter: een derde, losse pas die alleen nog toetst of de
   // overgebleven clips echte verhalen zijn (een omslag, stakes) in plaats van
@@ -219,6 +383,7 @@ ${signalenVoorPrompt(signalen) || '(geen meetdata beschikbaar)'}${
   examined.clips = voorDokter.plan.clips;
 
   let doctored = examined;
+  const tDokter = Date.now();
   try {
     const rapport = keurVerhaaldokter(examined, { campagneNaam: input.campaignName, videoDuur: input.durationSeconds });
     const signalenRapport = rapportVoorPrompt(rapport);
@@ -256,6 +421,8 @@ ${JSON.stringify(input.characterMap)}
 
 === CLIPS (na het toernooi; per clip de verhaallijn, de score en het brontranscript rond de shots) ===
 ${JSON.stringify(perClip, null, 1)}${signalenRapport}${regelsVoorPrompt(voorDokter.oordelen, formaat)}${
+        crossSignalen.length ? `\n\n=== CROSS-CLIP (mechanisch) ===\n${crossSignalen.join('\n')}` : ''
+      }${
         bijAnderen ? `\n\n=== WAT WERKT BIJ ANDEREN ===\n${bijAnderen}` : ''
       }`,
       schema: verhaaldokterDiffSchema,
@@ -273,6 +440,8 @@ ${JSON.stringify(perClip, null, 1)}${signalenRapport}${regelsVoorPrompt(voorDokt
     console.warn('[planner] verhaaldokter-pass mislukt, geëxamineerd plan behouden:', (err as Error).message);
   }
 
+  const dokterSeconden = sinds(tDokter);
+
   // Nog één keer de regels: wat de dokter schrapte of liet staan, moet er
   // ook daarna aan voldoen. Daarna vallen clips onder de 6 af.
   doctored = pasPlanRegelsToe(doctored, formaat, regelOpties).plan;
@@ -281,6 +450,24 @@ ${JSON.stringify(perClip, null, 1)}${signalenRapport}${regelsVoorPrompt(voorDokt
     const zs = c.shots.flatMap((s) => zinnen(s.transcript_fragment ?? ''));
     console.log(`[planner] clip ${i + 1} "${c.titel_intern}": ${clipDuur(c).toFixed(0)} s, score ${c.score ?? '—'} | begint "${(zs[0] ?? '').slice(0, 60)}" | eindigt "${(zs[zs.length - 1] ?? '').slice(0, 60)}"`);
   }
+
+  laatstePlannerTijden = {
+    route,
+    charmap: charmapSeconden,
+    schets: schetsSeconden,
+    signalen: signalenSeconden,
+    selectie: selectieSeconden,
+    uitschrijven: Math.round(uitschrijfSeconden * 10) / 10,
+    uitschrijvenAantal: uitschrijfAantal,
+    verhaaldokter: dokterSeconden,
+    totaal: sinds(tStart) + (charmapSeconden ?? 0),
+  };
+  const t = laatstePlannerTijden;
+  console.log(
+    `[planner] planner-tijd (${route}): charmap ${t.charmap === null ? 'uit cache' : `${Math.round(t.charmap)} s`}, schets ${Math.round(t.schets)} s, signalen ${Math.round(t.signalen)} s` +
+      (t.selectie !== null ? `, selectie ${Math.round(t.selectie)} s, uitschrijven ${t.uitschrijvenAantal}× parallel ${Math.round(t.uitschrijven)} s` : `, examen ${Math.round(t.uitschrijven)} s`) +
+      `, verhaaldokter ${Math.round(t.verhaaldokter)} s, totaal ${Math.round(t.totaal)} s`,
+  );
 
   return repairPlan(doctored, input);
 }

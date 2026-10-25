@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import { db } from '../src/lib/supabase';
 import { runPlannerForVideo } from '../src/lib/planner/run';
+import { renderNaPlan } from '../src/lib/roughcut/autorender';
 import { runScriptwriterForBrief } from '../src/lib/scriptwriter';
 import { bedenkConcepten } from '../src/lib/concepten';
 import { haalBrollUitDrive } from '../src/lib/broll/ingest';
@@ -111,6 +112,12 @@ async function main() {
           opnieuwAnalyseren: params.opnieuw_analyseren ?? false,
         });
         resultaat = { clips: (r.plan as { clips?: unknown[] })?.clips?.length ?? 0 };
+        // Direct renderen in plaats van te wachten op de uurcheck (uit tenzij AUTO_RENDER_NA_PLAN=1).
+        const auto = await renderNaPlan(job.doel_id, (r.plan as { clips?: unknown[] })?.clips?.length ?? 0).catch((e) => {
+          console.log(`  render na plan mislukt: ${(e as Error).message.slice(0, 120)}`);
+          return null;
+        });
+        if (auto) console.log(`  render na plan: ${auto.opdrachten} opdracht(en), run ${auto.gestart ? 'gestart' : 'niet gestart (geen GH_DISPATCH_TOKEN?)'}`);
       } else if (job.soort === 'scripts') {
         const r = await runScriptwriterForBrief(job.doel_id, params.aantal ?? 3);
         resultaat = { varianten: r.varianten.length };

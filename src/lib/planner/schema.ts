@@ -318,3 +318,27 @@ export const schetsPlanSchema = z.object({
 
 export type SchetsClip = z.infer<typeof schetsClipSchema>;
 export type SchetsPlan = z.infer<typeof schetsPlanSchema>;
+
+// --------------------------------------- stap 2b-snel: selectie + uitschrijven
+/**
+ * De snelle route (PLAN_ROUTE=parallel): het examen in twee delen. Eerst de
+ * selectie — wie overleeft, met welke structuur en hookformule — als kleine
+ * output in één call (daar zitten de cross-clip-keuzes: geen dubbele
+ * momenten, variatie in hooks en structuren). Daarna wordt elke overlever
+ * apart en parallel uitgeschreven met examenPlanSchema.
+ */
+export const selectieSchema = z.object({
+  kandidaten: z.array(
+    z.object({
+      /** 1-gebaseerd nummer van de kandidaat in de schets. */
+      kandidaat: z.number().int().min(1),
+      score: z.number().min(1).max(10),
+      structure_type: z.string(),
+      hook_type: z.string(),
+      scroll_stop: scrollStopSchema,
+      /** Wat er in het uitschrijven hersteld moet worden (instappunt, einde, inkorten). */
+      opdracht: z.string(),
+    }),
+  ),
+});
+export type Selectie = z.infer<typeof selectieSchema>;

@@ -20,8 +20,12 @@ import {
   sprongen,
   tweeVerhalen,
   wijstTerug,
+  crossClipCheck,
+  regelOvertredingen,
 } from '../src/lib/planner/clipregels';
-import { pasVerhaaldokterToe } from '../src/lib/planner';
+import { metPlafond, pasVerhaaldokterToe, planRoute } from '../src/lib/planner';
+import { selectieSystem, uitschrijfOpdracht } from '../src/lib/planner/prompts';
+import { selectieSchema } from '../src/lib/planner/schema';
 import { planExamenSystem, schetsSystem, verhaaldokterSystem } from '../src/lib/planner/prompts';
 import { PROMPT_VERSION_PLAN, verhaaldokterDiffSchema, type Clip } from '../src/lib/planner/schema';
 import { pasRetentieToe } from '../src/lib/roughcut/retentie';
@@ -308,6 +312,46 @@ async function main() {
     toets('wijstTerug herkent "daarop" en laat een gewone zin staan', wijstTerug('En platina beweegt ook daarop') && !wijstTerug('Meer dan 70 procent komt uit Zuid-Afrika.'));
     toets('prompt noemt de collage- en sprongregel', /GEEN COLLAGE/.test(planExamenSystem(4, { naam: 'uitleg', min: 25, max: 50 })) && /GEEN GAT BIJ EEN SPRONG/.test(planExamenSystem(4, { naam: 'uitleg', min: 25, max: 50 })));
     toets('schets stuurt niet meer op fragmenten die ver uit elkaar liggen', !/fragmenten die ver uit elkaar liggen/.test(schetsSystem(4, { naam: 'uitleg', min: 25, max: 50 })));
+  }
+
+  console.log('snelle route: selectie, parallel, cross-clip');
+  {
+    toets('standaardroute is de oude (enkel) tot de A/B hem goedkeurt', planRoute() === 'enkel');
+    process.env.PLAN_ROUTE = 'parallel';
+    toets('PLAN_ROUTE=parallel zet de snelle route aan', planRoute() === 'parallel');
+    delete process.env.PLAN_ROUTE;
+    // Parallel met plafond: nooit meer dan 2 tegelijk, volgorde behouden, een fout breekt de rest niet.
+    let bezig = 0;
+    let piek = 0;
+    const taken = [30, 10, 20, 5, 15].map((ms, i) => async () => {
+      bezig++;
+      piek = Math.max(piek, bezig);
+      await new Promise((r) => setTimeout(r, ms));
+      bezig--;
+      if (i === 2) throw new Error('kapot');
+      return i;
+    });
+    const r = await metPlafond(taken, 2);
+    toets('hoogstens 2 tegelijk', piek === 2, String(piek));
+    toets('resultaten in volgorde, fout per taak', r.map((x) => (x.status === 'fulfilled' ? x.value : 'x')).join(',') === '0,1,x,3,4');
+    // Cross-clip: twee clips op hetzelfde moment → de zwakste valt.
+    const a = clip([shot(1, 100, 110, 'hook', 'Platina is niet goud.'), shot(2, 110, 130, 'payoff', 'Platina is zeldzamer.')], { titel_intern: 'A', score: 8 });
+    const b = clip([shot(1, 105, 125, 'hook', 'Platina is zeldzaam.'), shot(2, 125, 132, 'payoff', 'En goedkoper.')], { titel_intern: 'B', score: 7 });
+    const c = clip([shot(1, 500, 510, 'hook', 'Waterstof.'), shot(2, 510, 530, 'payoff', 'Twee procent op schema.')], { titel_intern: 'C', score: 6.5, hook: { type: 'h', tekst_overlay: 'Platina is niet goud.', gesproken_start: '' } });
+    const x = crossClipCheck({ clips: [a, b, c] });
+    toets('dubbel moment: de zwakste valt', x.plan.clips.map((k) => k.titel_intern).join(',') === 'A,C', JSON.stringify(x.log));
+    toets('dubbele hooktekst gesignaleerd', x.signalen.some((m) => /dezelfde hooktekst/.test(m)));
+    // Selectie-schema en prompts.
+    const sel = selectieSchema.parse({ kandidaten: [{ kandidaat: 3, score: 8, structure_type: 's', hook_type: 'h', scroll_stop: { oordeel: 'stopt', waarom: 'x' }, opdracht: 'einde op de onthulling' }] });
+    toets('selectie-schema: kleine output per overlever', sel.kandidaten[0].kandidaat === 3);
+    const sys = selectieSystem(9, { naam: 'comedy', min: 15, max: 35 });
+    toets('selectieprompt: alleen stap 1 + cross-clip-keuzes', /STAP 1/.test(sys) && !/STAP 2 — UITWERKEN/.test(sys) && /geen twee overlevers/.test(sys) && /CLIPREGELS/.test(sys));
+    const opd = uitschrijfOpdracht(sel.kandidaten[0], '- kandidaat 5 "x": brontijden 1-2');
+    toets('uitschrijfopdracht: precies één clip, andere momenten genoemd', /precies één clip/.test(opd) && /kandidaat 5/.test(opd));
+    // Overtredingen tellen voor de A/B.
+    const fout = clip([shot(1, 0, 10, 'setup', 'En dan doet hij dat.'), shot(2, 10, 60, 'payoff', 'Platina is zeldzamer. Ik ben benieuwd wat jij hiervan vindt.')]);
+    const ov = regelOvertredingen(fout, 'comedy');
+    toets('overtredingen: lengte, einde en opening', ov.length === 3 && /lengte/.test(ov[0]) && ov.some((o) => /afsluiter/.test(o)) && ov.some((o) => /opening/.test(o)), JSON.stringify(ov));
   }
 
   console.log(`\n${gedaan - gefaald}/${gedaan} geslaagd`);
