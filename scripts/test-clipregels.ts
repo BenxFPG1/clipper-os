@@ -11,12 +11,15 @@ import {
   formaatVoorThema,
   herhaaldeZinnen,
   isAfsluiter,
+  maxSprongen,
   knipSlot,
   lengteBereik,
   pasClipRegelsToe,
   pasPlanRegelsToe,
   regelsVoorPrompt,
+  sprongen,
   tweeVerhalen,
+  wijstTerug,
 } from '../src/lib/planner/clipregels';
 import { pasVerhaaldokterToe } from '../src/lib/planner';
 import { planExamenSystem, schetsSystem, verhaaldokterSystem } from '../src/lib/planner/prompts';
@@ -258,6 +261,53 @@ async function main() {
       toets(`${naam}: clipregels met lengte en afsluiters`, /CLIPREGELS/.test(p) && /15–35 seconden/.test(p) && /ik ben benieuwd wat jij hiervan vindt/.test(p));
     }
     toets('verhaaldokter: per shot de schrapvraag en knip_slot', /zou de clip zonder dit shot slechter zijn/.test(verhaaldokterSystem(f)) && /knip_slot/.test(verhaaldokterSystem(f)));
+  }
+
+  console.log('één doorlopende lijn: sprongen, verwijzingen en onthullingen');
+  {
+    // PLATINA clip 2, echte bronzinnen (captiontijden lopen door: "En dat is
+    // Platina." van 12,3 tot 20,4 s).
+    const transcript = [
+      { start_seconds: 0, end_seconds: 5.82, text: 'Goud staat in het nieuws, zilver ook, maar er is een derde edelmetaal dat zeldzamer is dan' },
+      { start_seconds: 5.82, end_seconds: 6.82, text: 'beide.' },
+      { start_seconds: 6.82, end_seconds: 11.32, text: 'En voor het grootste deel van de moderne geschiedenis duurder was dan goud en toch nauwelijks' },
+      { start_seconds: 11.32, end_seconds: 12.32, text: 'ter sprake komt.' },
+      { start_seconds: 12.32, end_seconds: 20.35, text: 'En dat is Platina.' },
+      { start_seconds: 130, end_seconds: 133, text: 'Ten tweede is het aanbod extreem geconcentreerd.' },
+      { start_seconds: 133, end_seconds: 138, text: 'Meer dan 70 procent van alle platina ter wereld komt uit Zuid-Afrika.' },
+      { start_seconds: 164, end_seconds: 172, text: 'De Platina-markt heeft in 2026 voor het vierde jaar op rij een tekort van circa 297.000 troy ounce.' },
+      { start_seconds: 324, end_seconds: 330, text: 'Platina wordt misschien nog minder besproken dan goud of zilver. Maar dat is misschien ook precies wat het interessant maakt.' },
+    ];
+    const collage = clip([
+      shot(1, 0, 7, 'hook', 'Goud staat in het nieuws, zilver ook, maar er is een derde edelmetaal dat zeldzamer is dan beide.'),
+      shot(2, 7, 12, 'setup', 'En voor het grootste deel van de moderne geschiedenis duurder was dan goud en toch nauwelijks ter sprake komt.'),
+      shot(3, 133, 138, 'escalatie', 'Meer dan 70 procent van alle platina ter wereld komt uit Zuid-Afrika.'),
+      shot(4, 165, 172, 'escalatie', 'De Platina-markt heeft in 2026 voor het vierde jaar op rij een tekort van circa 297.000 troy ounce.'),
+      shot(5, 324, 330, 'payoff', 'Platina wordt misschien nog minder besproken dan goud of zilver. Maar dat is misschien ook precies wat het interessant maakt.'),
+    ]);
+    const r = pasClipRegelsToe(collage, 'uitleg', { transcript });
+    toets('drie sprongen in een uitlegclip: afgewezen als collage', r.oordeel.fouten.some((f) => /sprongen door de bron/.test(f)), JSON.stringify(r.oordeel.fouten));
+    const s2 = r.clip.shots.find((x) => x.volgorde === 2)!;
+    toets('de overgeslagen onthulling "En dat is Platina." komt erbij', /En dat is Platina\.$/.test(s2.transcript_fragment ?? '') && s2.end > 13 && s2.end < 16, JSON.stringify(s2));
+    toets('sprongen geteld vanaf 15 s; aanscherpen telt niet', sprongen({ shots: [shot(1, 0, 5, 'hook', 'a.'), shot(2, 9, 14, 'payoff', 'b.')] }).length === 0);
+    toets('maximum per format: comedy 1, interview 2, uitleg 2', maxSprongen('comedy') === 1 && maxSprongen('interview') === 2 && maxSprongen('uitleg') === 2);
+
+    // Na een echte sprong een zin die terugwijst: de zin ervoor komt mee.
+    const bron = [
+      { start_seconds: 10, end_seconds: 14, text: 'Het tekort loopt al vier jaar op.' },
+      { start_seconds: 95, end_seconds: 98, text: 'Goud beweegt op vertrouwen en monetaire politiek.' },
+      { start_seconds: 98, end_seconds: 103, text: 'En platina beweegt ook daarop, maar ook op autoverkopen.' },
+    ];
+    const terug = clip([
+      shot(1, 10, 14, 'hook', 'Het tekort loopt al vier jaar op.'),
+      shot(2, 98, 103, 'payoff', 'En platina beweegt ook daarop, maar ook op autoverkopen.'),
+    ]);
+    const rt = pasClipRegelsToe(terug, 'uitleg', { transcript: bron });
+    const t2 = rt.clip.shots[1];
+    toets('"daarop" na een sprong: de zin waar het naar verwijst komt erbij', t2.start === 95 && /^Goud beweegt op vertrouwen/.test(t2.transcript_fragment ?? ''), JSON.stringify(t2));
+    toets('wijstTerug herkent "daarop" en laat een gewone zin staan', wijstTerug('En platina beweegt ook daarop') && !wijstTerug('Meer dan 70 procent komt uit Zuid-Afrika.'));
+    toets('prompt noemt de collage- en sprongregel', /GEEN COLLAGE/.test(planExamenSystem(4, { naam: 'uitleg', min: 25, max: 50 })) && /GEEN GAT BIJ EEN SPRONG/.test(planExamenSystem(4, { naam: 'uitleg', min: 25, max: 50 })));
+    toets('schets stuurt niet meer op fragmenten die ver uit elkaar liggen', !/fragmenten die ver uit elkaar liggen/.test(schetsSystem(4, { naam: 'uitleg', min: 25, max: 50 })));
   }
 
   console.log(`\n${gedaan - gefaald}/${gedaan} geslaagd`);

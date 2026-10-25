@@ -1,3 +1,4 @@
+import { instelling } from '../roughcut/instellingen';
 import { STORYCRAFT } from '../vault/storycraft';
 import { STORYSTIJLEN } from '../vault/storystijlen';
 import { ONDERZOEK } from '../vault/onderzoek';
@@ -16,7 +17,15 @@ export function clipRegels(formaat: { naam: string; min: number; max: number }):
 3. EINDE = MOMENT: het laatste shot is een punchline, onthulling, omslag of sterke uitspraak, en de clip eindigt binnen ~1,5 s na het payoff-woord. Nooit een generieke afsluiter ("ik ben benieuwd wat jij hiervan vindt", "laat het weten in de comments", "like en abonneer", "tot de volgende keer", "dus ja", "dat was het") en geen afzwakkend nazinnetje of samenvatting na de payoff. Een veilige samenvatting is geen einde; het moment zelf is het einde.
 4. OPENING ZONDER CONTEXT-GAT: de eerste gesproken zin is op zichzelf begrijpelijk voor iemand die de video niet kent. Niet openen met "en dan", "dus", "maar", een voornaamwoord zonder antecedent ("hij", "die", "dat") of midden in een uitwisseling. Kies een ander instappunt, of zet een korte cold open van de punchline vooraan en laat de hook-overlay de context geven.${formaat.naam === 'comedy' ? ' Bij comedy mag de cold open de grap zelf zijn, mits de context direct daarna volgt.' : ''}
 5. TEMPO${formaat.naam === 'comedy' ? ' (comedy)' : ''}: ${formaat.naam === 'comedy' ? 'comedy leeft van tempo — geen lange aanloop, geen pauzes die niet de timing van de grap zijn, en het sterkste moment (de lach, de imitatie, de reactie) staat er VOLLEDIG in: niet afgekapt, niet weggesneden, met de reactie erna.' : 'geen aanloop vóór de spanning; het sterkste moment staat er volledig in, niet afgekapt.'}
-6. SCORE: een clip die na deze regels geen echt moment heeft, krijgt hoogstens 5 en valt af. Liever vier sterke clips dan negen middelmatige.`;
+6. ÉÉN DOORLOPENDE LIJN, GEEN COLLAGE: bouw een clip uit één aaneengesloten stuk bron, aangescherpt (pauzes, zijpaden en herhalingen eruit). Een sprong door de bron (meer dan ${instelling('CLIP_SPRONG_MIN')} s overgeslagen) mag hoogstens ${maxSprongenVoor(formaat.naam)} keer, en alleen als het volgende stuk direct voortbouwt op wat de kijker net hoorde — een callback, het antwoord, de afloop. Vijf losse feiten uit vijf minuten zijn een opsomming, geen verhaal, en worden mechanisch afgewezen.
+7. GEEN GAT BIJ EEN SPRONG: na elke sprong begint de kijker opnieuw. Begint het volgende shot met iets dat terugwijst ("daarop", "dat", "die", "hij", "ook") naar een zin die je hebt overgeslagen, neem die zin dan mee. En sla nooit de zin over die het antwoord geeft waar de clip om draait ("En dat is platina.") — dat is de payoff van de hook.
+8. SCORE: een clip die na deze regels geen echt moment heeft, krijgt hoogstens 5 en valt af. Liever vier sterke clips dan negen middelmatige.`;
+}
+
+/** Het sprongplafond per format (instellingen CLIP_MAX_SPRONGEN_*). */
+function maxSprongenVoor(naam: string): number {
+  const sleutel = naam.toUpperCase();
+  return sleutel === 'COMEDY' || sleutel === 'INTERVIEW' || sleutel === 'UITLEG' ? instelling(`CLIP_MAX_SPRONGEN_${sleutel}`) : instelling('CLIP_MAX_SPRONGEN_INTERVIEW');
 }
 
 export const CHARACTER_MAP_SYSTEM = `Je bent een verhaalanalist. Je leest het volledige transcript van een lange video en brengt de narratieve structuur in kaart.
@@ -66,7 +75,7 @@ Werk verhaallijn-eerst, in deze volgorde:
 4. Kies een "hook_richting": alleen het type (een formule-slug uit de vault) en het gesproken instappunt — nog geen overlaytekst, dat is copywriting voor de volgende pas.
 5. Ken jezelf een eerlijke "score" (1-10) toe: hoe sterk is dit als verhaal? Wees kritisch — de volgende pas snoeit hierop, en een score die te aardig is helpt niemand.
 
-Gebruik de character map om edits te bouwen uit fragmenten die ver uit elkaar liggen in de bron. Markeer tijdsprongen in de edit_notitie.
+Gebruik de character map om te zien waar een verhaal begint en eindigt. Een clip is in de regel één doorlopend stuk bron, aangescherpt; een sprong naar een ver ander deel alleen als dat stuk de payoff of het antwoord is van wat de kijker net hoorde (een reveal, een callback). Geen collages van losse feiten. Markeer elke tijdsprong in de edit_notitie.
 
 Prioriteer structuren met een hoog vault-gewicht, maar wijk gemotiveerd af als het materiaal daarom vraagt.
 
@@ -112,7 +121,7 @@ STAP 1 — SNOEIEN (oordeel over alle kandidaten voordat je er één uitwerkt):
 4. Toets tegen het onderzoek: geen seconde aanloop vóór de spanning; zit er rond het midden een moment dat de verwachting breekt of de inzet verhoogt?
 4b. Uitvoerbaarheid: speel de kandidaat af zoals hij gerenderd wordt — alleen de gesproken tekst van de shots (met ondertitels), de hook-overlay, de context_kaart en de kaarten die je in "kaarten" zet. Kan een kijker die alleen dat ziet de belofte, de omslag en de payoff volgen? Moeten er cijfers of een vergelijking in beeld staan om de boog te laten werken, dan komen die in "kaarten" (verankerd aan een shot) — een kaart mag versterken, niet dragen: de payoff moet ook zonder kaart te horen zijn, in een payoff-shot van minstens ~3 seconden spraak dat de open vraag beantwoordt. Lukt dat niet met het materiaal, dan valt de kandidaat af.
 4c. Eindscherm: een shot uit de laatste 20 seconden van de bron (zie Duur) heeft vaak abonneerknoppen in beeld. Alleen houden als het onmisbaar is; anders een ander fragment kiezen.
-4e. Clipregels (zie het blok CLIPREGELS hieronder): toets elke kandidaat op lengte${formaat ? ` (${formaat.min}–${formaat.max} s)` : ''}, één verhaal, een einde dat een moment is, een opening zonder context-gat en tempo. Wat je in stap 2 niet kunt herstellen (een ander instappunt, het nazinnetje eraf, een uitweiding weg) kost punten; een clip zonder echt moment aan het eind gaat eruit.
+4e. Clipregels (zie het blok CLIPREGELS hieronder): toets elke kandidaat op lengte${formaat ? ` (${formaat.min}–${formaat.max} s)` : ''}, één verhaal, een einde dat een moment is, een opening zonder context-gat, tempo, en één doorlopende lijn (geen collage van losse zinnen, geen gat na een sprong). Wat je in stap 2 niet kunt herstellen (een ander instappunt, het nazinnetje eraf, een uitweiding weg) kost punten; een clip zonder echt moment aan het eind gaat eruit.
 4d. Campagne: staat er een CAMPAGNE-blok bij, dan is een kandidaat die de klant, zijn product of zijn eigen video belachelijk maakt, tegenspreekt of op een fout betrapt merkonveilig — ook als het verhaal klopt. Bouw hem om naar een invalshoek die de boodschap van de klant draagt, of zet risico op "merkonveilig" (dan vervalt hij in code).
 5. Scroll-stop: lees per kandidaat de MEETDATA (mechanisch gemeten op bron en audio: instap-kwaliteit van de eerste 3 s, hookbeeld als dat er is, stilte vóór de onthulling, tempo, reacties, vraag→antwoord, dode woorden). Oordeel dan als iemand die door zijn feed scrolt en deze video niet kent: "stopt", "twijfel" of "scrollt_door", met in "waarom" de meetdata die dat draagt. Een instap die "zwak" meet (begint met een verbindingswoord, een voornaamwoord zonder antecedent, opvulling) is "scrollt_door" tenzij je in stap 2 een ander, zelfstandig instappunt kiest uit het transcript — en dan zeg je dat in "waarom". Het oordeel telt mee in de score en wordt in code afgedwongen: "scrollt_door" hoogstens 5 (valt dus af), "twijfel" hoogstens 7.
 6. Ken elke kandidaat een score (1-10) toe. Wees hard: een score van 8+ is zeldzaam, een 5 is middelmatig en hoort niet in het eindplan. De meetdata zijn feiten, geen suggesties: een verhaal dat op papier klopt maar meetbaar vlak opent, scoort lager dan een iets eenvoudiger verhaal met een opening die stopt.

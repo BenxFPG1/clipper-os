@@ -115,6 +115,18 @@ const STANDAARD = {
   CLIP_LENGTE_UITLEG_MIN: 25,
   CLIP_LENGTE_UITLEG_MAX: 50,
   PAYOFF_NA_MAX: 1.5,
+  /**
+   * Hoeveel sprongen door de bron (> CLIP_SPRONG_MIN s overgeslagen) een clip
+   * mag maken. PLATINA clip 2 had er drie in 33 s: vijf losse zinnen uit vijf
+   * minuten, een collage in plaats van een verhaal.
+   */
+  CLIP_MAX_SPRONGEN_COMEDY: 1,
+  CLIP_MAX_SPRONGEN_INTERVIEW: 2,
+  CLIP_MAX_SPRONGEN_UITLEG: 2,
+  /** Vanaf hoeveel overgeslagen seconden het een sprong is; korter is aanscherpen (een pauze, een zijpad eruit). */
+  CLIP_SPRONG_MIN: 15,
+  /** Hoeveel seconden een shot mag groeien om een verwijzing of onthulling uit de bron mee te nemen. */
+  CLIP_CONTEXT_MAX: 7,
   RETENTIE_COMEDY_FACTOR: 0.75,
   /**
    * Actieve-sprekerdetectie (sprekers.ts): meetstap (s), beslisvenster (s),

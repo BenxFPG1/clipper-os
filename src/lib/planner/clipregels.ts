@@ -184,6 +184,52 @@ export function tweeVerhalen(clip: Pick<Clip, 'shots'>): string | null {
   return null;
 }
 
+/** Hoeveel sprongen een clip in dit format mag maken. */
+export function maxSprongen(f: Formaat): number {
+  const sleutel = f.toUpperCase() as 'COMEDY' | 'INTERVIEW' | 'UITLEG';
+  return instelling(`CLIP_MAX_SPRONGEN_${sleutel}`);
+}
+
+/** De sprongen door de bron: shots waarvoor meer dan CLIP_SPRONG_MIN s is overgeslagen (of terug in de tijd). */
+export function sprongen(clip: Pick<Clip, 'shots'>): { volgorde: number; seconden: number }[] {
+  const shots = [...clip.shots].sort((a, b) => a.volgorde - b.volgorde);
+  const min = instelling('CLIP_SPRONG_MIN');
+  const uit: { volgorde: number; seconden: number }[] = [];
+  for (let i = 1; i < shots.length; i++) {
+    const gat = shots[i].start - shots[i - 1].end;
+    if (gat > min || gat < -1) uit.push({ volgorde: shots[i].volgorde, seconden: Math.round(gat) });
+  }
+  return uit;
+}
+
+// Verwijswoorden die altijd naar iets eerders wijzen, waar ze ook in de eerste
+// zes woorden staan ("En platina beweegt ook daarop").
+const TERUGWIJZERS = /^(daarop|daarvan|daardoor|daarmee|daarover|daarom|daarin|daarna|daarbij|daaruit|erop|ervan|erdoor|ermee|erover|daardoor|hetzelfde|zelfde|ditzelfde|datzelfde|ook)$/;
+
+/** Wijst het begin van deze zin terug naar iets dat ervóór gezegd moet zijn? */
+export function wijstTerug(zin: string): boolean {
+  const woorden = zin.toLowerCase().replace(/[^\p{L}\p{N}\s']/gu, ' ').split(/\s+/).filter(Boolean);
+  if (woorden.length === 0) return false;
+  if (woorden.slice(0, 6).some((w) => TERUGWIJZERS.test(w) && w !== 'ook')) return true;
+  return instappuntKwaliteit(zin).redenen.some((r) => /zonder antecedent/.test(r));
+}
+
+// Een korte onthulling: het antwoord op wat er net gevraagd of opgebouwd is
+// ("En dat is platina.", "Dat heet stagflatie.").
+const ONTHULLING = /^(en |maar )?(dat|dit|het|die|zo'?n) (is|was|zijn|waren|heet|heten|blijkt|bleek|noemen we|wordt)\b/i;
+
+/** De bronzin die direct vóór t eindigt (binnen 1,5 s), of null. */
+function bronZinVoor(t: number, transcript: TranscriptSegment[]): TranscriptSegment | null {
+  return [...transcript].filter((x) => x.end_seconds <= t + 0.3 && x.end_seconds >= t - 1.5 && x.start_seconds < t - 0.3).sort((a, b) => b.end_seconds - a.end_seconds)[0] ?? null;
+}
+
+/** De bronzin die direct na t begint (binnen 1,2 s), of null. */
+function bronZinNa(t: number, transcript: TranscriptSegment[]): TranscriptSegment | null {
+  return [...transcript].filter((x) => x.start_seconds >= t - 0.3 && x.start_seconds <= t + 1.2 && x.end_seconds > t + 0.3).sort((a, b) => a.start_seconds - b.start_seconds)[0] ?? null;
+}
+
+const overlaptMet = (shots: ShotLike[], van: number, tot: number, behalve: ShotLike) => shots.some((s) => s !== behalve && s.start < tot - 0.2 && s.end > van + 0.2);
+
 export type ClipOordeel = {
   /** Harde fouten die na de mechanische reparatie overblijven: score ≤ 5. */
   fouten: string[];
@@ -290,6 +336,55 @@ export function pasClipRegelsToe(
     }
   }
 
+  // --- 6. Geen contextgat bij een sprong -----------------------------------
+  // De opening (regel 4) was de enige plek waar dit getoetst werd. Maar na
+  // elke sprong door de bron begint de kijker opnieuw: een zin die terugwijst
+  // naar iets dat is overgeslagen ("En platina beweegt ook daarop") is
+  // onbegrijpelijk, en een korte onthulling direct na een shot die wordt
+  // overgeslagen ("En dat is platina.") laat de belofte van de hook open.
+  // Waar de bron het toelaat, komt die ene zin erbij.
+  if (opties.transcript?.length) {
+    const ruimte = instelling('CLIP_CONTEXT_MAX');
+    for (let i = 0; i < shots.length; i++) {
+      const s = shots[i];
+      const vorige = shots[i - 1];
+      const volgende = shots[i + 1];
+      // Elke overslag telt hier, ook een korte: ook na een weggeknipte zin
+      // kan het begin terugwijzen.
+      const naSprong = i > 0 && Math.abs(s.start - vorige.end) > 3;
+      const eerste = zinnen(s.transcript_fragment ?? '')[0] ?? '';
+      if (naSprong && wijstTerug(eerste)) {
+        // Bij een korte overslag (één zin) wijst "dat" meestal nog naar het
+        // vorige shot, dat de kijker wél hoorde; pas bij een echte sprong is
+        // het antecedent zeker weg.
+        const ver = Math.abs(s.start - vorige.end) > 10;
+        const ervoor = ver ? bronZinVoor(s.start, opties.transcript) : null;
+        if (!ver) {
+          signalen.push(`shot ${s.volgorde} begint na een korte overslag met "${eerste.slice(0, 50)}" — verwijst dat nog naar het vorige shot?`);
+        } else if (ervoor && s.start - ervoor.start_seconds <= ruimte && !overlaptMet(shots, ervoor.start_seconds, s.start, s)) {
+          shots[i] = { ...s, start: Math.round(ervoor.start_seconds * 100) / 100, transcript_fragment: `${ervoor.text.trim()} ${s.transcript_fragment ?? ''}`.trim() };
+          ingrepen.push(`shot ${s.volgorde} wees terug ("${eerste.slice(0, 40)}"): de zin ervoor uit de bron erbij ("${ervoor.text.trim().slice(0, 50)}")`);
+        } else {
+          signalen.push(`shot ${s.volgorde} begint na een sprong met "${eerste.slice(0, 50)}" — dat wijst terug naar iets dat de kijker niet heeft gehoord`);
+        }
+      }
+      const sluitAan = volgende && Math.abs(volgende.start - s.end) <= 0.5;
+      if (!sluitAan) {
+        const erna = bronZinNa(s.end, opties.transcript);
+        const tekst = erna?.text.trim() ?? '';
+        const aantal = tekst.split(/\s+/).filter(Boolean).length;
+        // Captiontijden lopen vaak door tot de volgende zin (stilte, beeld):
+        // "En dat is Platina." stond van 12,3 tot 20,4 s. Het eind schatten
+        // op het aantal woorden; de render lijnt daarna op de woordtijden uit.
+        const eind = erna ? Math.min(erna.end_seconds, erna.start_seconds + 0.5 * aantal + 0.6) : 0;
+        if (erna && ONTHULLING.test(tekst) && aantal <= 8 && eind - s.end <= ruimte && !overlaptMet(shots, s.end, eind, s)) {
+          shots[i] = { ...shots[i], end: Math.round(eind * 100) / 100, transcript_fragment: `${shots[i].transcript_fragment ?? ''} ${tekst}`.trim() };
+          ingrepen.push(`na shot ${s.volgorde} sloeg de clip de onthulling over: "${tekst.slice(0, 50)}" erbij`);
+        }
+      }
+    }
+  }
+
   // --- 5. Comedy: het sterkste moment niet afgekapt ------------------------
   if (formaat === 'comedy' && opties.energie?.length && shots.length) {
     const laatste = shots[shots.length - 1];
@@ -327,6 +422,13 @@ export function pasClipRegelsToe(
   // --- 2. Eén verhaal, geen herhaling -----------------------------------------
   const twee = tweeVerhalen({ shots });
   if (twee) signalen.push(twee);
+  {
+    const sp = sprongen({ shots });
+    const max = maxSprongen(formaat);
+    if (sp.length > max) {
+      fouten.push(`${sp.length} sprongen door de bron (shot ${sp.map((x) => `${x.volgorde}: ${x.seconden > 0 ? '+' : ''}${x.seconden} s`).join(', ')}), meer dan ${max} voor ${formaat} — losse zinnen aan elkaar in plaats van één doorlopend verhaal`);
+    }
+  }
   for (const h of herhaaldeZinnen({ shots })) {
     signalen.push(`"${h.zin.slice(0, 50)}" klinkt twee keer (shot ${h.shots.join(' en ')}) — alleen houden als de herhaling de grap of de spanning is`);
   }
