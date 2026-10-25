@@ -65,8 +65,6 @@ jobs:
         run: npm run test:signalen
       - name: Claude-aanroep (grote systeemprompt, geen E2BIG)
         run: npm run test:claude
-      - name: Ondertitelwoorden (beter model, correctiepas)
-        run: npm run test:ondertitelwoorden
       - name: Afwerken in Premiere (pakket)
         run: npm run test:afwerkpakket
 
@@ -98,6 +96,11 @@ jobs:
 
       - name: Stream-overlays (chat, teller) uit beeld
         run: npm run test:streamoverlay
+
+      # Knipt echte audio met ffmpeg; in de snelle job (zonder ffmpeg) viel
+      # hij steeds terug en faalde hij sinds 30 september.
+      - name: Ondertitelwoorden (beter model, correctiepas)
+        run: npm run test:ondertitelwoorden
 
       - name: Keuring tegen de basislijn
         env:
