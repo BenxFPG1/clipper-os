@@ -451,7 +451,7 @@ export function plaatsRegels(
   segmenten: Shot[],
   kader: Kader,
   stijl?: Huisstijl | null,
-): { plaatsing: number[]; plekken: Plek[]; schalen: number[] } {
+): { plaatsing: number[]; plekken: Plek[]; schalen: number[]; waarom: string[] } {
   const regelH = ondertitelMaat(stijl).assGrootte;
   const marge = instelling('ONDERTITEL_KIN_MARGE') * H;
   const maxOnder = instelling('ONDERTITEL_Y_MAX') * H;
@@ -500,6 +500,8 @@ export function plaatsRegels(
   for (const seg of segmenten) oorspronkelijkY.set(seg, seg.focusY ?? 0.5);
   const verboden = new Set<number>();
   const gewijzigd = new Map<number, Plek>();
+  // Waarom een regel toch over het gezicht valt, voor het renderlog.
+  const redenen = new Map<number, string>();
   type Uitkomst = { plaatsing: number[]; plekken: Plek[]; schalen: number[]; terug: (() => void) | null };
   const plaatsAlles = (wijzigen: boolean): Uitkomst => {
     const plaatsing: number[] = [];
@@ -559,6 +561,18 @@ export function plaatsRegels(
         } else {
           y = noodOnder;
           plek = 'overlap';
+          if (oorzaak) {
+            const o = oorzaak;
+            const pct = (v: number) => `${Math.round(v * 100)}%`;
+            redenen.set(
+              r,
+              `shot ${o.volgorde} zoom ${(o.zoom ?? basisZoom(o)).toFixed(2)} (basis ${basisZoom(o).toFixed(2)}) focusY ${(o.focusY ?? 0.5).toFixed(2)}${o.spoorY?.length ? ` spoorY ${o.spoorY.length}` : ''}${o.overlay ? ' overlay' : ''}` +
+                `, gezicht in beeld ${pct(boven / H)}-${pct(onder / H)}, verschoven ${((o.focusY ?? 0.5) - (oorspronkelijkY.get(o) ?? 0.5)).toFixed(2)}` +
+                (verboden.has(r) ? ', wijziging afgewezen (totaal niet beter)' : ', omhoog en terugzoomen passen niet'),
+            );
+          } else {
+            redenen.set(r, 'geen shot als oorzaak (vastgehouden graphic)');
+          }
         }
       }
       plaatsing.push(Math.round(Math.min(noodOnder, y)));
@@ -582,8 +596,9 @@ export function plaatsRegels(
       verboden.add(regel);
     }
   }
+  redenen.clear();
   const { plaatsing, plekken, schalen } = plaatsAlles(false);
-  return { plaatsing, plekken, schalen };
+  return { plaatsing, plekken, schalen, waarom: regels.map((_, r) => redenen.get(r) ?? '') };
 }
 
 /** Schuift focusY (en een verticaal spoor) tijdelijk op; geeft een functie terug die het terugzet. */
@@ -764,13 +779,13 @@ export async function maakOndertitels(
   const srt = bouwSrtUitRegels(regels);
   const font = ondertitelFont(stijl);
   const maat = ondertitelMaat(stijl);
-  const { plaatsing, plekken, schalen } = plaatsRegels(regels, segmenten, opties.kader ?? 'vullend', stijl);
+  const { plaatsing, plekken, schalen, waarom } = plaatsRegels(regels, segmenten, opties.kader ?? 'vullend', stijl);
   const telling = legePlekTelling();
   for (const p of plekken) telling[p]++;
   // Welke regels toch over een gezicht vallen, met hun tijd: zo is in het
   // renderlog terug te vinden welk shot de ondertitel niet kwijt kon.
-  const over = regels.flatMap((r, i) => (plekken[i] === 'overlap' ? [`${r.s.toFixed(1)} s "${r.woorden.map((w) => w.w).join(' ').slice(0, 30)}"`] : []));
-  if (over.length) console.log(`     ondertitel over gezicht: ${over.join(', ')}`);
+  const over = regels.flatMap((r, i) => (plekken[i] === 'overlap' ? [`${r.s.toFixed(1)} s "${r.woorden.map((w) => w.w).join(' ').slice(0, 30)}": ${waarom[i]}`] : []));
+  if (over.length) console.log(`     ondertitel over gezicht:\n       ${over.join('\n       ')}`);
   const stijlInfo = { familie: font.familie, bestand: font.bestand, assGrootte: maat.assGrootte, kapPx: maat.kapPx, plekken: telling };
   if (regels.length === 0) return { regels, overlays: [], srt, stijl: stijlInfo };
 
