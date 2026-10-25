@@ -59,6 +59,7 @@ export async function transcribeYoutube(url: string): Promise<TranscriptionResul
       }
     }
 
+    if (segments.length === 0) throw new GeenSpraakError();
     return {
       segments: closeOpenEnds(segments.sort((a, b) => a.start_seconds - b.start_seconds)),
       title: meta.title,
@@ -69,18 +70,33 @@ export async function transcribeYoutube(url: string): Promise<TranscriptionResul
   }
 }
 
-/** Transcribeert een audiobestand dat al op schijf staat. */
-export async function transcribeLocalFile(path: string): Promise<TranscriptSegment[]> {
+/**
+ * Transcribeert een audio- of videobestand dat al op schijf staat (Drive,
+ * WeTransfer). Lange bestanden gaan in stukken van LOKAAL_STUK_SECONDEN: zo
+ * staat er per stuk voortgang in de log, en blijft één hangend stuk niet de
+ * hele run vasthouden.
+ */
+export async function transcribeLocalFile(
+  path: string,
+  opties: { log?: (m: string) => void } = {},
+): Promise<TranscriptSegment[]> {
   await assertBinary('ffmpeg');
+  const log = opties.log ?? (() => {});
   const workdir = await mkdtemp(join(tmpdir(), 'clipper-audio-'));
   try {
     const converted = join(workdir, 'audio.m4a');
     await run('ffmpeg', ['-y', '-i', path, '-vn', '-ac', '1', '-ar', '16000', '-b:a', '32k', converted]);
     const duration = await probeDuration(converted);
-    const chunks = await splitIfNeeded(converted, workdir, duration);
+    const stuk = Number(process.env.WHISPER_STUK_SECONDEN ?? LOKAAL_STUK_SECONDEN);
+    const chunks =
+      duration && duration > stuk * 1.2
+        ? await splitInStukken(converted, workdir, duration, stuk)
+        : await splitIfNeeded(converted, workdir, duration);
 
     const segments: TranscriptSegment[] = [];
-    for (const chunk of chunks) {
+    const t0 = Date.now();
+    for (const [i, chunk] of chunks.entries()) {
+      const tStuk = Date.now();
       const part = await transcribeFile(chunk.path);
       for (const seg of part) {
         segments.push({
@@ -89,11 +105,40 @@ export async function transcribeLocalFile(path: string): Promise<TranscriptSegme
           text: seg.text,
         });
       }
+      if (chunks.length > 1) {
+        log(
+          `transcriptie stuk ${i + 1}/${chunks.length} (vanaf ${Math.round(chunk.offsetSeconds / 60)} min): ` +
+            `${part.length} segmenten in ${Math.round((Date.now() - tStuk) / 1000)}s, totaal ${Math.round((Date.now() - t0) / 1000)}s`,
+        );
+      }
     }
+    if (segments.length === 0) throw new GeenSpraakError();
     return closeOpenEnds(segments.sort((a, b) => a.start_seconds - b.start_seconds));
   } finally {
     await rm(workdir, { recursive: true, force: true });
   }
+}
+
+/** Geen enkel segment: het bestand bevat (vrijwel) geen spraak. Geen tijdelijke fout. */
+export class GeenSpraakError extends Error {
+  constructor() {
+    super('Geen spraak gevonden in de video — zonder transcript is er geen clip-plan te maken.');
+    this.name = 'GeenSpraakError';
+  }
+}
+
+/** Stuklengte voor lokale transcriptie: ~5 min rekenwerk per stuk met het small-model op de runner. */
+const LOKAAL_STUK_SECONDEN = 10 * 60;
+
+async function splitInStukken(audioPath: string, workdir: string, duration: number, stuk: number): Promise<Chunk[]> {
+  const chunks: Chunk[] = [];
+  for (let offset = 0; offset < duration; offset += stuk) {
+    const path = join(workdir, `stuk-${offset}.m4a`);
+    // -c copy: knippen zonder hercoderen, de audio is al 16 kHz mono.
+    await run('ffmpeg', ['-y', '-ss', String(offset), '-t', String(stuk), '-i', audioPath, '-c', 'copy', path]);
+    chunks.push({ path, offsetSeconds: offset });
+  }
+  return chunks;
 }
 
 async function downloadAudio(url: string, outPath: string) {
@@ -266,9 +311,8 @@ print(json.dumps([{"start": s.start, "end": s.end, "text": s.text} for s in segm
     end: number;
     text: string;
   }[];
-  if (rijen.length === 0) {
-    throw new Error('Lokale Whisper gaf geen segmenten terug.');
-  }
+  // Een stuk zonder spraak (intro, muziek) is geen fout; pas als het héle
+  // bestand leeg is (transcribeLocalFile) wel.
   return rijen.map((s) => ({
     start_seconds: s.start,
     end_seconds: s.end,

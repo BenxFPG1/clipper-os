@@ -6,6 +6,18 @@ import { SCHEMA_VERSION, Energiemoment } from './schema';
 import { mijnEnergie, renderEnergie } from './energie';
 import { lokaleBron } from './signalen';
 import { bronWoordenUitCache } from '../roughcut/woorden';
+import { isDirecteBron } from '../ingest/bron-url';
+
+/**
+ * Waar de oor-laag de audio vandaan haalt. Een Drive- of WeTransfer-link kan
+ * yt-dlp niet lezen (en een transfer is na een week weg); dan alleen een
+ * bron die hier al lokaal staat — anders alleen de tempowisselingen uit het
+ * transcript. De energie van zo'n video is bij het ophalen al gemeten.
+ */
+function energieBron(videoId: string, sourceUrl: string | null): string | null {
+  if (!isDirecteBron(sourceUrl)) return sourceUrl;
+  return lokaleBron(videoId, null);
+}
 
 /**
  * Draait de volledige pipeline voor één video en slaat het resultaat op:
@@ -45,7 +57,7 @@ export async function runPlannerForVideo(
   const energie: Energiemoment[] =
     !options?.opnieuwAnalyseren && video.energie_momenten
       ? (video.energie_momenten as Energiemoment[])
-      : await mijnEnergie(video.source_url ?? null, transcript).catch(() => []);
+      : await mijnEnergie(energieBron(videoId, video.source_url ?? null), transcript).catch(() => []);
 
   if (energie !== video.energie_momenten) {
     await supabase.from('videos').update({ energie_momenten: energie }).eq('id', videoId);

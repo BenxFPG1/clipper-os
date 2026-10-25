@@ -138,10 +138,11 @@ async function main() {
     }
     case 'kanaal': {
       const { haalNieuweBronvideos } = await import('../src/lib/ingest/kanaal');
-      const r = await metRetry(() => haalNieuweBronvideos());
+      // Optioneel één campagne: npx tsx scripts/job.ts kanaal <campaign-id>
+      const r = await metRetry(() => haalNieuweBronvideos({ campaignId: process.argv[3] }));
       console.log(`${stamp} kanaal: ${r.toegevoegd.length} nieuwe bronvideo('s) opgehaald`);
       for (const v of r.toegevoegd) console.log(`  + ${v.campagne}: ${v.titel}`);
-      for (const f of r.fouten.slice(0, 5)) console.log(`  fout: ${f.slice(0, 160)}`);
+      for (const f of r.fouten.slice(0, 20)) console.log(`  fout: ${f.slice(0, 300)}`);
       break;
     }
     case 'smaak': {

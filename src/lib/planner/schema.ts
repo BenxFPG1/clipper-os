@@ -3,7 +3,7 @@ import { editorTekst } from '../roughcut/editortekst';
 
 export const SCHEMA_VERSION = '1.0';
 export const PROMPT_VERSION_CHARACTER_MAP = 'charmap-3.2';
-export const PROMPT_VERSION_PLAN = 'plan-6.4';
+export const PROMPT_VERSION_PLAN = 'plan-7.0';
 
 // ------------------------------------------------------- stap 1: character map
 export const sleutelmomentSchema = z.object({
@@ -260,6 +260,10 @@ export const verhaaldokterDiffSchema = z.object({
       score: z.number().min(1).max(10),
       /** Alleen invullen als er iets veranderd is; anders weglaten. */
       verhaallijn: clipSchema.shape.verhaallijn.optional(),
+      /** Volgnummers van shots die weg moeten ("zou de clip zonder dit shot slechter zijn?" — nee). Nooit het hook- of het laatste payoff-shot. */
+      schrap_shots: z.array(z.number().int().min(1)).optional(),
+      /** Letterlijke slottekst die van het laatste shot af moet (een nazinnetje of afsluiter ná het moment). */
+      knip_slot: z.string().optional(),
       reden: z.string(),
     }),
   ),

@@ -5,12 +5,13 @@ import { TranscriptSegment, renderTranscript, transcriptDuration } from '../inge
 import { VaultSnapshot, renderVaultForPrompt } from '../vault';
 import {
   CHARACTER_MAP_SYSTEM,
-  VERHAALDOKTER_SYSTEM,
   buildCharacterMapUser,
   buildSchetsUser,
   planExamenSystem,
   schetsSystem,
+  verhaaldokterSystem,
 } from './prompts';
+import { clipDuur, formaatVoorThema, knipSlot, lengteBereik, pasPlanRegelsToe, regelsVoorPrompt, zinnen } from './clipregels';
 import {
   gesprokenTekst,
   keurVerhaaldokter,
@@ -108,9 +109,14 @@ export async function generateClipPlan(
 ): Promise<ClipPlan> {
   // De zelflerende laag komt achter de vaste kaders aan.
   const bijgeleerd = await geleerdeKennis('planner');
+  // Het format (comedy / interview / uitleg) bepaalt de lengte en het tempo.
+  const formaat = formaatVoorThema(input.vault.theme, `${input.campaignName ?? ''} ${input.title}`);
+  const bereik = lengteBereik(formaat);
+  const formaatInfo = { naam: formaat, ...bereik };
+  console.log(`[planner] format ${formaat}: clips ${bereik.min}–${bereik.max} s`);
 
   const schets: SchetsPlan = await structuredCall({
-    system: schetsSystem(PLAN_MAX_CLIPS) + bijgeleerd,
+    system: schetsSystem(PLAN_MAX_CLIPS, formaatInfo) + bijgeleerd,
     user: buildSchetsUser({
       title: input.title,
       durationSeconds: input.durationSeconds,
@@ -152,7 +158,7 @@ export async function generateClipPlan(
   const bijAnderen = watWerktBijAnderen(input.vault, normenTekst);
 
   const examined: ClipPlan = await structuredCall({
-    system: planExamenSystem(PLAN_MAX_CLIPS) + bijgeleerd,
+    system: planExamenSystem(PLAN_MAX_CLIPS, formaatInfo) + bijgeleerd,
     user: `Video: ${input.title}
 Duur: ${input.durationSeconds ? `${input.durationSeconds} seconden` : 'onbekend'}
 
@@ -204,6 +210,14 @@ ${signalenVoorPrompt(signalen) || '(geen meetdata beschikbaar)'}${
     }
   }
 
+  // De clipregels (clipregels.ts) mechanisch: nazinnetjes en afsluiters eraf,
+  // instappunt zonder context verplaatst, te lange clips ingekort; wat
+  // daarna nog fout is krijgt score ≤ 5 en valt af. Vóór de verhaaldokter,
+  // zodat die de gerepareerde clips beoordeelt en de rest als signaal krijgt.
+  const regelOpties = { energie: input.energie ?? [], transcript: input.transcript, log: (m: string) => console.log(`[planner] ${m}`) };
+  const voorDokter = pasPlanRegelsToe(examined, formaat, regelOpties);
+  examined.clips = voorDokter.plan.clips;
+
   let doctored = examined;
   try {
     const rapport = keurVerhaaldokter(examined, { campagneNaam: input.campaignName, videoDuur: input.durationSeconds });
@@ -219,6 +233,11 @@ ${signalenVoorPrompt(signalen) || '(geen meetdata beschikbaar)'}${
       score: clip.score,
       scroll_stop: clip.scroll_stop ?? null,
       verhaallijn: clip.verhaallijn,
+      duur: Math.round(clipDuur(clip)),
+      // Per shot wat er klinkt, zodat de dokter kan vragen: zou de clip
+      // zonder dit shot slechter zijn?
+      shots: clip.shots.map((s) => ({ volgorde: s.volgorde, functie: s.functie, duur: Math.round((s.end - s.start) * 10) / 10, tekst: (s.transcript_fragment ?? '').slice(0, 400) })),
+      slotzin: zinnen(clip.shots[clip.shots.length - 1]?.transcript_fragment ?? '').slice(-1)[0] ?? '',
       // Precies wat een kijker krijgt: wat er klinkt (en als ondertitel in
       // beeld staat) en welke tekst er getekend wordt. De boog moet hieruit
       // te volgen zijn, niet uit edit_notitie.
@@ -229,14 +248,14 @@ ${signalenVoorPrompt(signalen) || '(geen meetdata beschikbaar)'}${
     }));
 
     const diff: VerhaaldokterDiff = await structuredCall({
-      system: VERHAALDOKTER_SYSTEM + bijgeleerd,
+      system: verhaaldokterSystem(formaatInfo) + bijgeleerd,
       user: `Video: ${input.title}${campagneBlok}
 
 === CHARACTER MAP (met "reveals" — herinterpretaties die de payoff kan gebruiken; voornaamwoorden per persoon) ===
 ${JSON.stringify(input.characterMap)}
 
 === CLIPS (na het toernooi; per clip de verhaallijn, de score en het brontranscript rond de shots) ===
-${JSON.stringify(perClip, null, 1)}${signalenRapport}${
+${JSON.stringify(perClip, null, 1)}${signalenRapport}${regelsVoorPrompt(voorDokter.oordelen, formaat)}${
         bijAnderen ? `\n\n=== WAT WERKT BIJ ANDEREN ===\n${bijAnderen}` : ''
       }`,
       schema: verhaaldokterDiffSchema,
@@ -246,12 +265,21 @@ ${JSON.stringify(perClip, null, 1)}${signalenRapport}${
       effort: PLAN_VERHAALDOKTER_EFFORT,
       operation: 'clip_plan_verhaaldokter',
     });
-    doctored = pasVerhaaldokterToe(examined, diff);
+    doctored = pasVerhaaldokterToe(examined, diff, (m) => console.log(`[planner] verhaaldokter: ${m}`));
     // De dokter mag de score herzien, maar niet boven wat de opening toelaat.
     pasScrollStopToe(doctored);
     doctored = pasMerkveiligheidToe(doctored).plan;
   } catch (err) {
     console.warn('[planner] verhaaldokter-pass mislukt, geëxamineerd plan behouden:', (err as Error).message);
+  }
+
+  // Nog één keer de regels: wat de dokter schrapte of liet staan, moet er
+  // ook daarna aan voldoen. Daarna vallen clips onder de 6 af.
+  doctored = pasPlanRegelsToe(doctored, formaat, regelOpties).plan;
+  doctored = { clips: doctored.clips.filter((c) => (c.score ?? 10) >= 6).length ? doctored.clips.filter((c) => (c.score ?? 10) >= 6) : doctored.clips.slice(0, 1) };
+  for (const [i, c] of doctored.clips.entries()) {
+    const zs = c.shots.flatMap((s) => zinnen(s.transcript_fragment ?? ''));
+    console.log(`[planner] clip ${i + 1} "${c.titel_intern}": ${clipDuur(c).toFixed(0)} s, score ${c.score ?? '—'} | begint "${(zs[0] ?? '').slice(0, 60)}" | eindigt "${(zs[zs.length - 1] ?? '').slice(0, 60)}"`);
   }
 
   return repairPlan(doctored, input);
@@ -322,14 +350,38 @@ export function pasScrollStopToe(plan: ClipPlan): number {
  * blijft byte voor byte staan. Wil hij álles verwijderen, dan blijft het plan
  * zoals het was — een leeg plan is nooit de bedoeling van een verfijningspas.
  */
-export function pasVerhaaldokterToe(plan: ClipPlan, diff: VerhaaldokterDiff): ClipPlan {
+export function pasVerhaaldokterToe(plan: ClipPlan, diff: VerhaaldokterDiff, log: (m: string) => void = () => {}): ClipPlan {
   const perClip = new Map(diff.clips.map((d) => [d.clip, d]));
   const clips = plan.clips
     .map((clip, i) => {
       const d = perClip.get(i + 1);
       if (!d) return clip;
       if (d.verwijderen) return null;
-      return { ...clip, score: d.score, verhaallijn: d.verhaallijn ?? clip.verhaallijn };
+      let shots = [...clip.shots].sort((a, b) => a.volgorde - b.volgorde);
+      // Shots schrappen: nooit het hook-shot of het laatste payoff-shot, en
+      // nooit zoveel dat er minder dan twee shots overblijven.
+      const laatstePayoff = [...shots].reverse().find((s) => s.functie === 'payoff')?.volgorde;
+      const weg = new Set((d.schrap_shots ?? []).filter((v) => v !== laatstePayoff && shots.find((s) => s.volgorde === v)?.functie !== 'hook'));
+      if (weg.size && shots.length - weg.size >= 2) {
+        log(`"${clip.titel_intern}": shot ${[...weg].join(', ')} geschrapt`);
+        shots = shots.filter((s) => !weg.has(s.volgorde));
+      }
+      // Het nazinnetje van het laatste shot af.
+      if (d.knip_slot?.trim() && shots.length) {
+        const gekort = knipSlot(shots[shots.length - 1], d.knip_slot);
+        if (gekort) {
+          log(`"${clip.titel_intern}": slot geknipt ("${d.knip_slot.slice(0, 60)}")`);
+          shots[shots.length - 1] = gekort;
+        }
+      }
+      const nieuw = new Map(shots.map((s, k) => [s.volgorde, k + 1]));
+      return {
+        ...clip,
+        score: d.score,
+        verhaallijn: d.verhaallijn ?? clip.verhaallijn,
+        shots: shots.map((s, k) => ({ ...s, volgorde: k + 1 })),
+        ...(clip.kaarten ? { kaarten: clip.kaarten.filter((k) => nieuw.has(k.shot)).map((k) => ({ ...k, shot: nieuw.get(k.shot)! })) } : {}),
+      };
     })
     .filter((c): c is Clip => c !== null);
   if (clips.length === 0) {

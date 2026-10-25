@@ -55,7 +55,11 @@ process.stdin.on('end', () => {
     process.env.CLAUDE_BACKEND = 'claude-code';
     process.env.CLAUDE_CLI_BIN = stub;
 
-    const { structuredCall, systeemPromptVoorCli, SYSTEEM_ARG_MAX } = await import('../src/lib/claude');
+    const { structuredCall, systeemPromptVoorCli, SYSTEEM_ARG_MAX, extractJson } = await import('../src/lib/claude');
+
+    console.log('JSON uit een antwoord halen');
+    const tussenTekst = extractJson('Ik lever {de analyse} hieronder:\n{"a": {"b": "x}y"}, "c": 1}\nKlaar {ok}') as { c?: number } | null;
+    toets('tekst met eigen accolades rond het JSON', tussenTekst?.c === 1, JSON.stringify(tussenTekst));
 
     console.log('grote systeemprompt');
     // 1,5 MB: boven Linux' 128 KB per argument én boven macOS' ARG_MAX (1 MB).
@@ -104,6 +108,45 @@ process.stdin.on('end', () => {
     const zonder = systeemPromptVoorCli(groot, 'de vraag', { kentBestand: false });
     toets('systeemprompt bovenaan stdin met scheiding', zonder.prompt.startsWith('=== SYSTEEMINSTRUCTIES ===\n') && zonder.prompt.includes('=== EINDE SYSTEEMINSTRUCTIES ===\n\nde vraag'));
     toets('en een korte verwijzing als argument', zonder.args.every((a) => Buffer.byteLength(a) < SYSTEEM_ARG_MAX) && zonder.args[0] === '--system-prompt');
+
+    // "Geen JSON in CLI-antwoord": eerst één herstelpoging met het ruwe
+    // antwoord, niet meteen de hele (dure) call opnieuw.
+    console.log('antwoord zonder geldige JSON');
+    const teller = join(map, 'teller.txt');
+    const stub2 = join(map, 'claude-stub-kapot');
+    writeFileSync(
+      stub2,
+      `#!/usr/bin/env node
+const fs = require('fs');
+let stdin = '';
+process.stdin.on('data', (d) => (stdin += d));
+process.stdin.on('end', () => {
+  fs.appendFileSync(${JSON.stringify(teller)}, (stdin.includes('=== ANTWOORD ===') ? 'herstel' : 'vraag') + '\\n');
+  const result = stdin.includes('=== ANTWOORD ===')
+    ? (stdin.includes('"citaat": "hij zei "nee""') ? '{"ok": true, "lengte": 7}' : 'nog steeds kapot')
+    : 'Hier is de analyse:\\n{"ok": true, "lengte": 7, "citaat": "hij zei "nee""}';
+  console.log(JSON.stringify({ result, total_cost_usd: 0, usage: { input_tokens: 1, output_tokens: 1 } }));
+});
+`,
+    );
+    chmodSync(stub2, 0o755);
+    process.env.CLAUDE_CLI_BIN = stub2;
+    const origWarn = console.warn;
+    const waarschuwingen: string[] = [];
+    console.warn = (...a: unknown[]) => void waarschuwingen.push(a.map(String).join(' '));
+    let hersteld: z.infer<typeof schema> | null = null;
+    let herstelFout: string | null = null;
+    try {
+      hersteld = await structuredCall({ system: 'kort', user: 'x', schema, toolName: 't', toolDescription: 'test', operation: 'test' });
+    } catch (e) {
+      herstelFout = (e as Error).message;
+    } finally {
+      console.warn = origWarn;
+    }
+    const aanroepen = readFileSync(teller, 'utf8').trim().split('\n');
+    toets('hersteld na één herstelpoging', hersteld?.lengte === 7, herstelFout ?? '');
+    toets('één vraag + één herstel, niet de hele call opnieuw', aanroepen.join(',') === 'vraag,herstel', aanroepen.join(','));
+    toets('begin van het ruwe antwoord gelogd', waarschuwingen.some((w) => w.includes('geen parseerbare JSON') && w.includes('Hier is de analyse')), waarschuwingen.join(' | ').slice(0, 300));
   } finally {
     rmSync(map, { recursive: true, force: true });
   }

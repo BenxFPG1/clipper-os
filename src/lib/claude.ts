@@ -203,19 +203,41 @@ ${JSON.stringify(jsonSchema)}`;
       opts.model ?? CLAUDE_MODEL,
       opts.webResearch ?? false,
       (opts.beeldPaden?.length ?? 0) > 0,
+      opts.maxTokens,
     );
 
     void logProviderUsage('claude-code', opts.operation, tokens, costUsd * 0.92).catch(() => undefined);
 
-    const extracted = extractJson(result);
+    let extracted = extractJson(result);
     if (extracted === null) {
-      if (attempt === 1) {
-        throw new SchemaValidationError(`Geen JSON in CLI-antwoord (${opts.operation})`, result.slice(0, 2000));
-      }
-      prompt = `${basePrompt}
+      // Wat stond er dan wél? Zonder dit was "Geen JSON" een raadsel: het
+      // begin laat zien of het tekst rond het JSON was, een weigering of een
+      // foutmelding; het eind of het antwoord is afgebroken.
+      console.warn(
+        `[claude-cli] geen parseerbare JSON (${opts.operation}, poging ${attempt + 1}, ${result.length} tekens). ` +
+          `Begin: ${JSON.stringify(result.slice(0, 300))} … eind: ${JSON.stringify(result.slice(-120))}`,
+      );
+      // Eerst herstellen: het antwoord is er al (minuten denkwerk), vaak
+      // klopt alleen de vorm niet — tekst eromheen, een niet-ge-escapet
+      // aanhalingsteken in een citaat. Een kleine call die alleen de vorm
+      // repareert is veel goedkoper dan alles opnieuw.
+      extracted = await herstelJson(result, jsonSchema, opts).catch((e: Error) => {
+        console.warn(`[claude-cli] JSON-herstel mislukt (${opts.operation}): ${e.message.slice(0, 160)}`);
+        return null;
+      });
+      if (extracted === null) {
+        if (attempt === 1) {
+          throw new SchemaValidationError(
+            `Geen JSON in CLI-antwoord (${opts.operation}) — begin antwoord: ${JSON.stringify(result.slice(0, 300))}`,
+            result.slice(0, 2000),
+          );
+        }
+        prompt = `${basePrompt}
 
 Je vorige antwoord bevatte geen parseerbare JSON. Antwoord nu met uitsluitend het JSON-object.`;
-      continue;
+        continue;
+      }
+      console.warn(`[claude-cli] JSON hersteld (${opts.operation})`);
     }
 
     const parsed = opts.schema.safeParse(extracted);
@@ -243,6 +265,31 @@ Lever nu uitsluitend het gecorrigeerde JSON-object.`;
 }
 
 /**
+ * Herstelpoging voor een antwoord zonder parseerbare JSON: het ruwe antwoord
+ * terug met de vraag alleen het JSON-object te geven. Geen transcript, lage
+ * effort — dit is vormwerk. Een afgebroken antwoord (te lang) mag hij netjes
+ * afsluiten; het schema controleert daarna of er genoeg in staat.
+ */
+async function herstelJson<T extends z.ZodTypeAny>(
+  ruw: string,
+  jsonSchema: Record<string, unknown>,
+  opts: StructuredOptions<T>,
+): Promise<unknown | null> {
+  if (!ruw.trim()) return null;
+  const { result, costUsd, tokens } = await runClaudeCli(
+    'Je repareert JSON. Je verandert niets aan de inhoud; je maakt alleen geldige JSON van wat er staat.',
+    `Het antwoord hieronder had één JSON-object volgens het schema moeten zijn, maar is geen geldige JSON ` +
+      `(tekst eromheen, markdown, niet-ge-escapete aanhalingstekens of regeleinden in strings, of afgebroken). ` +
+      `Geef alleen het JSON-object: geldig, volgens het schema, met dezelfde inhoud. Is het afgebroken, sluit het dan netjes af ` +
+      `zonder inhoud te verzinnen.\n\n=== SCHEMA ===\n${JSON.stringify(jsonSchema)}\n\n=== ANTWOORD ===\n${ruw}`,
+    'low',
+    opts.model ?? CLAUDE_MODEL,
+  );
+  void logProviderUsage('claude-code', `${opts.operation}:json_herstel`, tokens, costUsd * 0.92).catch(() => undefined);
+  return extractJson(result);
+}
+
+/**
  * Draait `claude -p` als los proces. De prompt gaat via stdin (transcripten
  * zijn te groot voor argumenten). We vegen de sessievariabelen van een
  * eventueel bovenliggende Claude Code-sessie uit de omgeving, anders denkt de
@@ -257,16 +304,27 @@ async function runClaudeCli(
   model: string,
   webResearch = false,
   magLezen = false,
+  maxTokens?: number,
 ): Promise<{ result: string; costUsd: number; tokens: number }> {
   // Voorbijgaande streamfouten (stalled, overloaded, 5xx) mogen geen hele
   // plannerrun weggooien: tot twee keer opnieuw proberen met korte pauze.
   let lastErr: Error | null = null;
+  let plafond = maxTokens;
   for (let attempt = 0; attempt < 3; attempt++) {
     if (attempt > 0) await new Promise((r) => setTimeout(r, attempt * 15_000));
     try {
-      return await runClaudeCliOnce(system, prompt, effort, model, webResearch, magLezen);
+      return await runClaudeCliOnce(system, prompt, effort, model, webResearch, magLezen, plafond);
     } catch (err) {
       lastErr = err as Error;
+      // Te lang antwoord (denkwerk telt mee in het plafond): één keer met
+      // een ruimer plafond, tot 64k — dat is geen netwerkfout, maar wel te
+      // verhelpen zonder iets aan de vraag te veranderen.
+      const teLang = lastErr.message.match(/exceeded the (\d+) output token maximum/i);
+      if (teLang && Number(teLang[1]) < 64_000) {
+        plafond = Math.min(64_000, Number(teLang[1]) * 2);
+        console.warn(`[claude-cli] antwoord te lang (${teLang[1]} tokens) — opnieuw met plafond ${plafond}`);
+        continue;
+      }
       const transient =
         /stalled|overloaded|rate.?limit|50[0-9]|timed? ?out|ECONNRESET|socket hang up/i.test(lastErr.message) ||
         // Grote structured outputs breken soms halverwege af; dat is netwerk,
@@ -335,6 +393,7 @@ function runClaudeCliOnce(
   model: string,
   webResearch = false,
   magLezen = false,
+  maxTokens?: number,
 ): Promise<{ result: string; costUsd: number; tokens: number }> {
   const env: NodeJS.ProcessEnv = { ...process.env };
   for (const key of Object.keys(env)) {
@@ -342,6 +401,9 @@ function runClaudeCliOnce(
       delete env[key];
     }
   }
+  // Het outputplafond van de CLI (standaard 32k, inclusief denkwerk). Alleen
+  // gezet als de aanroeper meer vraagt, of na een "te lang"-melding.
+  if (maxTokens && maxTokens > 32_000) env.CLAUDE_CODE_MAX_OUTPUT_TOKENS = String(maxTokens);
   // Uitzondering op de schoonmaak: de langlevende abonnements-token van
   // `claude setup-token`. Op een server (GitHub Actions) is dit de enige auth.
   if (process.env.CLAUDE_CODE_OAUTH_TOKEN) {
@@ -471,5 +533,40 @@ export function extractJson(text: string): unknown | null {
       // volgende kandidaat proberen
     }
   }
+
+  // Tekst rond het JSON met zelf ook accolades ("ik lever {de analyse}…"):
+  // dan klopt eerste-tot-laatste niet. Elk gebalanceerd object (strings
+  // meegeteld) apart proberen, het grootste eerst.
+  const objecten = gebalanceerdeObjecten(text).sort((a, b) => b.length - a.length);
+  for (const candidate of objecten) {
+    try {
+      return JSON.parse(candidate);
+    } catch {
+      // volgende
+    }
+  }
   return null;
+}
+
+/** Alle top-level {…}-blokken in een tekst, met accolades binnen strings genegeerd. */
+function gebalanceerdeObjecten(text: string): string[] {
+  const uit: string[] = [];
+  for (let start = text.indexOf('{'); start !== -1 && uit.length < 20; start = text.indexOf('{', start + 1)) {
+    let diepte = 0;
+    let inString = false;
+    for (let i = start; i < text.length; i++) {
+      const c = text[i];
+      if (inString) {
+        if (c === '\\') i++;
+        else if (c === '"') inString = false;
+      } else if (c === '"') inString = true;
+      else if (c === '{') diepte++;
+      else if (c === '}' && --diepte === 0) {
+        uit.push(text.slice(start, i + 1));
+        start = i; // verder na dit object
+        break;
+      }
+    }
+  }
+  return uit;
 }

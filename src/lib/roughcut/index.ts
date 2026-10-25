@@ -1,9 +1,12 @@
 import { spawn } from 'node:child_process';
 import { mkdir, readdir, rename, rm, stat } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { resolveBinary } from '../ingest/binaries';
 import { voerYtdlpUit } from '../ingest/youtube';
+import { isDirecteBron } from '../ingest/bron-url';
+import { downloadBronBestand, heeftRenderKwaliteit, maakAnalyseKopie, meetVideo } from '../ingest/bronnen';
+import { bewaarDirecteBron, haalDirecteRenderbron } from '../ingest/directe-bron';
 import { effectKeten, focusNaarX, kaderKeten, opschaalFactor, spoorExpressie, type Kader } from './kader';
 import { snapShots, verwijderDodeLucht, type SnapSegment, type Stilte } from './snap';
 import { encodePreset, instelling } from './instellingen';
@@ -318,7 +321,14 @@ export async function maakRuweMontage(opties: {
   // secties zijn ruim (marge per kant), zodat kleine grensverschuivingen
   // van latere correctierondes er nog in vallen.
   let renderBron: RenderBron | null = opties.renderBron ?? null;
-  if (!renderBron && opties.renderSecties && /^https?:\/\//.test(sourceUrl)) {
+  if (!renderBron && opties.renderSecties && isDirecteBron(sourceUrl)) {
+    // Drive/WeTransfer: geen secties te halen; het hele origineel ís de
+    // renderbron — als het scherper is dan de analysekopie.
+    renderBron = await directeRenderBron(werkmap, opties.videoId, log).catch((e: Error) => {
+      log(`renderbron (origineel) niet beschikbaar (${e.message.slice(0, 120)}); alles uit de analysebron`);
+      return null;
+    });
+  } else if (!renderBron && opties.renderSecties && /^https?:\/\//.test(sourceUrl)) {
     try {
       renderBron = await haalRenderSecties({
         sourceUrl,
@@ -920,6 +930,18 @@ export async function zorgVoorBron(
     }
   }
 
+  if (!existsSync(bronBestand) && isDirecteBron(sourceUrl)) {
+    // Drive of WeTransfer: geen yt-dlp en geen 4K-secties. Het hele bestand
+    // ophalen, een analysekopie (≤1080p H.264) maken en die cachen; het
+    // origineel blijft in de werkmap staan als renderbron (directeRenderBron).
+    log('Bron is een Drive/WeTransfer-bestand: rechtstreeks ophalen…');
+    const origineel = await downloadBronBestand(sourceUrl, join(werkmap, 'origineel'), log);
+    const meting = await maakAnalyseKopie(origineel, bronBestand, log);
+    if (opties.videoId) await bewaarDirecteBron(opties.videoId, bronBestand, origineel, meting, log);
+    if (!heeftRenderKwaliteit(meting)) await rm(origineel, { force: true });
+    return bronBestand;
+  }
+
   if (!existsSync(bronBestand)) {
     log('Bronvideo downloaden…');
     // De analysebron: de hele video, alleen om te meten (gezichten, scènes,
@@ -944,6 +966,46 @@ export async function zorgVoorBron(
     log('Bronvideo staat al klaar.');
   }
   return bronBestand;
+}
+
+/**
+ * Het origineel van een Drive/WeTransfer-bron als renderbron: één "sectie"
+ * die de hele video beslaat, op brontijd 0 (zelfde bestand, dus geen
+ * uitlijning nodig). Null als het origineel niet scherper is dan de
+ * analysekopie — dan rendert alles gewoon uit de analysebron.
+ */
+async function directeRenderBron(werkmap: string, videoId: string | undefined, log: (m: string) => void): Promise<RenderBron | null> {
+  const lokaal = existsSync(join(werkmap, 'origineel'))
+    ? (await readdir(join(werkmap, 'origineel'), { withFileTypes: true, recursive: true }))
+        .filter((d) => d.isFile() && !d.name.endsWith('.deel'))
+        .map((d) => join(d.parentPath ?? (d as { path?: string }).path ?? werkmap, d.name))[0]
+    : undefined;
+  const pad = lokaal ?? (videoId ? await haalDirecteRenderbron(videoId, werkmap) : null);
+  if (!pad) return null;
+  const m = await meetVideo(pad);
+  if (!heeftRenderKwaliteit(m)) return null;
+  const bytes = statSync(pad).size;
+  log(`renderbron: het origineel (${m.breedte}x${m.hoogte} ${m.codec}, ${Math.round(bytes / 1e6)} MB)`);
+  return {
+    secties: [
+      {
+        van: 0,
+        tot: m.duur,
+        pad,
+        bronStart: 0,
+        videoStart: 0,
+        duur: m.duur,
+        breedte: m.breedte,
+        hoogte: m.hoogte,
+        codec: m.codec,
+        bytes,
+        correlatie: 1,
+      },
+    ],
+    mbGedownload: 0,
+    geschatVolMb: Math.round(bytes / 1e6),
+    fouten: [],
+  };
 }
 
 /**

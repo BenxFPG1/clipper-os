@@ -1,9 +1,10 @@
 import Link from 'next/link';
 import { db, one } from '@/lib/supabase';
-import { laadLeerlus, laadWerkStatus, type StapStatus } from '@/lib/status';
+import { laadLeerlus, laadVastgelopen, laadWerkStatus, type StapStatus } from '@/lib/status';
 import { datumTijd } from '@/lib/format';
 import { NuBezig } from './nu-bezig';
 import { LeerlusBlok } from './leerlus-blok';
+import { VastgelopenBlok } from './vastgelopen-blok';
 
 export const dynamic = 'force-dynamic';
 
@@ -67,16 +68,20 @@ import { ClipArmyBookmarklet } from './cliparmy-bookmarklet';
 import { ClipArmySessie } from './cliparmy-sessie';
 
 export default async function DashboardPage() {
-  const [{ campaigns, perStatus, totalViews, topClip, videosPer, briefsPer, sessie }, werk, leerlus] = await Promise.all([
+  const [{ campaigns, perStatus, totalViews, topClip, videosPer, briefsPer, sessie }, werk, leerlus, vastgelopen] = await Promise.all([
     loadDashboard(),
     laadWerkStatus(),
     laadLeerlus(),
+    // Een fout hier mag het dashboard niet platleggen.
+    laadVastgelopen().catch(() => []),
   ]);
   const perCampagneStatus = new Map(werk.perCampagne.map((c) => [c.id, c]));
 
   return (
     <div className="space-y-8">
       <h1 className="text-2xl font-semibold">Dashboard</h1>
+
+      <VastgelopenBlok items={vastgelopen} />
 
       <div className="grid gap-4 sm:grid-cols-3">
         <Stat label="Views (7d)" value={totalViews.toLocaleString('nl-NL')} />

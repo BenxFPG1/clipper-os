@@ -99,12 +99,35 @@ export async function lijstBronCache(prefix: string): Promise<{ sleutel: string;
   return uit;
 }
 
-/** Ruimt gecachete bronnen op die ouder zijn dan BRONCACHE_DAGEN. */
+/**
+ * Een Drive- of WeTransfer-bron staat alléén nog in R2: een transfer verloopt
+ * na een week, een Drive-map kan dicht. Die mag de opruimronde niet weggooien;
+ * dit lege merkbestand in de prefix zegt dat.
+ */
+export const BLIJVEND = 'blijvend';
+export async function markeerBlijvend(videoId: string): Promise<boolean> {
+  const c = client();
+  if (!c) return false;
+  try {
+    await c.send(new PutObjectCommand({ Bucket: r2Bucket(), Key: bronSleutel(videoId, BLIJVEND), Body: '', ContentLength: 0 }));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Ruimt gecachete bronnen op die ouder zijn dan BRONCACHE_DAGEN (behalve blijvende). */
 export async function ruimBronCacheOp(): Promise<{ verwijderd: number; mb: number }> {
   const c = client();
   if (!c) return { verwijderd: 0, mb: 0 };
   const grens = Date.now() - instelling('BRONCACHE_DAGEN') * 86_400_000;
-  const oud = (await lijstBronCache('bron/')).filter((o) => o.gewijzigd.getTime() < grens);
+  const alles = await lijstBronCache('bron/');
+  const blijvend = new Set(
+    alles.filter((o) => o.sleutel.endsWith(`/${BLIJVEND}`)).map((o) => o.sleutel.slice(0, -BLIJVEND.length)),
+  );
+  const oud = alles.filter(
+    (o) => o.gewijzigd.getTime() < grens && ![...blijvend].some((prefix) => o.sleutel.startsWith(prefix)),
+  );
   let verwijderd = 0;
   let bytes = 0;
   for (let i = 0; i < oud.length; i += 1000) {

@@ -34,10 +34,10 @@ export default async function CampagnePage({ params }: { params: { id: string } 
   const { data: campagne } = await supabase.from('campaigns').select('*').eq('id', params.id).single();
   if (!campagne) notFound();
 
-  const [videosRes, briefsRes] = await Promise.all([
+  const [videosRes, briefsRes, ophaalJobs] = await Promise.all([
     supabase
       .from('videos')
-      .select('id, title, duration_seconds, created_at, archived_at, character_map, soort, fps, clip_plans(id)')
+      .select('id, title, source_url, duration_seconds, created_at, archived_at, character_map, soort, fps, clip_plans(id)')
       .eq('campaign_id', params.id)
       .order('created_at', { ascending: false }),
     supabase
@@ -45,6 +45,12 @@ export default async function CampagnePage({ params }: { params: { id: string } 
       .select('id, titel, platform, status, created_at, brief_scripts(id)')
       .eq('campaign_id', params.id)
       .order('created_at', { ascending: false }),
+    supabase
+      .from('ai_jobs')
+      .select('parameters')
+      .eq('soort', 'video_transcript')
+      .eq('doel_id', params.id)
+      .in('status', ['wachtend', 'bezig']),
   ]);
 
   const videos = (videosRes.data ?? []).filter((v) => !v.archived_at);
@@ -100,6 +106,10 @@ export default async function CampagnePage({ params }: { params: { id: string } 
           laatsteCheck={(campagne.laatste_kanaal_check as string | null) ?? null}
           laatsteFouten={((campagne.laatste_kanaal_fouten as string[] | null) ?? []).map(String)}
           checkGestartAt={(campagne.kanaal_check_gestart_at as string | null) ?? null}
+          videoBronnen={(videosRes.data ?? []).map((v) => (v.source_url as string | null) ?? '').filter(Boolean)}
+          bezigeBronnen={(ophaalJobs.data ?? [])
+            .map((j) => (j.parameters as { source_url?: string } | null)?.source_url ?? '')
+            .filter(Boolean)}
         />
         <details className="rounded border border-neutral-800 p-4">
           <summary className="cursor-pointer text-sm text-neutral-500">Zelf een video toevoegen (optioneel)</summary>

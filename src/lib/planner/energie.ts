@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -165,25 +166,32 @@ function tempowisselingen(transcript: TranscriptSegment[]): Energiemoment[] {
  * ertussen, zijn de momenten die daar wél bovenuit komen).
  */
 async function audioMomenten(sourceUrl: string): Promise<Energiemoment[]> {
-  await assertBinaryBeschikbaar('yt-dlp');
+  // Een lokaal bestand (Drive/WeTransfer-bron die net is opgehaald) hoeft
+  // niet via yt-dlp: ffmpeg haalt de audio er rechtstreeks uit.
+  const lokaal = !/^https?:\/\//i.test(sourceUrl) && existsSync(sourceUrl);
+  if (!lokaal) await assertBinaryBeschikbaar('yt-dlp');
   await assertBinaryBeschikbaar('ffmpeg');
 
   const workdir = await mkdtemp(join(tmpdir(), 'clipper-energie-'));
   try {
     const audioPath = join(workdir, 'audio.m4a');
-    await voerYtdlpUit([
-      '-f',
-      'bestaudio/best',
-      '-x',
-      '--audio-format',
-      'm4a',
-      '--postprocessor-args',
-      'ffmpeg:-ac 1 -ar 16000 -b:a 32k',
-      '-o',
-      audioPath,
-      '--no-warnings',
-      sourceUrl,
-    ]);
+    if (lokaal) {
+      await run('ffmpeg', ['-y', '-v', 'error', '-i', sourceUrl, '-vn', '-ac', '1', '-ar', '16000', '-b:a', '32k', audioPath]);
+    } else {
+      await voerYtdlpUit([
+        '-f',
+        'bestaudio/best',
+        '-x',
+        '--audio-format',
+        'm4a',
+        '--postprocessor-args',
+        'ffmpeg:-ac 1 -ar 16000 -b:a 32k',
+        '-o',
+        audioPath,
+        '--no-warnings',
+        sourceUrl,
+      ]);
+    }
 
     // De piekdrempel relatief aan de bron: een vaste -16 dB markeerde op
     // genormaliseerde podcastaudio vrijwel alle luide spraak als "piek".

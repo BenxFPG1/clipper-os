@@ -31,11 +31,13 @@
     "test:claude": "tsx scripts/test-claude.ts",
     "test:bronwoorden": "tsx scripts/test-bronwoorden.ts",
     "test:sprekers": "tsx scripts/test-sprekers.ts",
+    "test:clipregels": "tsx scripts/test-clipregels.ts",
     "test:trends": "tsx scripts/test-trends.ts",
     "test:normen": "tsx scripts/test-normen.ts",
     "eval:smaak": "tsx scripts/eval-smaak.ts",
     "afwerkpakket": "tsx scripts/afwerkpakket.ts",
-    "test:afwerkpakket": "tsx scripts/test-afwerkpakket.ts"
+    "test:afwerkpakket": "tsx scripts/test-afwerkpakket.ts",
+    "test:bronnen": "tsx scripts/test-bronnen.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.115.0",

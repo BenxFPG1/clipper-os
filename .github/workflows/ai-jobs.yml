@@ -71,9 +71,10 @@ jobs:
           key: pip-ai-jobs-${{ runner.os }}
 
       # Transcriberen zonder API-key: faster-whisper draait lokaal op de
-      # runner. gdown haalt b-roll uit gedeelde Drive-mappen op.
+      # runner. gdown haalt bronvideo's en b-roll uit gedeelde Drive-mappen
+      # en -bestanden op (vastgezet: de map-uitlezing verschilt per versie).
       - name: Installeer faster-whisper en gdown
-        run: pip3 install --quiet "faster-whisper==1.2.1" "av==18.0.0" gdown
+        run: pip3 install --quiet "faster-whisper==1.2.1" "av==18.0.0" "gdown==6.4.2"
 
       - name: Dependencies
         run: npm ci

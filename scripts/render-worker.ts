@@ -41,6 +41,7 @@ import { zorgVoorMuziekbed } from '../src/lib/muziek';
 import { afwerkingAan, afwerkingOverzicht, type AfwerkingOnderdeel } from '../src/lib/roughcut/afwerking';
 import { kleurCorrectie, meetKleur } from '../src/lib/roughcut/kleur';
 import { planJL, planSfx, zetHit } from '../src/lib/roughcut/sounddesign';
+import { formaatVoorThema } from '../src/lib/planner/clipregels';
 import { besluitScherpBegin, pasScherpBeginToe, scherpteMeterVia } from '../src/lib/roughcut/scherpbegin';
 import { actieveSprekers, herstelSprekerKader, meetSprekers, pasSprekersToe, spraakEnergie, type SprekerMeting } from '../src/lib/roughcut/sprekers';
 import { analyseerBeats, beatsOpTijdlijn, kiesTrack, knipOpBeat, BEAT_MIN_ZEKERHEID } from '../src/lib/roughcut/muziektracks';
@@ -303,6 +304,8 @@ async function verwerk(job: Job) {
   // De retentiedoelen van deze campagne: wat top-clips van anderen meetbaar
   // doen (editDoelen), per platform en thema. Eén keer per opdracht.
   const normContext = await campagneContext(supabase, job.video_id);
+  // Comedy leeft van tempo: strakkere pauzes in de retentie-editor.
+  const formaat = formaatVoorThema(normContext.theme);
   const doelen = await editDoelen(normContext).catch(() => null);
   if (doelen) {
     console.log(
@@ -957,6 +960,7 @@ async function verwerk(job: Job) {
       ].filter((r): r is string => Boolean(r) && !geplaatst.has(r as string) && !editorTekst(r));
       try {
         retentie = pasRetentieToe(segmenten, {
+          formaat,
           bronWoorden,
           doelen,
           kaarten: vast,
@@ -1687,7 +1691,7 @@ async function verwerk(job: Job) {
     // segmenten en één keer herrenderen.
     if (doelen && !retentieHersteld && poging < MAX_POGINGEN) {
       try {
-        const ctx = { bronWoorden, doelen, kaarten: retentieKaarten, ondertitels: Boolean(ondertitels) };
+        const ctx = { bronWoorden, doelen, kaarten: retentieKaarten, ondertitels: Boolean(ondertitels), formaat };
         const oordeel = keurRetentie(meetRetentie(segmenten, ctx), doelen, { ondertitels: Boolean(ondertitels) });
         if (oordeel.goed === false) {
           retentieHersteld = true;

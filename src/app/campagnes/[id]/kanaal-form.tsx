@@ -4,15 +4,17 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { roepApiAan } from '@/app/api-aanroep';
 import { datumTijd } from '@/lib/format';
+import { beschrijfBron, herkenBron, hoortBijBron } from '@/lib/ingest/bron-url';
 
 /** Ouder dan dit is vastgelopen, niet "nog bezig" — zie ook lib/status.ts. */
 const KANAAL_STALE_MS = 20 * 60 * 1000;
 
 /**
- * Bronkanalen van de campagne. Meerdere bronnen kunnen: een hoofdkanaal, een
- * shorts-kanaal, een tweede programma of een losse playlist. De dagelijkse
- * cloudrun loopt ze allemaal langs, haalt nieuwe uploads op met transcript en
- * zet er meteen een clip-plan op.
+ * Bronnen van de campagne. Meerdere kunnen: een YouTube-kanaal of -video, een
+ * playlist, een Google Drive-map of -bestand, een WeTransfer. De dagelijkse
+ * cloudrun loopt ze allemaal langs, haalt nieuwe video's op met transcript en
+ * zet er meteen een clip-plan op. Elke link wordt bij het typen al herkend
+ * (of afgewezen, met de reden), en per bron staat erbij hoe het ervoor staat.
  */
 export function KanaalForm({
   campaignId,
@@ -21,6 +23,8 @@ export function KanaalForm({
   laatsteCheck,
   laatsteFouten,
   checkGestartAt,
+  videoBronnen = [],
+  bezigeBronnen = [],
 }: {
   campaignId: string;
   kanalen: string[];
@@ -28,6 +32,10 @@ export function KanaalForm({
   laatsteCheck: string | null;
   laatsteFouten: string[];
   checkGestartAt: string | null;
+  /** source_url van de video's van deze campagne: daaruit volgt "N opgehaald" per bron. */
+  videoBronnen?: string[];
+  /** Bronnen waarvoor nu een ophaalopdracht in de cloud wacht of loopt. */
+  bezigeBronnen?: string[];
 }) {
   const router = useRouter();
   const [lijst, setLijst] = useState<string[]>(kanalen.length ? kanalen : ['']);
@@ -53,9 +61,14 @@ export function KanaalForm({
 
   async function opslaan(e: React.FormEvent) {
     e.preventDefault();
+    const schoon = lijst.map((k) => k.trim()).filter(Boolean);
+    const ongeldig = schoon.map((k) => herkenBron(k)).find((b) => b.soort === 'onbekend');
+    if (ongeldig && ongeldig.soort === 'onbekend') {
+      setMelding(`Niet opgeslagen: ${ongeldig.reden}`);
+      return;
+    }
     setBusy(true);
     setMelding(null);
-    const schoon = lijst.map((k) => k.trim()).filter(Boolean);
     const { ok, fout } = await roepApiAan(`/api/campaigns/${campaignId}/kanaal`, {
       method: 'PATCH',
       body: { bron_kanalen: schoon, auto_plan: plan },
@@ -66,12 +79,50 @@ export function KanaalForm({
       return;
     }
     setLijst(schoon.length ? schoon : ['']);
+    // Een nieuwe bron meteen ophalen: niemand wil tot morgen 06:00 wachten
+    // om te zien of de Drive-map wel openbaar is.
+    const nieuw = schoon.filter((k) => !kanalen.includes(k));
+    if (nieuw.length > 0) {
+      await nuOphalen();
+      return;
+    }
     setMelding(
       schoon.length
-        ? `${schoon.length} bron(nen) opgeslagen. De dagelijkse run haalt nieuwe uploads voortaan zelf op.`
+        ? `${schoon.length} bron(nen) opgeslagen. De dagelijkse run haalt nieuwe video's voortaan zelf op.`
         : 'Bronnen leeggemaakt.',
     );
     router.refresh();
+  }
+
+  /** Hoe staat deze bron ervoor? Herkenning tijdens het typen, daarna de uitkomst van de laatste check. */
+  function statusVan(invoer: string): { tekst: string; klasse: string } | null {
+    const k = invoer.trim();
+    if (!k) return null;
+    const bron = herkenBron(k);
+    if (bron.soort === 'onbekend') return { tekst: bron.reden, klasse: 'text-red-400' };
+    const soort = beschrijfBron(bron);
+    if (!kanalen.includes(k))
+      return { tekst: `${soort} herkend — wordt na opslaan meteen opgehaald`, klasse: 'text-neutral-400' };
+    if (loopt || bezigeBronnen.includes(k))
+      return { tekst: `${soort} · bezig met ophalen…`, klasse: 'text-emerald-300' };
+    const fout = laatsteFouten.find((f) => f.includes(k));
+    const aantal = videoBronnen.filter((u) => hoortBijBron(k, u)).length;
+    if (fout) {
+      const reden = fout.slice(fout.indexOf(k) + k.length).replace(/^:\s*/, '');
+      return { tekst: `${soort} · ${aantal > 0 ? `${aantal} opgehaald, ` : ''}fout: ${reden}`, klasse: 'text-red-400' };
+    }
+    if (aantal > 0)
+      return { tekst: `${soort} · ${aantal} video${aantal === 1 ? '' : "'s"} opgehaald`, klasse: 'text-emerald-400' };
+    if (bron.soort === 'youtube_kanaal' || bron.soort === 'youtube_playlist') {
+      return {
+        tekst: laatsteCheck ? `${soort} · gecheckt, geen fouten` : `${soort} · nog niet gecheckt`,
+        klasse: 'text-neutral-400',
+      };
+    }
+    return {
+      tekst: laatsteCheck ? `${soort} · nog niets opgehaald` : `${soort} · nog niet opgehaald`,
+      klasse: 'text-neutral-400',
+    };
   }
 
   async function nuOphalen() {
@@ -104,43 +155,51 @@ export function KanaalForm({
       )}
 
       <div className="space-y-2">
-        {lijst.map((kanaal, i) => (
-          <div key={i} className="flex items-center gap-2">
-            <input
-              value={kanaal}
-              onChange={(e) => wijzig(i, e.target.value)}
-              placeholder="https://www.youtube.com/@kanaalnaam (of een playlist-URL)"
-              className="w-full rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm"
-            />
-            {lijst.length > 1 && (
-              <button
-                type="button"
-                onClick={() => setLijst((l) => l.filter((_, n) => n !== i))}
-                className="shrink-0 rounded border border-neutral-700 px-2 py-1 text-xs text-neutral-400 hover:text-neutral-200"
-                title="Bron verwijderen"
-              >
-                ×
-              </button>
-            )}
-          </div>
-        ))}
+        {lijst.map((kanaal, i) => {
+          const status = statusVan(kanaal);
+          return (
+            <div key={i} className="space-y-0.5">
+              <div className="flex items-center gap-2">
+                <input
+                  value={kanaal}
+                  onChange={(e) => wijzig(i, e.target.value)}
+                  placeholder="YouTube-kanaal of -video, Google Drive-map of -bestand, WeTransfer-link"
+                  className={`w-full rounded border bg-neutral-900 px-3 py-2 text-sm ${
+                    status?.klasse === 'text-red-400' && !kanalen.includes(kanaal.trim())
+                      ? 'border-red-800'
+                      : 'border-neutral-700'
+                  }`}
+                />
+                {lijst.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => setLijst((l) => l.filter((_, n) => n !== i))}
+                    className="shrink-0 rounded border border-neutral-700 px-2 py-1 text-xs text-neutral-400 hover:text-neutral-200"
+                    title="Bron verwijderen"
+                  >
+                    ×
+                  </button>
+                )}
+              </div>
+              {status && <p className={`pl-1 text-xs ${status.klasse}`}>{status.tekst}</p>}
+            </div>
+          );
+        })}
         <button
           type="button"
           onClick={() => setLijst((l) => [...l, ''])}
           className="text-sm text-neutral-400 hover:text-neutral-200"
         >
-          + nog een bron
+          + bron toevoegen
         </button>
       </div>
 
       {(fouten.length > 0 || laatsteFouten.length > 0) && (
         <div className="rounded border border-amber-900/60 bg-amber-950/20 p-3">
-          <div className="text-xs uppercase tracking-wide text-amber-400/80">
-            Bij de laatste check ging dit mis
-          </div>
+          <div className="text-xs uppercase tracking-wide text-amber-400/80">Bij de laatste check ging dit mis</div>
           <p className="mt-1 text-xs text-neutral-500">
-            Video&apos;s zonder ondertiteling worden zelf getranscribeerd; dat duurt ongeveer een halve minuut
-            per minuut video. Zolang dat loopt staat de video er nog niet.
+            Video&apos;s zonder ondertiteling (en alles uit Drive of WeTransfer) worden zelf getranscribeerd; dat duurt
+            ongeveer een halve minuut per minuut video. Zolang dat loopt staat de video er nog niet.
           </p>
           <ul className="mt-1 space-y-0.5 text-sm text-neutral-300">
             {(fouten.length > 0 ? fouten : laatsteFouten).map((f, i) => (
@@ -170,7 +229,7 @@ export function KanaalForm({
             disabled={busy}
             className="rounded border border-neutral-700 px-3 py-1.5 text-sm disabled:opacity-40"
           >
-            Nu nieuwe uploads ophalen
+            Nu nieuwe video&apos;s ophalen
           </button>
         )}
         {melding && <span className="text-sm text-neutral-400">{melding}</span>}

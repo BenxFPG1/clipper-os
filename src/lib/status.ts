@@ -363,3 +363,146 @@ export async function laadLeerlus(): Promise<LeerlusStatus> {
     doelen,
   };
 }
+
+// ---------------------------------------------------------------- vastgelopen
+
+export type VastgelopenItem = {
+  soort: 'opdracht' | 'bron';
+  /** ai_jobs.id of campaigns.id — waar "opnieuw proberen" op werkt. */
+  id: string;
+  wat: string;
+  /** Waarom, in gewone taal. */
+  reden: string;
+  /** De ruwe melding, voor wie de details wil. */
+  detail: string;
+  sinds: string | null;
+  href: string | null;
+  /** Staat er al een automatische herkansing klaar? Dan het tijdstip. */
+  herkansingOm: string | null;
+};
+
+/** Meldingen die geen probleem zijn maar een grens of een keuze. */
+const GEEN_PROBLEEM = /grens van \d+|tijdsbudget|nog \d+ video\('s\) te gaan|kanaalbronnen overgeslagen/i;
+
+/**
+ * Wat er vastzit en zonder ingrijpen niet vanzelf goedkomt: opdrachten die
+ * definitief mislukt zijn (of in herkansing staan), en campagnes waarvan de
+ * bron niet op te halen is. Drie weken lang gebeurde er niets zonder dat
+ * het ergens zichtbaar was; dit blok is er om dat nooit meer te laten
+ * gebeuren.
+ */
+export async function laadVastgelopen(): Promise<VastgelopenItem[]> {
+  const supabase = db();
+  const sinds = new Date(Date.now() - 21 * 86_400_000).toISOString();
+
+  const [jobs, klaar, campagnes] = await Promise.all([
+    supabase
+      .from('ai_jobs')
+      .select('id, soort, doel_id, status, fout, parameters, created_at, klaar_at')
+      .or('status.eq.mislukt,fout.not.is.null')
+      .in('status', ['mislukt', 'wachtend'])
+      .gte('created_at', sinds)
+      .order('created_at', { ascending: false })
+      .limit(50),
+    supabase.from('ai_jobs').select('soort, doel_id, klaar_at').eq('status', 'klaar').gte('created_at', sinds),
+    supabase
+      .from('campaigns')
+      .select('id, name, bron_kanalen, laatste_kanaal_fouten, laatste_kanaal_check, kanaal_check_gestart_at')
+      .eq('status', 'active'),
+  ]);
+
+  // Een mislukking waar later een geslaagde opdracht van dezelfde soort voor
+  // hetzelfde doel op volgde, is opgelost.
+  const opgelost = new Map<string, string>();
+  for (const k of klaar.data ?? []) {
+    const sleutel = `${k.soort}:${k.doel_id}`;
+    const t = (k.klaar_at as string | null) ?? '';
+    if (t > (opgelost.get(sleutel) ?? '')) opgelost.set(sleutel, t);
+  }
+
+  const jobRijen = (jobs.data ?? []).filter((j) => {
+    if (!j.fout) return false;
+    const opgelostOp = opgelost.get(`${j.soort}:${j.doel_id}`);
+    return !opgelostOp || opgelostOp < (j.created_at as string);
+  });
+  // Eén regel per doel: de nieuwste.
+  const gezien = new Set<string>();
+  const uniekeJobs = jobRijen.filter((j) => {
+    const sleutel = `${j.soort}:${j.doel_id}`;
+    if (gezien.has(sleutel)) return false;
+    gezien.add(sleutel);
+    return true;
+  });
+
+  const videoIds = uniekeJobs.filter((j) => j.soort === 'clip_plan').map((j) => j.doel_id as string);
+  const { data: videos } = videoIds.length
+    ? await supabase.from('videos').select('id, title').in('id', videoIds)
+    : { data: [] as { id: string; title: string }[] };
+  const titel = new Map((videos ?? []).map((v) => [v.id as string, v.title as string]));
+  const campagneNaam = new Map((campagnes.data ?? []).map((c) => [c.id as string, c.name as string]));
+
+  const items: VastgelopenItem[] = uniekeJobs.map((j) => {
+    const params = (j.parameters ?? {}) as { volgende_poging_na?: string; source_url?: string };
+    const wat =
+      j.soort === 'clip_plan'
+        ? `Clip-plan: ${titel.get(j.doel_id as string) ?? 'video'}`
+        : j.soort === 'video_transcript'
+          ? `Video ophalen voor ${campagneNaam.get(j.doel_id as string) ?? 'campagne'}${params.source_url ? ` (${params.source_url})` : ''}`
+          : `${j.soort} (${campagneNaam.get(j.doel_id as string) ?? j.doel_id})`;
+    return {
+      soort: 'opdracht',
+      id: j.id as string,
+      wat,
+      reden: inGewoneTaal(j.fout as string),
+      detail: (j.fout as string).slice(0, 600),
+      sinds: (j.klaar_at as string | null) ?? (j.created_at as string),
+      href: j.soort === 'clip_plan' ? `/videos/${j.doel_id}` : `/campagnes/${j.doel_id}`,
+      herkansingOm: j.status === 'wachtend' ? (params.volgende_poging_na ?? null) : null,
+    };
+  });
+
+  for (const c of campagnes.data ?? []) {
+    const fouten = ((c.laatste_kanaal_fouten as unknown[] | null) ?? []).map(String).filter((f) => !GEEN_PROBLEEM.test(f));
+    const hangt =
+      c.kanaal_check_gestart_at && Date.now() - new Date(c.kanaal_check_gestart_at as string).getTime() > 3 * 60 * 60_000;
+    if (fouten.length === 0 && !hangt) continue;
+    const eerste = fouten[0] ?? '';
+    items.push({
+      soort: 'bron',
+      id: c.id as string,
+      wat: `Bron van ${c.name}`,
+      reden: hangt && !eerste
+        ? 'Het ophalen is gestart maar nooit afgerond — waarschijnlijk afgebroken.'
+        : inGewoneTaal(eerste.replace(/^[^:]*?\/ \S+: /, '')) + (fouten.length > 1 ? ` (+${fouten.length - 1} meer)` : ''),
+      detail: fouten.join('\n').slice(0, 1200),
+      sinds: (c.laatste_kanaal_check as string | null) ?? (c.kanaal_check_gestart_at as string | null),
+      href: `/campagnes/${c.id}`,
+      herkansingOm: null,
+    });
+  }
+  return items;
+}
+
+/** Technische foutmeldingen naar een zin die je zonder logs begrijpt. */
+export function inGewoneTaal(fout: string): string {
+  const f = fout.replace(/^poging \d+ mislukt: /, '');
+  const regels: [RegExp, string][] = [
+    [/Geen JSON in CLI-antwoord/i, 'Claude gaf een antwoord dat niet als plan te lezen was (geen geldige JSON).'],
+    [/Ongeldige output na repair-retry/i, 'Claude gaf een plan dat niet aan de vorm voldeed, ook niet na herstel.'],
+    [/session limit|usage limit|rate.?limit|quota/i, 'De Claude-limiet was bereikt; het wordt later vanzelf opnieuw geprobeerd.'],
+    [/stalled|timed? ?out|duurde langer dan/i, 'Het duurde te lang en is afgebroken.'],
+    [/niet (meer\) )?ingelogd|Failed to authenticate|OAuth/i, 'De Claude-koppeling is verlopen — de abonnements-token moet vernieuwd worden.'],
+    [/niet openbaar gedeeld/i, f.match(/Drive-(map|bestand) is niet openbaar gedeeld[^.]*/i)?.[0] ?? 'Drive is niet openbaar gedeeld — zet delen op \'iedereen met de link\'.'],
+    [/WeTransfer.*(verlopen|bestaat niet meer)/i, 'De WeTransfer is verlopen of verwijderd — vraag de campagne om een nieuwe link.'],
+    [/wachtwoord/i, 'De WeTransfer is beveiligd met een wachtwoord.'],
+    [/bestaat niet \(404\)/i, f.match(/YouTube-kanaal \S+ bestaat niet \(404\)/)?.[0] ?? 'De bron bestaat niet (404).'],
+    [/Unsupported URL/i, 'Deze link kan de tool niet ophalen (onbekend soort bron).'],
+    [/YouTube blokkeert|Sign in to confirm|bot-check/i, 'YouTube blokkeert het downloaden (bot-check) — de cookies moeten vernieuwd worden.'],
+    [/heeft nog geen transcript/i, 'De video heeft nog geen transcript.'],
+    [/Geen spraak/i, 'In de video wordt niet gesproken — er valt geen clip-plan te maken.'],
+    [/niet geïnstalleerd|ENOENT/i, 'Er ontbreekt gereedschap op de machine (yt-dlp, gdown of ffmpeg).'],
+    [/geen transcript/i, 'Er kon geen transcript gemaakt worden.'],
+  ];
+  for (const [re, zin] of regels) if (re.test(f)) return zin;
+  return f.length > 200 ? `${f.slice(0, 200)}…` : f;
+}

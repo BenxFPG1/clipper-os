@@ -4,6 +4,7 @@ import { fetchYoutubeCaptions } from '@/lib/ingest/youtube';
 import { MissingBinaryError, transcribeYoutube } from '@/lib/ingest/whisper';
 import { parseManualTranscript, transcriptDuration } from '@/lib/ingest/transcript';
 import { startCloudRun } from '@/lib/jobs';
+import { herkenBron } from '@/lib/ingest/bron-url';
 
 export const maxDuration = 300;
 
@@ -43,6 +44,25 @@ export async function POST(req: NextRequest) {
       );
     }
   } else if (body.source_url) {
+    // Drive en WeTransfer: geen captions, en downloaden + transcriberen kan
+    // de site niet (te groot, geen ffmpeg/Whisper). Altijd naar de cloud;
+    // een map of transfer levert daar één video per bestand op.
+    const bron = herkenBron(body.source_url);
+    if (bron.soort === 'onbekend') return NextResponse.json({ error: bron.reden }, { status: 400 });
+    if (bron.soort === 'youtube_kanaal' || bron.soort === 'youtube_playlist') {
+      return NextResponse.json(
+        { error: 'Dit is een kanaal of playlist, geen losse video. Zet hem bij "Bronnen" op de campagne; daar worden nieuwe uploads zelf opgehaald.' },
+        { status: 400 },
+      );
+    }
+    if (bron.soort !== 'youtube_video') {
+      try {
+        return NextResponse.json(await zetTranscriptInWachtrij(body));
+      } catch (e) {
+        const status = (e as { status?: number }).status ?? 500;
+        return NextResponse.json({ error: e instanceof Error ? e.message : String(e) }, { status });
+      }
+    }
     // Captions eerst: gratis en direct. Anders bouwen we het transcript zelf.
     const captions = body.force_transcribe ? null : await fetchYoutubeCaptions(body.source_url).catch(() => null);
 

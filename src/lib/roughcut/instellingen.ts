@@ -97,6 +97,19 @@ const STANDAARD = {
    */
   BRON_BEREIK_MARGE: 20,
   /**
+   * Inhoudsregels per clip (planner/clipregels.ts): doelbereik in seconden per
+   * format, hoe lang er na de payoff nog iets mag klinken, en hoeveel
+   * strakker de pauzedrempel bij comedy is.
+   */
+  CLIP_LENGTE_COMEDY_MIN: 15,
+  CLIP_LENGTE_COMEDY_MAX: 35,
+  CLIP_LENGTE_INTERVIEW_MIN: 20,
+  CLIP_LENGTE_INTERVIEW_MAX: 45,
+  CLIP_LENGTE_UITLEG_MIN: 25,
+  CLIP_LENGTE_UITLEG_MAX: 50,
+  PAYOFF_NA_MAX: 1.5,
+  RETENTIE_COMEDY_FACTOR: 0.75,
+  /**
    * Actieve-sprekerdetectie (sprekers.ts): meetstap (s), beslisvenster (s),
    * hoe lang een spreker minstens in beeld blijft (hysterese, s), kortste
    * deel bij een sprekerwissel en bij een camerawissel (s), hoe ver een

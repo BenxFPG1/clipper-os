@@ -39,9 +39,10 @@ export async function haalBrollUitDrive(campaignId: string, driveUrl: string): P
 
   const werkmap = await mkdtemp(join(tmpdir(), 'clipper-broll-'));
   try {
-    // gdown haalt de hele map op; --remaining-ok voorkomt dat hij stopt bij
-    // mappen met meer dan 50 bestanden.
-    await run('gdown', ['--folder', driveUrl, '-O', werkmap, '--remaining-ok'], 15 * 60 * 1000);
+    // gdown haalt de hele map op. Vanaf gdown 6 is er geen grens van 50
+    // bestanden meer en bestaat --remaining-ok niet: met die vlag weigerde
+    // gdown 6 de hele aanroep ("unrecognized arguments").
+    await run('gdown', ['--folder', driveUrl, '-O', werkmap], 15 * 60 * 1000);
 
     const bestanden = await verzamelVideos(werkmap);
     if (bestanden.length === 0) {

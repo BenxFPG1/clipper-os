@@ -48,6 +48,11 @@ export type RetentieContext = {
   kaarten?: Kaart[];
   /** Staan er woordelijke ondertitels in beeld? Dan telt gesproken tekst als tekst in beeld. */
   ondertitels?: boolean;
+  /**
+   * Het format van de campagne (planner/clipregels.ts). Comedy leeft van
+   * tempo: de pauzedrempel is daar RETENTIE_COMEDY_FACTOR strakker.
+   */
+  formaat?: 'comedy' | 'interview' | 'uitleg';
 };
 
 export type RetentieMeting = {
@@ -552,7 +557,7 @@ export function pasRetentieToe(
   // seconde spraak), zodat een bedachtzame spreker niet gehaast klinkt en een
   // snelle spreker geen gaten houdt.
   const tempo = woorden ? spreekTempo(segmenten, woorden) : null;
-  const tempoFactor = tempo ? Math.min(1.5, Math.max(0.8, 2.8 / tempo)) : 1;
+  const tempoFactor = (tempo ? Math.min(1.5, Math.max(0.8, 2.8 / tempo)) : 1) * (ctx.formaat === 'comedy' ? instelling('RETENTIE_COMEDY_FACTOR') : 1);
   const drempel = doelen.maxPauzeS * tempoFactor;
   if (woorden) {
     segmenten.forEach((seg, i) => {

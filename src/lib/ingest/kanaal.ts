@@ -1,9 +1,9 @@
-import { spawn } from 'node:child_process';
-import { resolveBinary } from './binaries';
 import { fetchYoutubeCaptions, voerYtdlpUit } from './youtube';
 import { transcribeYoutube } from './whisper';
 import { transcriptDuration } from './transcript';
 import { db } from '../supabase';
+import { bronSleutel, herkenBron, kanaalKandidaten } from './bron-url';
+import { haalDirecteBronBinnen } from './directe-bron';
 
 export type KanaalVideo = { id: string; title: string; url: string };
 
@@ -13,24 +13,24 @@ export type KanaalVideo = { id: string; title: string; url: string };
  * handmatig video's toe te voegen.
  */
 export async function haalKanaalVideos(kanaalUrl: string, maxItems = 10): Promise<KanaalVideo[]> {
+  const bron = herkenBron(kanaalUrl);
   // Een losse video-URL is zélf het bronmateriaal. Niet het kanaal erachter
   // afstruinen: campagnes gaan vaak over precies één aflevering.
-  const videoId = losseVideoId(kanaalUrl);
-  if (videoId) {
-    const uit = await voerYtdlpUit([
-      '--no-warnings',
-      '--skip-download',
-      '--dump-json',
-      kanaalUrl.trim(),
-    ]);
+  if (bron.soort === 'youtube_video') {
+    const uit = await voerYtdlpUit(['--no-warnings', '--skip-download', '--dump-json', bron.url]);
     return parseerRegels(uit);
+  }
+  if (bron.soort === 'onbekend') throw new Error(bron.reden);
+  if (bron.soort !== 'youtube_kanaal' && bron.soort !== 'youtube_playlist') {
+    throw new Error(`Geen YouTube-bron: ${kanaalUrl}`);
   }
 
   // Niet elk kanaal heeft dezelfde tabs: sommige publiceren alleen streams of
   // shorts, en dan geeft /videos een harde fout. We proberen op volgorde en
   // nemen de eerste tab die iets oplevert.
+  const kandidaten = bron.soort === 'youtube_kanaal' ? kanaalKandidaten(bron) : [bron.url];
   let laatsteFout: Error | null = null;
-  for (const url of kandidaatUrls(kanaalUrl)) {
+  for (const url of kandidaten) {
     try {
       const uit = await voerYtdlpUit([
         '--no-warnings',
@@ -46,23 +46,30 @@ export async function haalKanaalVideos(kanaalUrl: string, maxItems = 10): Promis
       if (videos.length > 0) return videos;
     } catch (e) {
       laatsteFout = e as Error;
+      // Een 404 op het kanaal zelf geldt voor elke tab: het kanaal bestaat
+      // niet (meestal een verkeerde handle). Niet nog twee tabs proberen.
+      if (isKanaal404(laatsteFout.message)) {
+        throw new Error(kanaal404Melding(bron.soort === 'youtube_kanaal' ? (bron.handle ?? bron.basis) : bron.url));
+      }
     }
   }
   if (laatsteFout) throw laatsteFout;
   return [];
 }
 
-/** Herkent een losse video-URL (watch?v=… of youtu.be/…). */
-function losseVideoId(url: string): string | null {
-  const m = url.match(/[?&]v=([\w-]{6,})/) ?? url.match(/youtu\.be\/([\w-]{6,})/);
-  return m?.[1] ?? null;
+/** yt-dlp's melding voor een kanaal of playlist dat niet bestaat. */
+export function isKanaal404(melding: string): boolean {
+  return /HTTP Error 404|Requested entity was not found|does not exist|This channel does not exist/i.test(melding);
 }
 
-/** Kanaal-URL zonder tab wijst naar de homepage; probeer de tabs op volgorde. */
-function kandidaatUrls(kanaalUrl: string): string[] {
-  const schoon = kanaalUrl.trim().replace(/\/+$/, '');
-  if (/\/(videos|streams|shorts|playlist)/.test(schoon) || schoon.includes('list=')) return [schoon];
-  return [`${schoon}/videos`, `${schoon}/streams`, `${schoon}/shorts`, schoon];
+export function kanaal404Melding(naam: string): string {
+  return `YouTube-kanaal ${naam} bestaat niet (404) — controleer de handle op youtube.com en vervang de link door het juiste kanaal of de losse video.`;
+}
+
+/** Herkent een losse video-URL (watch?v=…, youtu.be/…, /shorts/…). */
+function losseVideoId(url: string): string | null {
+  const b = herkenBron(url);
+  return b.soort === 'youtube_video' ? b.videoId : null;
 }
 
 function parseerRegels(uit: string): KanaalVideo[] {
@@ -85,35 +92,50 @@ function parseerRegels(uit: string): KanaalVideo[] {
 }
 
 /**
- * Haalt nieuwe uploads van de kanalen van alle campagnes binnen, inclusief
- * transcript, en zet er meteen een clip-plan-opdracht op als de campagne dat
- * aan heeft staan.
- */
-/**
  * Zelf transcriberen kost ongeveer een halve minuut per minuut video. Met een
  * grens per run blijft één cloudrun binnen zijn tijdslimiet; wat overblijft
- * komt de volgende run vanzelf aan de beurt.
+ * komt de volgende run vanzelf aan de beurt. Twee grenzen: een aantal, en
+ * een tijdsbudget (na KANAAL_BUDGET_MIN minuten begint er geen nieuwe video
+ * meer — de denkopdrachten na deze stap hebben ook nog tijd nodig).
  */
-const MAX_NIEUWE_PER_RUN = Number(process.env.MAX_NIEUWE_VIDEOS_PER_RUN ?? 3);
+const MAX_NIEUWE_PER_RUN = Number(process.env.MAX_NIEUWE_VIDEOS_PER_RUN ?? 4);
+const BUDGET_MS = Number(process.env.KANAAL_BUDGET_MIN ?? 60) * 60_000;
 
-export async function haalNieuweBronvideos(): Promise<{
+/**
+ * Haalt nieuwe video's binnen uit de bronnen van alle actieve campagnes —
+ * YouTube-kanalen en -video's, Drive-bestanden en -mappen, WeTransfers —
+ * inclusief transcript, en zet er meteen een clip-plan-opdracht op als de
+ * campagne dat aan heeft staan. Optioneel alleen voor één campagne.
+ */
+export async function haalNieuweBronvideos(opties: { campaignId?: string } = {}): Promise<{
   toegevoegd: { videoId: string; titel: string; campagne: string }[];
   fouten: string[];
 }> {
   const supabase = db();
   const toegevoegd: { videoId: string; titel: string; campagne: string }[] = [];
   const fouten: string[] = [];
+  const t0 = Date.now();
+  // `extra`: wat een lopende Drive/WeTransfer-ophaalronde zelf al heeft
+  // toegevoegd — die komen pas na afloop in `toegevoegd`. Zonder dit haalde
+  // één Drive-map alle zes video's binnen bij een grens van één.
+  const magNog = (extra = 0) => toegevoegd.length + extra < MAX_NIEUWE_PER_RUN && Date.now() - t0 < BUDGET_MS;
+  const grensMelding = () =>
+    toegevoegd.length >= MAX_NIEUWE_PER_RUN
+      ? `grens van ${MAX_NIEUWE_PER_RUN} nieuwe video's per run bereikt — de rest komt bij de volgende run.`
+      : `tijdsbudget van ${Math.round(BUDGET_MS / 60_000)} min voor ophalen op — de rest komt bij de volgende run.`;
 
-  const { data: campagnes, error } = await supabase
+  let query = supabase
     .from('campaigns')
     .select('id, name, bron_kanaal_url, bron_kanalen, auto_plan, platform_rules, kanaal_check_gestart_at')
     .eq('status', 'active');
+  if (opties.campaignId) query = query.eq('id', opties.campaignId);
+  const { data: campagnes, error } = await query;
   if (error) throw error;
 
   for (const campagne of campagnes ?? []) {
     // Zegt de campagne dat alleen het aangeleverde bronmateriaal gebruikt mag
     // worden, dan halen we nooit het hele kanaal binnen — alleen losse video's
-    // die expliciet als bron zijn opgegeven.
+    // en wat de campagne zelf aanlevert (Drive, WeTransfer).
     const alleenBronvideo = Boolean(
       (campagne.platform_rules as { alleen_bronvideo?: boolean } | null)?.alleen_bronvideo,
     );
@@ -126,13 +148,16 @@ export async function haalNieuweBronvideos(): Promise<{
       .filter(Boolean);
     let uniek = [...new Set(kanalen)];
     if (alleenBronvideo) {
-      const alleenVideos = uniek.filter((k) => losseVideoId(k));
-      if (alleenVideos.length !== uniek.length) {
+      const aangeleverd = uniek.filter((k) => {
+        const soort = herkenBron(k).soort;
+        return soort !== 'youtube_kanaal' && soort !== 'youtube_playlist';
+      });
+      if (aangeleverd.length !== uniek.length) {
         fouten.push(
           `${campagne.name}: campagne staat alleen het aangeleverde bronmateriaal toe — kanaalbronnen overgeslagen.`,
         );
       }
-      uniek = alleenVideos;
+      uniek = aangeleverd;
     }
     if (uniek.length === 0) {
       // Geen bron geconfigureerd, dus deze campagne wordt niet gecheckt. Was
@@ -151,34 +176,60 @@ export async function haalNieuweBronvideos(): Promise<{
 
     const foutenVoorCampagne = fouten.length;
     try {
-      // Alle bronnen van deze campagne samen; per bron een eigen foutmelding,
-      // zodat één kapot kanaal de rest niet blokkeert.
+      // Wat we al hebben (ook gearchiveerd) slaan we over. Op bronsleutel:
+      // youtu.be en watch?v= zijn dezelfde video, net als een Drive-link met
+      // of zonder ?usp=sharing.
+      const { data: bestaand } = await supabase.from('videos').select('source_url').eq('campaign_id', campagne.id);
+      const bekend = new Set(
+        (bestaand ?? []).map((v) => bronSleutel(v.source_url as string | null)).filter((x): x is string => Boolean(x)),
+      );
+
+      // Alle bronnen van deze campagne; per bron een eigen foutmelding,
+      // zodat één kapotte bron de rest niet blokkeert. De bron-URL staat in
+      // elke melding: daarop toont de campagnepagina de status per bron.
       const kanaalVideos: KanaalVideo[] = [];
       for (const kanaal of uniek) {
+        const bron = herkenBron(kanaal);
+        if (bron.soort === 'onbekend') {
+          fouten.push(`${campagne.name} / ${kanaal}: ${bron.reden}`);
+          continue;
+        }
+        if (bron.soort === 'drive_map' || bron.soort === 'drive_bestand' || bron.soort === 'wetransfer' || bron.soort === 'wetransfer_kort') {
+          if (!magNog()) {
+            fouten.push(`${campagne.name} / ${kanaal}: ${grensMelding()}`);
+            continue;
+          }
+          try {
+            const r = await haalDirecteBronBinnen({
+              campaignId: campagne.id as string,
+              bron: kanaal,
+              bekend,
+              magNog,
+              autoPlan: campagne.auto_plan !== false,
+            });
+            for (const t of r.toegevoegd) toegevoegd.push({ ...t, campagne: campagne.name as string });
+            for (const f of r.fouten) fouten.push(`${campagne.name} / ${kanaal}: ${f}`);
+            if (r.resterend > 0) fouten.push(`${campagne.name} / ${kanaal}: nog ${r.resterend} video('s) te gaan — ${grensMelding()}`);
+          } catch (e) {
+            fouten.push(`${campagne.name} / ${kanaal}: ${e instanceof Error ? e.message : String(e)}`);
+          }
+          continue;
+        }
         try {
           kanaalVideos.push(...(await haalKanaalVideos(kanaal, 10)));
         } catch (e) {
           fouten.push(`${campagne.name} / ${kanaal}: ${e instanceof Error ? e.message : String(e)}`);
         }
       }
-      if (kanaalVideos.length === 0) continue;
-
-      // Wat we al hebben (ook gearchiveerd) slaan we over.
-      const { data: bestaand } = await supabase
-        .from('videos')
-        .select('source_url')
-        .eq('campaign_id', campagne.id);
-      const bekend = new Set((bestaand ?? []).map((v) => videoIdUit(v.source_url as string | null)).filter(Boolean));
 
       for (const kv of kanaalVideos) {
-        if (toegevoegd.length >= MAX_NIEUWE_PER_RUN) {
-          fouten.push(
-            `${campagne.name}: grens van ${MAX_NIEUWE_PER_RUN} nieuwe video's per run bereikt — de rest komt bij de volgende run.`,
-          );
+        const sleutel = `yt:${kv.id}`;
+        if (bekend.has(sleutel)) continue;
+        if (!magNog()) {
+          fouten.push(`${campagne.name}: ${grensMelding()}`);
           break;
         }
-        if (bekend.has(kv.id)) continue;
-        bekend.add(kv.id); // twee bronnen kunnen dezelfde video bevatten
+        bekend.add(sleutel); // twee bronnen kunnen dezelfde video bevatten
 
         const transcript = await haalTranscript(kv.url);
         if (!('segments' in transcript)) {
@@ -222,24 +273,23 @@ export async function haalNieuweBronvideos(): Promise<{
           }
         }
       }
-
-      // Bewaar wat er misging bij déze campagne, zodat een verkeerde bron of
-      // een mislukt transcript zichtbaar is in de UI en niet alleen in de logs.
-      // Alles wat tijdens déze campagne is bijgeschreven hoort erbij; filteren
-      // op de campagnenaam liet regels als "<titel>: geen transcript" vallen.
-      const eigenFouten = fouten.slice(foutenVoorCampagne);
-      await supabase
-        .from('campaigns')
-        .update({
-          laatste_kanaal_check: new Date().toISOString(),
-          laatste_kanaal_fouten: eigenFouten.slice(-10),
-          kanaal_check_gestart_at: null,
-        })
-        .eq('id', campagne.id);
     } catch (e) {
       fouten.push(`${campagne.name}: ${e instanceof Error ? e.message : String(e)}`);
-      await supabase.from('campaigns').update({ kanaal_check_gestart_at: null }).eq('id', campagne.id);
     }
+
+    // Altijd bewaren wat er misging bij déze campagne — ook (juist) als geen
+    // enkele bron iets opleverde. Eerder sloeg een `continue` bij nul video's
+    // deze stap over: de Drive-, WeTransfer- en kanaalfouten kwamen nooit in
+    // de UI en de campagne bleef eeuwig op "bezig" staan.
+    const eigenFouten = fouten.slice(foutenVoorCampagne);
+    await supabase
+      .from('campaigns')
+      .update({
+        laatste_kanaal_check: new Date().toISOString(),
+        laatste_kanaal_fouten: eigenFouten.slice(-10),
+        kanaal_check_gestart_at: null,
+      })
+      .eq('id', campagne.id);
   }
 
   return { toegevoegd, fouten };
@@ -268,24 +318,4 @@ async function haalTranscript(url: string) {
     // (meestal een ontbrekende of verkeerde transcriptie-key).
     return { fout: e instanceof Error ? e.message : String(e) } as const;
   }
-}
-
-function videoIdUit(url: string | null): string | null {
-  if (!url) return null;
-  const m = url.match(/[?&]v=([\w-]{6,})/) ?? url.match(/youtu\.be\/([\w-]{6,})/);
-  return m?.[1] ?? null;
-}
-
-function run(command: string, args: string[]): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, args);
-    let stdout = '';
-    let stderr = '';
-    child.stdout.on('data', (d) => (stdout += d));
-    child.stderr.on('data', (d) => (stderr += d));
-    child.on('error', reject);
-    child.on('close', (code) =>
-      code === 0 ? resolve(stdout) : reject(new Error(`${command} exit ${code}: ${stderr.trim().slice(-300)}`)),
-    );
-  });
 }

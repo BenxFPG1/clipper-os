@@ -8,6 +8,8 @@ import { genereerBrollPlan } from '../src/lib/broll/plan';
 import { fetchYoutubeCaptions } from '../src/lib/ingest/youtube';
 import { transcribeYoutube } from '../src/lib/ingest/whisper';
 import { transcriptDuration } from '../src/lib/ingest/transcript';
+import { herkenBron } from '../src/lib/ingest/bron-url';
+import { haalDirecteBronBinnen } from '../src/lib/ingest/directe-bron';
 
 /**
  * Voert wachtende denkopdrachten uit met de abonnements-token. De live site kan
@@ -15,6 +17,7 @@ import { transcriptDuration } from '../src/lib/ingest/transcript';
  * wachtrij; deze worker draait in GitHub Actions.
  *
  *   npx tsx scripts/ai-worker.ts
+ *   npx tsx scripts/ai-worker.ts --job <ai_jobs.id>   # alleen die ene
  */
 /** Hoeveel opdrachten tegelijk. Twee is een veilige balans met de sessielimiet. */
 const GELIJKTIJDIG = Number(process.env.AI_JOBS_GELIJKTIJDIG ?? 2);
@@ -25,6 +28,11 @@ const GELIJKTIJDIG = Number(process.env.AI_JOBS_GELIJKTIJDIG ?? 2);
  * je iets met spoed nodig hebt. Wat overblijft komt morgen aan de beurt.
  */
 const MAX_PER_DAG = Number(process.env.AI_JOBS_PER_DAG ?? 20);
+
+/** Zoveel extra pogingen krijgt een mislukt plan of transcript, met minstens zoveel minuten ertussen. */
+const HERKANSINGEN = Number(process.env.AI_JOBS_HERKANSINGEN ?? 2);
+const WACHT_HERKANSING_MIN = Math.max(30, Number(process.env.AI_JOBS_WACHT_MIN ?? 45));
+const HERKANSBAAR = new Set(['clip_plan', 'video_transcript']);
 
 async function main() {
   const supabase = db();
@@ -58,13 +66,22 @@ async function main() {
     return;
   }
 
-  const { data: jobs, error } = await supabase
-    .from('ai_jobs')
-    .select('*')
-    .eq('status', 'wachtend')
-    .order('created_at')
-    .limit(Math.min(10, ruimte));
+  // Een herkansing (zie hieronder) wacht minstens WACHT_HERKANSING_MIN: die
+  // staat al 'wachtend', maar is pas na volgende_poging_na aan de beurt.
+  // Met --job <id> alleen die ene opdracht (lokaal iets nalopen zonder de
+  // rest van de wachtrij mee te pakken).
+  const alleenJob = process.argv.includes('--job') ? process.argv[process.argv.indexOf('--job') + 1] : null;
+  let kandidatenQuery = supabase.from('ai_jobs').select('*').eq('status', 'wachtend').order('created_at').limit(100);
+  if (alleenJob) kandidatenQuery = kandidatenQuery.eq('id', alleenJob);
+  const { data: kandidaten, error } = await kandidatenQuery;
   if (error) throw error;
+  const nu = Date.now();
+  const jobs = (kandidaten ?? [])
+    .filter((j) => {
+      const na = (j.parameters as { volgende_poging_na?: string } | null)?.volgende_poging_na;
+      return alleenJob || !na || new Date(na).getTime() <= nu;
+    })
+    .slice(0, Math.min(10, ruimte));
 
   if (!jobs?.length) {
     console.log('Geen wachtende denkopdrachten.');
@@ -156,6 +173,28 @@ async function main() {
         return;
       }
 
+      // Plannen en transcripten krijgen automatisch nog HERKANSINGEN kansen:
+      // "Geen JSON in CLI-antwoord" of een haperende download is vaak de
+      // volgende keer gewoon goed. Eerder bleef zo'n opdracht stil op
+      // 'mislukt' staan en kwam er nooit een plan.
+      const params = (job.parameters ?? {}) as Record<string, unknown>;
+      const herkansing = Number(params.herkansing ?? 0);
+      const blijvend = /heeft nog geen transcript|zonder source_url|Onbekende soort|niet openbaar gedeeld|verlopen|wachtwoord|geen video|Geen spraak/i.test(fout);
+      if (HERKANSBAAR.has(job.soort as string) && herkansing < HERKANSINGEN && !blijvend) {
+        const volgende = new Date(Date.now() + WACHT_HERKANSING_MIN * 60_000).toISOString();
+        await supabase
+          .from('ai_jobs')
+          .update({
+            status: 'wachtend',
+            gestart_at: null,
+            fout: `poging ${herkansing + 1} mislukt: ${fout}`.slice(0, 2000),
+            parameters: { ...params, herkansing: herkansing + 1, volgende_poging_na: volgende },
+          })
+          .eq('id', job.id);
+        console.error(`  mislukt (poging ${herkansing + 1}/${HERKANSINGEN + 1}), herkansing na ${volgende}:`, fout.slice(0, 300));
+        return;
+      }
+
       await supabase
         .from('ai_jobs')
         .update({ status: 'mislukt', fout: fout.slice(0, 2000), klaar_at: new Date().toISOString() })
@@ -183,6 +222,26 @@ async function maakVideoMetTranscript(campaignId: string, params: VideoTranscrip
   const supabase = db();
   const sourceUrl = params.source_url;
   if (!sourceUrl) throw new Error('video_transcript zonder source_url');
+
+  // Drive of WeTransfer: zelf downloaden en transcriberen; een map of
+  // transfer levert één video per bestand op (ontdubbeld op bron).
+  const bron = herkenBron(sourceUrl);
+  if (bron.soort === 'drive_map' || bron.soort === 'drive_bestand' || bron.soort === 'wetransfer' || bron.soort === 'wetransfer_kort') {
+    const { data: campagne } = await supabase.from('campaigns').select('auto_plan').eq('id', campaignId).maybeSingle();
+    const r = await haalDirecteBronBinnen({
+      campaignId,
+      bron: sourceUrl,
+      autoPlan: campagne?.auto_plan !== false,
+      titel: params.title ?? null,
+    });
+    if (r.toegevoegd.length === 0 && r.fouten.length > 0) throw new Error(r.fouten.slice(0, 3).join(' · '));
+    return {
+      video_ids: r.toegevoegd.map((t) => t.videoId),
+      toegevoegd: r.toegevoegd.length,
+      overgeslagen: r.overgeslagen,
+      fouten: r.fouten.slice(0, 10),
+    };
+  }
 
   // Al toegevoegd (bijv. door de kanaalcheck)? Dan niets dubbel doen.
   const { data: bestaand } = await supabase
