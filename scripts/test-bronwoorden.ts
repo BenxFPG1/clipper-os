@@ -150,6 +150,16 @@ async function main() {
       const bron = [{ w: 'een', s: 1, e: 1.3 }, { w: 'twee', s: 5, e: 5.3 }];
       const omgekeerd = woordenOpTijdlijn([{ volgorde: 2, start: 4.9, end: 5.5, functie: 'setup' }, { volgorde: 1, start: 0.9, end: 1.5, functie: 'setup' }], bron);
       toets('woorden in render-volgorde (op volgnummer)', omgekeerd.map((w) => w.w).join(' ') === 'een twee' && omgekeerd[1].s > omgekeerd[0].s);
+      // Twee aansluitende shots (een graphic-splitsing): een woord op de grens
+      // hoort in één van beide, niet in allebei (PLATINA clip 4: "2,238,238").
+      const grens = woordenOpTijdlijn(
+        [{ volgorde: 1, start: 0, end: 1, functie: 'setup' }, { volgorde: 2, start: 1, end: 2, functie: 'setup' }],
+        [{ w: '2', s: 0.6, e: 0.9 }, { w: ',238', s: 0.97, e: 1.2 }, { w: 'miljoen', s: 1.2, e: 1.6 }],
+      );
+      toets('woord op de grens van aansluitende shots één keer', grens.map((w) => w.w).join(' ') === '2,238 miljoen', JSON.stringify(grens));
+      // Een woord dat grotendeels vóór de knip klinkt, staat niet in beeld ("Ten Bij goud").
+      const voor = woordenOpTijdlijn([{ volgorde: 1, start: 0.95, end: 2, functie: 'setup' }], [{ w: 'Ten', s: 0.905, e: 0.96 }, { w: 'Bij', s: 1.1, e: 1.3 }]);
+      toets('woord dat vóór de knip klinkt valt weg', voor.map((w) => w.w).join(' ') === 'Bij', JSON.stringify(voor));
     }
 
     console.log('correctie mag één fout in twee woorden splitsen');

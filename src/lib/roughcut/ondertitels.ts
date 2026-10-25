@@ -126,8 +126,14 @@ export function woordenOpTijdlijn(segmenten: Shot[], bronWoorden: BronWoord[]): 
   for (const seg of inRender) {
     const duur = seg.end - seg.start;
     for (const w of woorden) {
-      if (w.s < seg.start - 0.05) continue;
-      if (w.s > seg.end) break;
+      if (w.s >= seg.end) break;
+      // Een woord hoort bij het shot waar zijn midden in valt. Met de oude
+      // marge (start tot 0,05 s vóór de knip, of precies op het einde) kwam
+      // een woord op de grens van twee aansluitende shots in béide terecht,
+      // en een woord dat vóór de knip al bijna klonk in beeld zonder geluid
+      // (PLATINA clip 4: "2,238,238", "Ten Bij goud").
+      const midden = (w.s + Math.max(w.e, w.s + 0.08)) / 2;
+      if (midden < seg.start || midden >= seg.end) continue;
       // Een woord dat over de knip heen loopt wordt afgekapt op het segment;
       // de poort zorgt dat dat vrijwel niet voorkomt.
       const s = cursor + Math.max(0, w.s - seg.start);
