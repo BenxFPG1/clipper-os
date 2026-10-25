@@ -871,6 +871,14 @@ async function main() {
         });
       });
       toets('kaderwijziging telt voor alle regels in het shot (geen overlap erbij)', !p2.plekken.includes('overlap') && vrijVanGezicht, JSON.stringify({ p2, focusY: spoorShot.focusY }));
+      // PLATINA clip 2, shot 5.01: eindscherm vanaf 71% hoogte, daarboven
+      // ingezoomd (1,47) plus een punch-in (1,59). De regels kwamen op de kin.
+      // Terugzoomen mag, mits de uitsnede boven het eindscherm blijft; dan
+      // past de regel boven het hoofd.
+      const eind: Shot = { volgorde: 5.01, start: 10, end: 14, functie: 'payoff', focusX: 0.495, focusW: 0.099, focusY: 0.38, zoom: 1.59, gezicht: { x: 0.494, breedte: 0.099, top: 0.281, hoogte: 0.25 }, overlay: { x0: 0.45, y0: 0.71, x1: 0.7, y1: 0.9 } };
+      const pe = plaatsRegels(tweeRegels, [eind], 'vullend');
+      toets('eindscherm-shot met punch-in: geen regel op het gezicht', !pe.plekken.includes('overlap'), JSON.stringify({ pe, zoom: eind.zoom, focusY: eind.focusY }));
+      toets('en het eindscherm blijft buiten de uitsnede', keurOverlay([eind], 'vullend').goed === true, JSON.stringify({ zoom: eind.zoom, focusY: eind.focusY }));
       const hoofd = plek(vlak(0.45, 0.31, 1));
       toets('zonder punch-in en zonder ruimte: pas dan boven het hoofd', hoofd.plekken[0] === 'boven_hoofd', JSON.stringify(hoofd));
       toets('keuring "ondertitel over gezicht" groen zonder overlap', keurOndertitelPlek({ ...legePlekTelling(), onder_kin: 3, lager: 1, boven_hoofd: 1 }).goed === true);

@@ -227,6 +227,15 @@ const STANDAARD = {
   GRAPHIC_HOEK: 0.25,
   GRAPHIC_MARGE: 0.06,
   GRAPHIC_MAX_OPSCHAAL: 3,
+  /**
+   * De band (fracties van de beeldhoogte) waarbinnen de inhoud van een
+   * ingezoomde graphic valt: onder de tekstkaarten bovenin (KAART_Y) en boven
+   * de ondertitelzone (ONDERTITEL_Y). Zonder die band lag een hoge graphic
+   * gecentreerd over beide (PLATINA clip 2: kaart over de titel, ondertitel
+   * over de bronregel). De inhoud krimpt zo nodig, nooit kleiner dan passend.
+   */
+  GRAPHIC_INHOUD_BOVEN: 0.24,
+  GRAPHIC_INHOUD_ONDER: 0.665,
 
   /**
    * Renderbron (renderbron.ts): alleen de stukken die de clip gebruikt, in de

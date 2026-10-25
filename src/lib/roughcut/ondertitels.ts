@@ -543,15 +543,15 @@ export function plaatsRegels(
         }))) {
           gewijzigd.set(r, 'kader_omhoog');
           return { plaatsing, plekken, schalen, terug };
-        } else if (mag && (terug = terugZoomen(oorzaak!, (z) => {
-          const oud = oorzaak!.zoom;
-          oorzaak!.zoom = z;
+        } else if (mag && (terug = terugZoomen(oorzaak!, () => {
+          // terugZoomen heeft zoom (en zo nodig focusY) al op de kandidaat gezet.
           const m = meet(regel);
-          oorzaak!.zoom = oud;
-          return m.onder + marge + regelH <= maxOnder;
+          return m.onder + marge + regelH <= maxOnder || m.boven - marge - regelH >= minBoven;
         }))) {
-          // (e) het kader van dit shot iets terugnemen, zodat de kin hoger
-          // komt te staan (hoogstens ONDERTITEL_ZOOM_RUIMTE onder de basiszoom).
+          // (e) het kader van dit shot iets terugnemen, zodat de regel onder de
+          // kin of boven het hoofd past (hoogstens ONDERTITEL_ZOOM_RUIMTE onder
+          // de basiszoom). PLATINA clip 2, shot 5.01: een punch-in van 1,59 op
+          // een eindscherm-shot zette de regels op de kin.
           gewijzigd.set(r, 'zoom_terug');
           return { plaatsing, plekken, schalen, terug };
         } else if (boven - marge - regelH >= minBoven) {
@@ -650,7 +650,7 @@ function overlayVrij(seg: Shot): boolean {
  * wijder dan de bron). Muteert de zoom als het lukt en geeft terug hoe dat
  * ongedaan wordt.
  */
-function terugZoomen(seg: Shot, past: (zoom: number) => boolean): (() => void) | null {
+function terugZoomen(seg: Shot, past: () => boolean): (() => void) | null {
   const basis = basisZoom(seg);
   const nu = seg.zoom ?? basis;
   // Ook een shot dat al op zijn basiszoom staat mag voor ondertitelruimte iets
@@ -660,19 +660,28 @@ function terugZoomen(seg: Shot, past: (zoom: number) => boolean): (() => void) |
   // basiszoom en nooit wijder dan de bron (zoom 1).
   const vloer = Math.max(1, basis * (1 - instelling('ONDERTITEL_ZOOM_RUIMTE')));
   if (nu <= vloer + 0.01) return null;
+  const oudZoom = seg.zoom;
+  const oudY = seg.focusY;
+  const oudSpoor = seg.spoorY;
+  const herstel = () => {
+    seg.zoom = oudZoom;
+    seg.focusY = oudY;
+    seg.spoorY = oudSpoor;
+  };
   for (let z = nu - 0.02; z >= vloer - 1e-6; z -= 0.02) {
     const zr = Math.round(Math.max(vloer, z) * 1000) / 1000;
-    const oud = seg.zoom;
+    herstel();
     seg.zoom = zr;
-    const vrij = overlayVrij(seg);
-    seg.zoom = oud;
-    if (vrij && past(zr)) {
-      seg.zoom = zr;
-      return () => {
-        seg.zoom = oud;
-      };
+    // Een wijdere uitsnede kan een eindscherm onderin alsnog in beeld halen;
+    // dan de uitsnede zo ver omhoog dat de onderrand er net boven blijft.
+    if (!overlayVrij(seg) && seg.overlay) {
+      const doel = seg.overlay.y0 - 0.005 - 1 / zr / 2;
+      const dy = doel - (seg.focusY ?? 0.5);
+      if (dy < 0) schuif(seg, dy);
     }
+    if (overlayVrij(seg) && past()) return herstel;
   }
+  herstel();
   return null;
 }
 

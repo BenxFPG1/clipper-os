@@ -13,13 +13,13 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { resolveBinary } from '../src/lib/ingest/binaries';
-import { analyseerGraphic, graphicMeterVia, inhoudKader, lijktGraphic, margeBox, schaalTovPassend, stabieleInhoud } from '../src/lib/roughcut/graphics';
+import { analyseerGraphic, graphicMeterVia, inhoudKader, inhoudOpBeeld, lijktGraphic, margeBox, schaalTovPassend, stabieleInhoud } from '../src/lib/roughcut/graphics';
 import { keurGraphicsDetail, type GraphicFout } from '../src/lib/roughcut/keuring';
 import { herstelNaKeuring, zelfherstelStap } from '../src/lib/roughcut/herstel';
 import { deelstukken, kiesBevries, splitsOpBeeldsoort, vulScenes, type GezichtMeter } from '../src/lib/roughcut/scenes';
 import { keurGraphics } from '../src/lib/roughcut/keuring';
 import { behandelEindscherm, keurOverlay, overlayUitPixels, vermijdOverlay } from '../src/lib/roughcut/eindscherm';
-import { plakKoppeltekens } from '../src/lib/roughcut/ondertitels';
+import { plakKoppeltekens, plaatsRegels } from '../src/lib/roughcut/ondertitels';
 import { pythonMetOpenCV } from '../src/lib/python';
 import { keurLeesbaar, leesLogregel, leestijd, leestijdPlan } from '../src/lib/roughcut/leestijd';
 import { instelling } from '../src/lib/roughcut/instellingen';
@@ -361,6 +361,28 @@ async function vervolg() {
       toets('marges rondom → box van alles wat er ooit in beeld kwam', JSON.stringify(margeBox([{ x0: 0.2, y0: 0.2, x1: 0.5, y1: 0.6 }, null, { x0: 0.3, y0: 0.15, x1: 0.8, y1: 0.85 }])) === JSON.stringify({ x0: 0.2, y0: 0.15, x1: 0.8, y1: 0.85 }));
       toets('inhoud tot tegen de rand → geen inzoom', margeBox([{ x0: 0.01, y0: 0.2, x1: 0.8, y1: 0.8 }]) === null);
       toets('niets gemeten → geen inzoom', margeBox([null, null]) === null);
+    }
+
+    console.log('graphic-inhoud tussen de kaarten en de ondertitels');
+    {
+      // Een hoge graphic (titel tot bronregel), zoals "Structureel tekort" in
+      // PLATINA clip 2: gecentreerd liep hij van 24% tot 78% van het beeld,
+      // onder de tekstkaart door en over de ondertitelzone heen.
+      const hoog = { x0: 0.3, y0: 0.06, x1: 0.7, y1: 0.94 };
+      const op = inhoudOpBeeld(hoog);
+      toets('hoge graphic: inhoud binnen de band (24%–66,5%)', op.boven >= 0.24 - 0.005 && op.onder <= 0.665 + 0.005, JSON.stringify(op));
+      toets('nog steeds groter dan het passende beeld', schaalTovPassend(hoog) >= 1, `${schaalTovPassend(hoog)}`);
+      const k = inhoudKader(hoog);
+      toets('voorgrond blijft binnen 1080x1920', k.y0 >= 0 && k.y0 + k.fgH <= 1920 && k.fgB <= 1080, JSON.stringify(k));
+      // Een lage, brede graphic past al: alleen verticaal in de band gezet, niet verkleind.
+      const plat = { x0: 0.1, y0: 0.4, x1: 0.9, y1: 0.6 };
+      const kPlat = inhoudKader(plat);
+      const opPlat = inhoudOpBeeld(plat);
+      toets('lage graphic: niet verkleind, midden in de band', kPlat.fgB === 1080 && Math.abs((opPlat.boven + opPlat.onder) / 2 - (0.24 + 0.665) / 2) < 0.01, JSON.stringify({ kPlat, opPlat }));
+      // De ondertitel past daardoor op de standaardhoogte onder de inhoud.
+      const shot = { volgorde: 1, start: 0, end: 4, functie: 'setup', scenes: [{ van: 0, tot: 4, gezicht: false, inhoud: hoog }] } as import('../src/lib/roughcut').Shot;
+      const p = plaatsRegels([{ s: 1, e: 2, woorden: [{ w: 'heeft', s: 1, e: 1.4 }, { w: 'in 2026', s: 1.4, e: 2 }] }], [shot], 'vullend');
+      toets('ondertitel op de standaardhoogte onder de graphic', p.plekken[0] === 'standaard', JSON.stringify(p));
     }
 
     console.log('ondertitels: koppeltekens bij elkaar');

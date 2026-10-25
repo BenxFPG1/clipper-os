@@ -122,7 +122,10 @@ export function motionPassend(o: { breedte: number; hoogte: number; inhoud?: Box
   const ih = o.hoogte * s;
   const cx = iw * ((r.x0 + r.x1) / 2);
   const cy = ih * ((r.y0 + r.y1) / 2);
-  const positie = { x: rond(SEQ_B / 2 + iw / 2 - cx, 2), y: rond(SEQ_H / 2 + ih / 2 - cy, 2) };
+  // Verticaal dezelfde plek als de render: het midden van de voorgrond op
+  // k.y0 + fgH/2 in plaats van in het midden van de sequence.
+  const dy = k.y0 + k.fgH / 2 - SEQ_H / 2;
+  const positie = { x: rond(SEQ_B / 2 + iw / 2 - cx, 2), y: rond(SEQ_H / 2 + ih / 2 - cy + dy, 2) };
   return {
     schaal: rond(s * 100, 3),
     positie,

@@ -33,7 +33,7 @@ export function kaderKeten(
      * (graphics.ts → inhoudKader) en hoe groot. Zonder dit het hele beeld,
      * passend op volle breedte.
      */
-    inhoud?: { r: { x0: number; y0: number; x1: number; y1: number }; fgB: number; fgH: number };
+    inhoud?: { r: { x0: number; y0: number; x1: number; y1: number }; fgB: number; fgH: number; y0: number };
   } = {},
 ): string {
   const zoom = opties.zoom ?? 1;
@@ -51,7 +51,10 @@ export function kaderKeten(
     const voorgrond = i
       ? `crop=iw*${(i.r.x1 - i.r.x0).toFixed(4)}:ih*${(i.r.y1 - i.r.y0).toFixed(4)}:iw*${i.r.x0.toFixed(4)}:ih*${i.r.y0.toFixed(4)},scale=${i.fgB}:${i.fgH}:flags=lanczos`
       : 'scale=1080:-2:flags=lanczos';
-    return `split[a][b];[a]scale=192:342:force_original_aspect_ratio=increase,crop=192:342,boxblur=6:2,scale=1080:1920[bg];[b]${voorgrond}[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2,format=yuv420p`;
+    // De voorgrond op de hoogte die inhoudKader koos (de inhoud tussen de
+    // kaarten en de ondertitels); zonder gemeten inhoud gecentreerd.
+    const y = i ? String(i.y0) : '(H-h)/2';
+    return `split[a][b];[a]scale=192:342:force_original_aspect_ratio=increase,crop=192:342,boxblur=6:2,scale=1080:1920[bg];[b]${voorgrond}[fg];[bg][fg]overlay=(W-w)/2:${y},format=yuv420p`;
   }
 
   // vullend: hoogte vullen (maal de zoom voor punch-ins), dan de uitsnede op

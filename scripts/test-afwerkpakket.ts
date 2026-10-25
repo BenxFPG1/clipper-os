@@ -6,6 +6,7 @@
  *
  * Draaien: npm run test:afwerkpakket
  */
+import { inhoudKader } from '../src/lib/roughcut/graphics';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -116,9 +117,13 @@ async function main() {
       x: 3840 * s * ((q.crop!.links + (100 - q.crop!.rechts)) / 200),
       y: 2160 * s * ((q.crop!.boven + (100 - q.crop!.onder)) / 200),
     };
+    // Horizontaal in het midden, verticaal op dezelfde plek als de render
+    // (inhoudKader.y0: de inhoud tussen de kaarten en de ondertitels).
+    const ik = inhoudKader(box, 3840 / 2160);
     check(
-      'ingezoomde graphic: gecropt gebied gecentreerd in beeld',
-      dichtbij(q.positie.x - (3840 * s) / 2 + cropMidden.x, 540, 0.5) && dichtbij(q.positie.y - (2160 * s) / 2 + cropMidden.y, 960, 0.5),
+      'ingezoomde graphic: gecropt gebied op de plek van de render',
+      dichtbij(q.positie.x - (3840 * s) / 2 + cropMidden.x, 540, 0.5) && dichtbij(q.positie.y - (2160 * s) / 2 + cropMidden.y, ik.y0 + ik.fgH / 2, 0.5),
+      JSON.stringify({ y: q.positie.y - (2160 * s) / 2 + cropMidden.y, verwacht: ik.y0 + ik.fgH / 2 }),
     );
     check('ingezoomde graphic: inhoud valt binnen het beeld', (() => {
       const x = q.positie.x - (3840 * s) / 2 + inhoudMidden.x;

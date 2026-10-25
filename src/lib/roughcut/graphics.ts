@@ -490,9 +490,29 @@ export function inhoudKader(
   const ry = Math.min(Math.max(cy - rh / 2, 0), 1 - rh);
   const r = { x0: rx / verhouding, y0: ry, x1: (rx + rw) / verhouding, y1: ry + rh };
 
-  const fgB = 2 * Math.floor(Math.min(1080, (1920 * rw) / rh) / 2);
-  const fgH = 2 * Math.floor(Math.min(1920, (fgB * rh) / rw) / 2);
-  return { r, fgB, fgH, y0: (1920 - fgH) / 2 };
+  let fgB = 2 * Math.floor(Math.min(1080, (1920 * rw) / rh) / 2);
+  let fgH = 2 * Math.floor(Math.min(1920, (fgB * rh) / rw) / 2);
+
+  // De inhoud binnen de band tussen de kaarten bovenin en de ondertitels
+  // onderin: zo nodig kleiner (nooit kleiner dan het passende beeld, waarin
+  // de hele bronbreedte op 1080 px staat), en daarin verticaal gecentreerd.
+  const b0 = instelling('GRAPHIC_INHOUD_BOVEN') * 1920;
+  const b1 = instelling('GRAPHIC_INHOUD_ONDER') * 1920;
+  const pxPerEenheid = fgH / rh;
+  const inhoudH = bh * pxPerEenheid;
+  if (inhoudH > b1 - b0) {
+    const f = Math.max((b1 - b0) / inhoudH, 1080 / verhouding / pxPerEenheid);
+    if (f < 1) {
+      fgB = 2 * Math.floor((fgB * f) / 2);
+      fgH = 2 * Math.floor((fgH * f) / 2);
+    }
+  }
+  const schaalNu = fgH / rh;
+  const inhoudTop = (box.y0 - ry) * schaalNu;
+  const inhoudHNu = bh * schaalNu;
+  const gewenst = b0 + Math.max(0, b1 - b0 - inhoudHNu) / 2;
+  const y0 = Math.round(Math.min(Math.max(gewenst - inhoudTop, 0), 1920 - fgH));
+  return { r, fgB, fgH, y0 };
 }
 
 /** Waar de inhoud in het eindbeeld staat (fracties van de hoogte). */
