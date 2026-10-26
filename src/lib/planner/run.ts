@@ -32,7 +32,17 @@ function energieBron(videoId: string, sourceUrl: string | null): string | null {
  */
 export async function runPlannerForVideo(
   videoId: string,
-  options?: { reuseCharacterMap?: boolean; opnieuwAnalyseren?: boolean },
+  options?: {
+    reuseCharacterMap?: boolean;
+    opnieuwAnalyseren?: boolean;
+    /**
+     * Herplan één fragment: de planner ziet alleen dit stuk transcript (bron-
+     * seconden) en levert één clip. Zo kan één clip steeds opnieuw gebouwd
+     * worden op hetzelfde materiaal terwijl de regels verbeteren, in plaats
+     * van elke keer een heel nieuw plan met andere clips.
+     */
+    bereik?: { van: number; tot: number };
+  },
 ) {
   const supabase = db();
 
@@ -44,8 +54,11 @@ export async function runPlannerForVideo(
   if (error) throw error;
   if (!video?.transcript) throw new Error('Video heeft nog geen transcript');
 
-  const transcript = video.transcript as TranscriptSegment[];
-  const durationSeconds = video.duration_seconds ?? Math.round(transcriptDuration(transcript));
+  const volledig = video.transcript as TranscriptSegment[];
+  const bereik = options?.bereik;
+  const transcript = bereik ? volledig.filter((t) => t.end_seconds > bereik.van && t.start_seconds < bereik.tot) : volledig;
+  if (bereik && transcript.length === 0) throw new Error(`geen transcript tussen ${bereik.van} en ${bereik.tot} s`);
+  const durationSeconds = video.duration_seconds ?? Math.round(transcriptDuration(volledig));
   // Een clip-plan is niet platformgebonden (dezelfde clip gaat naar TikTok,
   // Reels en Shorts), maar wel themagebonden.
   const campaign = video.campaigns as { name?: string | null; platform_rules?: unknown; theme?: string | null } | null;
@@ -57,7 +70,7 @@ export async function runPlannerForVideo(
   const energie: Energiemoment[] =
     !options?.opnieuwAnalyseren && video.energie_momenten
       ? (video.energie_momenten as Energiemoment[])
-      : await mijnEnergie(energieBron(videoId, video.source_url ?? null), transcript).catch(() => []);
+      : await mijnEnergie(energieBron(videoId, video.source_url ?? null), volledig).catch(() => []);
 
   if (energie !== video.energie_momenten) {
     await supabase.from('videos').update({ energie_momenten: energie }).eq('id', videoId);
@@ -77,7 +90,7 @@ export async function runPlannerForVideo(
       : await generateCharacterMap({
           title: video.title,
           durationSeconds,
-          transcript,
+          transcript: volledig,
           energieText: renderEnergie(energie),
         });
 
@@ -92,6 +105,7 @@ export async function runPlannerForVideo(
   const bronPad = lokaleBron(videoId, video.source_url ?? null);
 
   const plan = await generateClipPlan({
+    ...(bereik ? { maxClips: 1 } : {}),
     title: video.title,
     durationSeconds,
     transcript,

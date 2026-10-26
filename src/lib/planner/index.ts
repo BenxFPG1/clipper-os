@@ -45,6 +45,8 @@ import {
 } from './schema';
 
 export type PlannerInput = {
+  /** Hoeveel clips hoogstens; standaard PLAN_MAX_CLIPS. Eén bij het herplannen van één fragment. */
+  maxClips?: number;
   title: string;
   durationSeconds: number | null;
   transcript: TranscriptSegment[];
@@ -116,7 +118,7 @@ export async function generateClipPlan(
   console.log(`[planner] format ${formaat}: clips ${bereik.min}–${bereik.max} s`);
 
   const schets: SchetsPlan = await structuredCall({
-    system: schetsSystem(PLAN_MAX_CLIPS, formaatInfo) + bijgeleerd,
+    system: schetsSystem(input.maxClips ?? PLAN_MAX_CLIPS, formaatInfo) + bijgeleerd,
     user: buildSchetsUser({
       title: input.title,
       durationSeconds: input.durationSeconds,
@@ -158,7 +160,7 @@ export async function generateClipPlan(
   const bijAnderen = watWerktBijAnderen(input.vault, normenTekst);
 
   const examined: ClipPlan = await structuredCall({
-    system: planExamenSystem(PLAN_MAX_CLIPS, formaatInfo) + bijgeleerd,
+    system: planExamenSystem(input.maxClips ?? PLAN_MAX_CLIPS, formaatInfo) + bijgeleerd,
     user: `Video: ${input.title}
 Duur: ${input.durationSeconds ? `${input.durationSeconds} seconden` : 'onbekend'}
 

@@ -103,12 +103,14 @@ async function main() {
       .eq('id', job.id);
 
     try {
-      const params = (job.parameters ?? {}) as { aantal?: number; opnieuw_analyseren?: boolean };
+      const params = (job.parameters ?? {}) as { aantal?: number; opnieuw_analyseren?: boolean; bereik?: { van: number; tot: number } };
       let resultaat: unknown;
 
       if (job.soort === 'clip_plan') {
         const r = await runPlannerForVideo(job.doel_id, {
           opnieuwAnalyseren: params.opnieuw_analyseren ?? false,
+          // Herplan één fragment (bronseconden): één clip op hetzelfde materiaal.
+          bereik: params.bereik && Number.isFinite(params.bereik.van) && Number.isFinite(params.bereik.tot) ? params.bereik : undefined,
         });
         resultaat = { clips: (r.plan as { clips?: unknown[] })?.clips?.length ?? 0 };
       } else if (job.soort === 'scripts') {
