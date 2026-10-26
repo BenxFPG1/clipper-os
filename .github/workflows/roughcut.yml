@@ -37,7 +37,17 @@ jobs:
         run: |
           if which ffmpeg; then ffmpeg -version | head -1
           else
-            sudo apt-get update -q && sudo apt-get install -y -q ffmpeg
+            # apt bleef op 26-10 twee runs lang ruim tien minuten hangen op een
+            # trage Ubuntu-mirror. Nu met een tijdslimiet per poging en drie
+            # pogingen, zodat één hangende verbinding de render niet blokkeert.
+            for poging in 1 2 3; do
+              if timeout 180 sudo apt-get update -q -o Acquire::Retries=3 -o Acquire::http::Timeout=30 \
+                && timeout 300 sudo apt-get install -y -q -o Acquire::Retries=3 -o Acquire::http::Timeout=30 ffmpeg; then
+                break
+              fi
+              echo "apt-poging $poging mislukt of hing; opnieuw"
+              sleep 10
+            done
             which ffmpeg && ffmpeg -version | head -1
           fi
           # De woordelijke ondertitels gaan via libass (het `ass`-filter). Zonder
