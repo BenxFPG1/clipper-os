@@ -163,13 +163,18 @@ export function begrensOpschaal(segmenten: Shot[], kader: Kader, bronHoogte: num
   return regels;
 }
 
-/** Keuringsregel (informatief): in hoeveel shots nog een stream-overlay staat. Faalt niet: een stukje chat is geen fout, wel iets om te zien. */
+/**
+ * Keuringsregel (informatief): in hoeveel shots nog een stream-overlay staat.
+ * Faalt niet: een stukje chat is geen fout, wel iets om te zien. Altijd
+ * `goed: true` — met null werd het eindoordeel van een verder foutloze clip
+ * "niet goed" (dat telt alleen regels die allemaal true zijn).
+ */
 export function keurStreamOverlay(vakken: Box[] | null | undefined, nogInBeeld: number[]): KeuringRegel {
   const naam = 'stream-overlay uit beeld';
-  if (!vakken?.length) return { naam, goed: null, detail: 'geen stream-overlay in de bron' };
+  if (!vakken?.length) return { naam, goed: true, detail: 'geen stream-overlay in de bron' };
   return {
     naam,
-    goed: null,
+    goed: true,
     detail: nogInBeeld.length
       ? `${vakken.length} vak(ken); nog in beeld in shot ${nogInBeeld.join(', ')} (opzij of inzoomen paste niet zonder de spreker uit het midden te halen)`
       : `${vakken.length} vak(ken), overal buiten het kader`,

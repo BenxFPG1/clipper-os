@@ -67,7 +67,7 @@ async function main() {
     const voor = { ...krap };
     const r3 = wijkVoorOverlays([krap], [CHAT], 'vullend', { bronHoogte: 1080 });
     toets('past niet: kader ongemoeid en gemeld', krap.focusX === voor.focusX && krap.zoom === voor.zoom && r3.nogInBeeld.length === 1, JSON.stringify({ krap, r3 }));
-    toets('keuring noemt het, maar faalt niet', keurStreamOverlay([CHAT], r3.nogInBeeld).goed === null && /nog in beeld/.test(keurStreamOverlay([CHAT], r3.nogInBeeld).detail));
+    toets('keuring noemt het, maar faalt niet (en houdt het eindoordeel niet tegen)', keurStreamOverlay([CHAT], r3.nogInBeeld).goed === true && /nog in beeld/.test(keurStreamOverlay([CHAT], r3.nogInBeeld).detail));
     toets('zonder overlays geen ingreep', wijkVoorOverlays([shot(0.33)], [], 'vullend').regels.length === 0);
   }
 
