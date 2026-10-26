@@ -20,6 +20,7 @@ import { deelstukken, kiesBevries, splitsOpBeeldsoort, vulScenes, type GezichtMe
 import { keurGraphics } from '../src/lib/roughcut/keuring';
 import { behandelEindscherm, keurOverlay, overlayUitPixels, vermijdOverlay } from '../src/lib/roughcut/eindscherm';
 import { plakKoppeltekens, plaatsRegels } from '../src/lib/roughcut/ondertitels';
+import { verdeelOverRegels } from '../src/lib/roughcut/tekstkaarten';
 import { pythonMetOpenCV } from '../src/lib/python';
 import { keurLeesbaar, leesLogregel, leestijd, leestijdPlan } from '../src/lib/roughcut/leestijd';
 import { instelling } from '../src/lib/roughcut/instellingen';
@@ -98,6 +99,33 @@ console.log('leestijd');
   // Een graphic die lang genoeg is blijft ongemoeid.
   const genoeg: Shot = { ...a, end: 9, scenes: [{ van: 4, tot: 6, gezicht: true }, { van: 6, tot: 9, gezicht: false, leeswoorden: 4, bevries: 8.9 }] };
   toets('lang genoeg: geen aanpassing', leestijdPlan([genoeg, b], 'vullend').aanpassing.size === 0);
+}
+
+console.log('tekstkaart: altijd binnen het beeld');
+{
+  // Een tekst die op één regel niet past, gaat over twee gelijke regels
+  // (PLATINA plan-7.1 clip 1: "MacroCheck over platina, het derde edelmetaal…"
+  // liep aan beide kanten uit beeld).
+  const meet = { measureText: (t: string) => ({ width: t.length * 30 }) };
+  const regels = verdeelOverRegels(meet, 'MacroCheck over platina, het derde edelmetaal dat niemand noemt', 900);
+  toets('elke regel binnen de breedte (te veel voor twee regels → tekenKaart neemt een kleinere letter)', regels.every((r) => r.length * 30 <= 900), JSON.stringify(regels));
+  toets('op een ruimere breedte twee regels', verdeelOverRegels(meet, 'MacroCheck over platina, het derde edelmetaal dat niemand noemt', 1100).length === 2);
+  const kort = verdeelOverRegels(meet, 'Vier jaar: meer vraag dan aanbod', 600);
+  toets('gelijk verdeeld, geen los woord eronder', kort.length === 2 && Math.abs(kort[0].length - kort[1].length) <= 8, JSON.stringify(kort));
+  toets('past het op één regel, dan één regel', verdeelOverRegels(meet, 'Korte kaart', 900).length === 1);
+}
+
+console.log('leestijd: één graphic over twee shots (kaderwissel)');
+{
+  // PLATINA plan-7.1 clip 1: de retentie knipte één graphic ("Platina is
+  // geen tweede goud", bron 280,4–286,2) in twee shots. Als twee graphics
+  // geteld stond elk 3 s van de nodige 4 s; samen staat hij 5,8 s.
+  const g1: Shot = { volgorde: 2, start: 280.4, end: 283.2, functie: 'escalatie', scenes: [{ van: 280.4, tot: 286.2, gezicht: false, leeswoorden: 10, bevries: 283 }] };
+  const g2: Shot = { volgorde: 2.01, start: 283.2, end: 286.2, functie: 'escalatie', scenes: [{ van: 280.4, tot: 286.2, gezicht: false, leeswoorden: 10, bevries: 285.5 }] };
+  const sp: Shot = { volgorde: 3, start: 293, end: 296, functie: 'payoff' };
+  const plan = leestijdPlan([g1, g2, sp], 'vullend');
+  toets('één leesmoment, 5,8 s in beeld', plan.graphics.length === 1 && Math.abs(plan.graphics[0].getoond - 5.8) < 0.05, JSON.stringify(plan.graphics.map((x) => [x.duur, x.getoond, x.nodig])));
+  toets('keuring "graphics leesbaar" groen', keurLeesbaar([g1, g2, sp], 'vullend').goed === true, keurLeesbaar([g1, g2, sp], 'vullend').detail);
 }
 
 console.log('leestijd: graphics direct achter elkaar (blok)');

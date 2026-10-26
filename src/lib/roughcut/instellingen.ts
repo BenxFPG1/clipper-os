@@ -138,7 +138,10 @@ const STANDAARD = {
   SPREKER_STAP: 0.1,
   /** Zelfherstel op de spreker: vanaf welk aandeel hoofd buiten beeld / afwijking van het midden het kader verplaatst wordt. */
   ZELFHERSTEL_SPREKER_BUITEN: 0.25,
-  ZELFHERSTEL_SPREKER_MIDDEN: 0.2,
+  // Net onder KEURING_UIT_MIDDEN_MAX (0,14): wat de keuring afkeurt, moet het
+  // zelfherstel ook oppakken. Met 0,2 bleef "15% uit het midden" (PLATINA
+  // plan-7.1 clip 1) liggen zonder dat er iets gebeurde.
+  ZELFHERSTEL_SPREKER_MIDDEN: 0.13,
   /** Tweeshot alleen als elk gezicht minstens dit aandeel van de beeldbreedte (9:16) krijgt. */
   TWEESHOT_MIN_GEZICHT: 0.12,
   /**
@@ -247,6 +250,8 @@ const STANDAARD = {
    * over de bronregel). De inhoud krimpt zo nodig, nooit kleiner dan passend.
    */
   GRAPHIC_INHOUD_BOVEN: 0.24,
+  /** Verandert bij een graphic-wissel minder dan dit deel van het beeld, dan is het een opbouw van dezelfde pagina (één leesmoment). */
+  GRAPHIC_OPBOUW_MAX: 0.35,
   GRAPHIC_INHOUD_ONDER: 0.665,
 
   /**

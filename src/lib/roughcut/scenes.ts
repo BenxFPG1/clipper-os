@@ -39,6 +39,8 @@ export type Scene = {
   bevries?: number;
   /** Waarom er geen bevries-frame is (alleen voor de logregel). */
   geenBevries?: string;
+  /** Deze graphic bouwt voort op de vorige (er kwam een punt bij op dezelfde pagina): samen één leesmoment. */
+  opbouw?: boolean;
 };
 
 /** Een deelstuk van een shot in shot-tijd (0 = begin van het shot), met het kader dat de render gebruikt. */
@@ -54,6 +56,7 @@ export type Deelstuk = {
   /** Brontijd (absoluut) van het vast te houden frame bij een verlengde leestijd. */
   bevries?: number;
   geenBevries?: string;
+  opbouw?: boolean;
 };
 
 /**
@@ -115,6 +118,7 @@ export function deelstukken(shot: Shot, kader: Kader): Deelstuk[] {
         return undefined;
       })(),
       geenBevries: s.geenBevries,
+      opbouw: s.opbouw,
     }))
     .sort((a, b) => a.van - b.van);
   // Gaten dichten en de randen op de shotgrenzen: de poort en de
@@ -396,10 +400,11 @@ export async function vulScenes(
       // Ze worden gesplitst op de scènepieken ertussen, zodat elke graphic
       // zijn eigen leestijd, inhoud en vasthoudframe krijgt (leestijd.ts
       // behandelt ze daarna als blok).
-      const wissels = await graphicWissels(bron, randen[r], randen[r + 1]);
+      const detail = await graphicWisselsDetail(bron, randen[r], randen[r + 1]);
+      const wissels = detail.map((w) => w.t);
       const grenzenRun = [randen[r], ...wissels, randen[r + 1]];
       for (let k = 0; k + 1 < grenzenRun.length; k++) {
-        const scene: Scene = { van: grenzenRun[k], tot: grenzenRun[k + 1], gezicht: false };
+        const scene: Scene = { van: grenzenRun[k], tot: grenzenRun[k + 1], gezicht: false, ...(k > 0 && detail[k - 1].opbouw ? { opbouw: true } : {}) };
         await meetGraphic(scene);
         seg.scenes.push(scene);
       }
@@ -521,6 +526,15 @@ type Run = { van: number; tot: number; gezicht: boolean };
  * het frame met de grootste verandering ertussen.
  */
 export async function graphicWissels(bron: string, van: number, tot: number): Promise<number[]> {
+  return (await graphicWisselsDetail(bron, van, tot)).map((w) => w.t);
+}
+
+/**
+ * Idem, met per wissel of het een opbouw is: verandert minder dan
+ * GRAPHIC_OPBOUW_MAX van het beeld, dan kwam er iets bij op dezelfde pagina
+ * (een derde punt, een balk) in plaats van een nieuwe graphic.
+ */
+export async function graphicWisselsDetail(bron: string, van: number, tot: number): Promise<{ t: number; opbouw: boolean }[]> {
   const minAfstand = instelling('SCENE_GRAPHIC_MIN_AFSTAND');
   if (tot - van < 2 * minAfstand) return [];
   const B = 96;
@@ -560,17 +574,26 @@ export async function graphicWissels(bron: string, van: number, tot: number): Pr
       begin = -1;
     }
   }
-  const wissels: number[] = [];
+  const wissels: { t: number; opbouw: boolean }[] = [];
+  const veranderd = (a: Buffer, b: Buffer) => {
+    let m = 0;
+    // Lage drempel: twee graphics in andere kleuren kunnen in grijs bijna even
+    // licht zijn (blauw 72, groen 87); compressieruis op een stilstaande
+    // graphic blijft ruim onder de 10.
+    for (let k = 0; k < n; k++) if (Math.abs(a[k] - b[k]) > 10) m++;
+    return m / n;
+  };
   for (let p = 0; p + 1 < plateaus.length; p++) {
     const A = frames[plateaus[p].tot];
     const Bf = frames[plateaus[p + 1].van];
     if (verschil(A, Bf) < instelling('SCENE_GRAPHIC_ANDERS')) continue; // dezelfde graphic, even bewogen
+    const opbouw = veranderd(A, Bf) < instelling('GRAPHIC_OPBOUW_MAX');
     // De grens op de grootste verandering tussen de twee plateaus.
     let beste = plateaus[p].tot;
     for (let k = plateaus[p].tot; k < plateaus[p + 1].van; k++) if (d[k] > d[beste]) beste = k;
     const t = van + (beste + 1) / FPS;
-    if (t - van >= minAfstand && tot - t >= minAfstand && wissels.every((w) => Math.abs(w - t) >= minAfstand)) {
-      wissels.push(Math.round(t * 1000) / 1000);
+    if (t - van >= minAfstand && tot - t >= minAfstand && wissels.every((w) => Math.abs(w.t - t) >= minAfstand)) {
+      wissels.push({ t: Math.round(t * 1000) / 1000, opbouw });
     }
   }
   return wissels;

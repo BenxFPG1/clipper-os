@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { resolveBinary } from '../ingest/binaries';
 import { instelling } from './instellingen';
 import { basisZoom, type Shot } from './index';
+import { uitsnedeVan } from './kadercontrole';
 import type { SprekerFout } from './keuring';
 import type { BronWoord } from './woorden';
 
@@ -520,6 +521,14 @@ export function herstelSprekerKader(segmenten: Shot[], fouten: SprekerFout[]): {
       });
       for (const f of eigen) if (!seg.spoor.some((p) => Math.abs(p.t - f.t) < 0.05)) seg.spoor.push({ t: f.t, x: f.gezicht.x });
       seg.spoor.sort((a, b) => a.t - b.t);
+    } else if (eigen.every((f) => f.soort === 'uit_midden') && typeof seg.focusX === 'number' && !seg.paneel) {
+      // Alleen wat uit het midden: zo weinig mogelijk verschuiven (het gezicht
+      // naar 10% van het midden), niet helemaal centreren op dat ene moment —
+      // anders schuiven alle andere momenten van het shot uit het midden.
+      const w = uitsnedeVan(seg.focusX, seg.zoom ?? basisZoom(seg), seg.focusY ?? 0.5);
+      const breed = w.x1 - w.x0;
+      const kant = Math.sign(x - seg.focusX) || 1;
+      seg.focusX = Math.round((x - kant * 0.1 * breed) * 1000) / 1000;
     } else {
       seg.focusX = x;
     }

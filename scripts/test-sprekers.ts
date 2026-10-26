@@ -18,6 +18,8 @@ import { actieveSprekers, herstelSprekerKader, meetSprekers, pasSprekersToe, twe
 import { keurGezichtDetail, type GezichtPuntMeting } from '../src/lib/roughcut/keuring';
 import { besluitScherpBegin, pasScherpBeginToe, scherpteMeterVia, type ScherpteMeting } from '../src/lib/roughcut/scherpbegin';
 import { instelling } from '../src/lib/roughcut/instellingen';
+import { uitsnedeVan } from '../src/lib/roughcut/kadercontrole';
+import { basisZoom } from '../src/lib/roughcut';
 import { poort } from '../src/lib/roughcut/poort';
 import { herhaaldInBron, keurKnippen } from '../src/lib/roughcut/keuring';
 import type { BronWoord } from '../src/lib/roughcut/woorden';
@@ -117,8 +119,15 @@ async function main() {
     toets('zoom zodat het hele hoofd erin past (≤ 60% van de uitsnede)', 0.09 / ((1080 / (1920 * (16 / 9))) / (seg.zoom ?? 1)) <= 0.6 + 1e-6, String(seg.zoom));
     const na = await keurGezichtDetail({ segmenten: [seg], sprekerMeter: meter });
     toets('daarna: actieve spreker in beeld', na.regel.goed === true, na.regel.detail);
-    const klein = herstelSprekerKader([{ ...shot(0, 5) }], [{ volgorde: 1, t: 1, soort: 'uit_midden', waarde: 0.15, gezicht: vak }]);
-    toets('kleine afwijking (15% uit het midden): niet aanpassen', klein.log.length === 0);
+    // 15% uit het midden keurt de keuring af (grens 14%); het zelfherstel
+    // pakt het op, maar schuift zo weinig mogelijk: het gezicht naar 10% van
+    // het midden, niet helemaal gecentreerd op dat ene moment.
+    const kleinShot: Shot = { ...shot(0, 5) };
+    const vanX = kleinShot.focusX ?? 0.5;
+    const klein = herstelSprekerKader([kleinShot], [{ volgorde: 1, t: 1, soort: 'uit_midden', waarde: 0.15, gezicht: vak }]);
+    const u = uitsnedeVan(kleinShot.focusX ?? 0.5, kleinShot.zoom ?? basisZoom(kleinShot), kleinShot.focusY ?? 0.5);
+    const inBeeld = (vak.x - u.x0) / (u.x1 - u.x0);
+    toets('kleine afwijking (15%): kleine verschuiving, gezicht op ~10% van het midden', klein.log.length === 1 && Math.abs(Math.abs(inBeeld - 0.5) - 0.1) < 0.02 && kleinShot.focusX !== vak.x, JSON.stringify({ vanX, naar: kleinShot.focusX, inBeeld }));
     // Op een spoor: alleen het stuk rond het foute moment.
     const metSpoor: Shot = { ...shot(0, 6), spoor: [{ t: 0, x: 0.4 }, { t: 2, x: 0.4 }, { t: 4, x: 0.4 }, { t: 6, x: 0.4 }] };
     herstelSprekerKader([metSpoor], [{ volgorde: 1, t: 4.1, soort: 'niet_in_beeld', waarde: 0.4, gezicht: vak }]);

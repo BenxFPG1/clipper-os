@@ -63,7 +63,7 @@ const isGraphic = (seg: Shot, d: { kader: Kader; gezicht: boolean | null }) =>
 
 /** Het plan voor een hele montage (segmenten in volgorde). Puur rekenwerk. */
 export function leestijdPlan(segmenten: Shot[], kader: Kader): LeesPlan {
-  type Stuk = { shot: number; deel: number; start: number; duur: number; graphic: boolean; woorden: number | null; functie: string; inhoud?: Box | null; houdbaar: boolean; geenBevries?: string; herkomst: string };
+  type Stuk = { shot: number; deel: number; start: number; duur: number; graphic: boolean; woorden: number | null; functie: string; inhoud?: Box | null; houdbaar: boolean; geenBevries?: string; herkomst: string; opbouw?: boolean; bronVan: number; bronTot: number };
   const stukken: Stuk[] = [];
   let cursor = 0;
   segmenten.forEach((seg, i) => {
@@ -78,6 +78,9 @@ export function leestijdPlan(segmenten: Shot[], kader: Kader): LeesPlan {
         functie: seg.functie,
         inhoud: d.inhoud,
         geenBevries: d.geenBevries,
+        opbouw: d.opbouw,
+        bronVan: seg.start + d.van,
+        bronTot: seg.start + d.tot,
         // Waar dit stuk vandaan komt, voor de logregel: zonder dit was niet te
         // zien waaróm een graphic geen vasthoudframe had.
         herkomst:
@@ -117,13 +120,34 @@ export function leestijdPlan(segmenten: Shot[], kader: Kader): LeesPlan {
     const volgende = stukken[eind + 1];
     j = eind;
 
-    // Per graphic het tekort; een flits (korter dan GRAPHIC_MIN_VOOR_LEESTIJD)
-    // is een overgang, geen leesmoment, en telt niet mee.
-    const tekorten = blok.map((g) => {
-      if (g.duur < instelling('GRAPHIC_MIN_VOOR_LEESTIJD')) return { g, nodig: 0, tekort: 0, telt: false, reden: undefined as string | undefined };
-      const nodig = leestijd(g.woorden);
-      const tekort = Math.max(0, nodig - g.duur);
-      return { g, nodig, tekort: tekort > 0.05 ? tekort : 0, telt: true, reden: undefined as string | undefined };
+    // Eén graphic die in stukken in beeld komt is één leesmoment, geen reeks
+    // losse graphics: de leestijd geldt voor het geheel, en alleen het
+    // laatste stuk wordt zo nodig vastgehouden. Dat is zo als
+    //  - de stukken in de bron op elkaar aansluiten (een kaderwissel van de
+    //    retentie knipte één graphic in twee shots: "Platina is geen tweede
+    //    goud", samen 5,8 s, stond als twee graphics van 3 s te kort —
+    //    PLATINA plan-7.1 clip 1), of
+    //  - de pagina zich opbouwt (er komt een punt bij op dezelfde plek;
+    //    scenes.ts meet dat als een kleine beeldwissel).
+    const paginaVan: number[] = [];
+    blok.forEach((g, k) => {
+      const vorige = blok[k - 1];
+      // Over een shotgrens heen (een knip van de montage, niet van de bron);
+      // binnen een shot zijn de grenzen juist gemeten graphic-wissels.
+      const aansluitend = vorige !== undefined && vorige.shot !== g.shot && Math.abs(vorige.bronTot - g.bronVan) < 0.05;
+      const zelfdePlek = !g.inhoud || !vorige?.inhoud || overlap(g.inhoud, vorige.inhoud) >= 0.5;
+      paginaVan.push(k > 0 && (aansluitend || (g.opbouw && vorige?.shot === g.shot && zelfdePlek)) ? paginaVan[k - 1] : k);
+    });
+    // Per graphic (of per pagina, op haar laatste stap) het tekort; een flits
+    // (korter dan GRAPHIC_MIN_VOOR_LEESTIJD) is een overgang, geen leesmoment.
+    const tekorten = blok.map((g, k) => {
+      const delen = blok.filter((_, m) => paginaVan[m] === paginaVan[k]);
+      const laatsteStap = delen[delen.length - 1] === g;
+      const duur = delen.reduce((a, d) => a + d.duur, 0);
+      if (!laatsteStap || duur < instelling('GRAPHIC_MIN_VOOR_LEESTIJD')) return { g, nodig: 0, tekort: 0, telt: false, duur, reden: undefined as string | undefined };
+      const nodig = Math.max(...delen.map((d) => leestijd(d.woorden)));
+      const tekort = Math.max(0, nodig - duur);
+      return { g, nodig, tekort: tekort > 0.05 ? tekort : 0, telt: true, duur, reden: undefined as string | undefined };
     });
     for (const t of tekorten) if (t.tekort > 0 && !t.g.houdbaar) {
       t.reden = `geen gemeten graphic-frame om vast te houden${t.g.geenBevries ? `: ${t.g.geenBevries}` : ''} [${t.g.herkomst}]`;
@@ -169,7 +193,8 @@ export function leestijdPlan(segmenten: Shot[], kader: Kader): LeesPlan {
         totaal += vasthouden;
       }
       if (t.telt) {
-        const getoond = t.g.duur + vasthouden;
+        // Bij een opbouwende pagina telt de hele pagina, niet alleen de laatste stap.
+        const getoond = t.duur + vasthouden;
         graphics.push({
           shot: t.g.shot,
           deel: t.g.deel,
@@ -190,6 +215,16 @@ export function leestijdPlan(segmenten: Shot[], kader: Kader): LeesPlan {
     if (totaal > 0 && volgende) zet(volgende, { inkorten: Math.round(totaal * 100) / 100 });
   }
   return { aanpassing, graphics };
+}
+
+/** Hoeveel twee inhoudsvakken samenvallen (doorsnede gedeeld door vereniging). */
+function overlap(a: Box, b: Box): number {
+  const bx = Math.max(0, Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0));
+  const by = Math.max(0, Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0));
+  const doorsnede = bx * by;
+  const opp = (v: Box) => (v.x1 - v.x0) * (v.y1 - v.y0);
+  const vereniging = opp(a) + opp(b) - doorsnede;
+  return vereniging > 0 ? doorsnede / vereniging : 0;
 }
 
 /** De graphic die op dit tijdlijnmoment vastgehouden in beeld staat (voor de ondertitelplek), of undefined. */

@@ -259,13 +259,24 @@ export async function tekenKaart(ruweTekst: string, pad: string, stijl?: Huissti
   const canvas = createCanvas(B, H);
   const ctx = canvas.getContext('2d');
 
-  const fontgrootte = tekst.length > 24 ? 54 : 68;
-  ctx.font = `${font.gewicht} ${fontgrootte}px "${font.familie}", "Helvetica Neue", Arial, sans-serif`;
-  const breedte = ctx.measureText(tekst).width;
-
+  // Altijd binnen het beeld: over hoogstens twee regels verdeeld, en past
+  // het dan nog niet, een kleinere letter. Eén regel op vaste grootte liep
+  // bij een lange kaart aan beide kanten uit beeld ("acroCheck over platina,
+  // het derde edelmeta", PLATINA plan-7.1 clip 1).
   const padding = 42;
+  const maxTekst = B - 80 - padding * 2;
+  let fontgrootte = tekst.length > 24 ? 54 : 68;
+  let regels: string[] = [];
+  for (; fontgrootte >= 36; fontgrootte -= 4) {
+    ctx.font = `${font.gewicht} ${fontgrootte}px "${font.familie}", "Helvetica Neue", Arial, sans-serif`;
+    regels = verdeelOverRegels(ctx, tekst, maxTekst);
+    if (regels.length <= 2 && regels.every((r) => ctx.measureText(r).width <= maxTekst)) break;
+  }
+  const breedte = Math.max(...regels.map((r) => ctx.measureText(r).width));
+  const regelH = fontgrootte + 14;
+
   const balkB = Math.min(B - 80, breedte + padding * 2);
-  const balkH = fontgrootte + 46;
+  const balkH = regels.length * regelH + 32;
   const x = (B - balkB) / 2;
   // Bovenin, onder de hookzone: onderin staan nu de ondertitels (die daar
   // rond de kin van de spreker schuiven), en twee tekstlagen op dezelfde
@@ -292,9 +303,37 @@ export async function tekenKaart(ruweTekst: string, pad: string, stijl?: Huissti
   ctx.fillStyle = kleuren.tekst;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText(tekst, B / 2, y + balkH / 2 + 2);
+  regels.forEach((regel, i) => ctx.fillText(regel, B / 2, y + 16 + regelH * i + regelH / 2 + 2));
 
   await writeFile(pad, canvas.toBuffer('image/png'));
+}
+
+/** Woorden over regels die elk binnen `max` px blijven (een te lang los woord krijgt een eigen regel). */
+export function verdeelOverRegels(ctx: { measureText: (t: string) => { width: number } }, tekst: string, max: number): string[] {
+  const regels: string[] = [];
+  let huidig = '';
+  for (const w of tekst.split(/\s+/).filter(Boolean)) {
+    const proef = `${huidig} ${w}`.trim();
+    if (huidig && ctx.measureText(proef).width > max) {
+      regels.push(huidig);
+      huidig = w;
+    } else huidig = proef;
+  }
+  if (huidig) regels.push(huidig);
+  if (regels.length !== 2) return regels;
+  // Twee regels: zo gelijk mogelijk verdeeld, geen los woord eronder.
+  const woorden = tekst.split(/\s+/).filter(Boolean);
+  let beste = regels;
+  let besteMax = Math.max(...regels.map((r) => ctx.measureText(r).width));
+  for (let k = 1; k < woorden.length; k++) {
+    const twee = [woorden.slice(0, k).join(' '), woorden.slice(k).join(' ')];
+    const m = Math.max(...twee.map((r) => ctx.measureText(r).width));
+    if (m <= max && m < besteMax) {
+      beste = twee;
+      besteMax = m;
+    }
+  }
+  return beste;
 }
 
 /**
