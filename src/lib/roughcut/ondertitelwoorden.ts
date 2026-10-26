@@ -294,6 +294,8 @@ export async function corrigeerWoorden(
 
 Corrigeer ALLEEN duidelijke herkenningsfouten: een woord dat zo niet gezegd kan zijn en waarvan uit de context vaststaat wat het wel was ("enimetaal" → "edelmetaal", een verkeerd geschreven eigennaam die in de context staat). Eén woord voor één woord; alleen als de herkenning twee woorden aan elkaar plakte mag het er twee of drie worden ("duurtraloesje" → "duurste horloge"). Staan er ondertitels van de video zelf bij, dan zijn die leidend voor de spelling van namen, bijnamen en straattaal — tenzij ze zelf duidelijk automatisch en verhaspeld zijn; dan geldt de context.
 
+Let ook op korte woorden die bijna hetzelfde klinken: "En"/"Een", "de"/"een", "op"/"of", "dat"/"wat". Aan het begin van een zin na een punt is "Een aanbod dat…" bijna altijd "En aanbod dat…". De scriptfragmenten komen uit een tweede, onafhankelijke herkenning van dezelfde audio: wijkt een kort woord daarvan af, kies dan de variant die in de zin klopt (grammatica en betekenis) — het fragment is niet altijd juist ("Goud beweegt of vertrouwen" moet "op vertrouwen" zijn).
+
 Niet doen: herschrijven, stijl of grammatica verbeteren, woorden toevoegen of weglaten, spreektaal netjes maken, getallen veranderen. Twijfel je, dan laat je het staan. Geen fout gevonden: een lege lijst.`;
   const regels = [
     context.titel ? `Video: ${context.titel}` : null,
