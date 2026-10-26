@@ -214,7 +214,7 @@ ${signalenVoorPrompt(signalen) || '(geen meetdata beschikbaar)'}${
   // instappunt zonder context verplaatst, te lange clips ingekort; wat
   // daarna nog fout is krijgt score ≤ 5 en valt af. Vóór de verhaaldokter,
   // zodat die de gerepareerde clips beoordeelt en de rest als signaal krijgt.
-  const regelOpties = { energie: input.energie ?? [], transcript: input.transcript, log: (m: string) => console.log(`[planner] ${m}`) };
+  const regelOpties = { energie: input.energie ?? [], transcript: input.transcript, titel: input.title, log: (m: string) => console.log(`[planner] ${m}`) };
   const voorDokter = pasPlanRegelsToe(examined, formaat, regelOpties);
   examined.clips = voorDokter.plan.clips;
 

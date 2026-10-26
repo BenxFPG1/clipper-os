@@ -230,6 +230,15 @@ function bronZinNa(t: number, transcript: TranscriptSegment[]): TranscriptSegmen
 
 const overlaptMet = (shots: ShotLike[], van: number, tot: number, behalve: ShotLike) => shots.some((s) => s !== behalve && s.start < tot - 0.2 && s.end > van + 0.2);
 
+/** Welk deel van de inhoudswoorden van `a` ook in `b` staat (0..1). Korte woorden tellen niet. */
+export function woordOverlap(a: string, b: string): number {
+  const inhoudsWoorden = (t: string) => kaal(t).split(' ').filter((w) => w.length > 2);
+  const wa = inhoudsWoorden(a);
+  if (wa.length === 0) return 0;
+  const wb = new Set(inhoudsWoorden(b));
+  return wa.filter((w) => wb.has(w)).length / wa.length;
+}
+
 export type ClipOordeel = {
   /** Harde fouten die na de mechanische reparatie overblijven: score ≤ 5. */
   fouten: string[];
@@ -262,7 +271,7 @@ function openingProbleem(clip: Pick<Clip, 'shots' | 'hook'>, formaat: Formaat): 
 export function pasClipRegelsToe(
   invoer: Clip,
   formaat: Formaat,
-  opties: { energie?: Energiemoment[]; transcript?: TranscriptSegment[] } = {},
+  opties: { energie?: Energiemoment[]; transcript?: TranscriptSegment[]; titel?: string } = {},
 ): { clip: Clip; oordeel: ClipOordeel } {
   const fouten: string[] = [];
   const signalen: string[] = [];
@@ -385,6 +394,53 @@ export function pasClipRegelsToe(
     }
   }
 
+  // --- 7. Wat de kijker leest, voegt iets toe -----------------------------
+  // Hook-overlay, contextkaart en kaarten staan náást de ondertitels. Herhalen
+  // ze wat er op dat moment gezegd wordt, dan zijn het de duurste seconden
+  // van de clip zonder informatie (PLATINA plan-7.1 clip 1: overlay "Platina
+  // is niet goud. En dat is het punt." terwijl zij precies dat zegt; kaart
+  // "MacroCheck over platina, het derde edelmetaal" — de programmanaam).
+  let hook = invoer.hook;
+  let hooks = invoer.hooks;
+  let contextKaart = invoer.context_kaart;
+  let kaarten = invoer.kaarten;
+  {
+    const eersteTekst = zinnen(shots[0]?.transcript_fragment ?? '').slice(0, 2).join(' ');
+    const vraag = invoer.verhaallijn?.open_vraag?.trim() ?? '';
+    const vraagBruikbaar = vraag.split(/\s+/).length >= 3 && vraag.split(/\s+/).length <= 10;
+    const herhaalt = (overlay: string, gesproken: string) => woordOverlap(overlay, `${gesproken} ${eersteTekst}`) >= 0.6;
+    if (hook && herhaalt(hook.tekst_overlay, hook.gesproken_start)) {
+      if (vraagBruikbaar) {
+        ingrepen.push(`hook-overlay herhaalde de gesproken opening ("${hook.tekst_overlay.slice(0, 40)}") → de open vraag ("${vraag.slice(0, 50)}")`);
+        hook = { ...hook, tekst_overlay: vraag };
+      } else {
+        signalen.push(`hook-overlay "${hook.tekst_overlay.slice(0, 50)}" herhaalt wat er gezegd wordt — de overlay hoort de vraag of de inzet toe te voegen`);
+      }
+    }
+    if (hooks?.length) {
+      hooks = hooks.map((h) => (herhaalt(h.tekst_overlay, h.gesproken_start) && vraagBruikbaar ? { ...h, tekst_overlay: vraag } : h));
+    }
+    if (contextKaart) {
+      // De programma- of kanaalnaam staat bij YouTube vaak achter een "|" in de titel.
+      const programma = opties.titel?.includes('|') ? kaal(opties.titel.split('|').pop() ?? '') : '';
+      const noemtProgramma = programma.length >= 3 && kaal(contextKaart).includes(programma);
+      const titelHerhaling = noemtProgramma || (opties.titel ? woordOverlap(contextKaart, opties.titel) >= 0.5 : false);
+      const gesproken = shots.slice(0, 2).map((s) => s.transcript_fragment ?? '').join(' ');
+      if (titelHerhaling || woordOverlap(contextKaart, gesproken) >= 0.6) {
+        ingrepen.push(`contextkaart weggehaald ("${contextKaart.slice(0, 50)}"): ${titelHerhaling ? 'herhaalt de videotitel/programmanaam' : 'zegt wat er al gesproken wordt'}`);
+        contextKaart = null;
+      }
+    }
+    if (kaarten?.length) {
+      const blijven = kaarten.filter((k) => {
+        const sh = shots.find((s) => s.volgorde === k.shot);
+        return !(sh && woordOverlap(k.tekst, sh.transcript_fragment ?? '') >= 0.7);
+      });
+      if (blijven.length < kaarten.length) ingrepen.push(`${kaarten.length - blijven.length} kaart(en) weggehaald: letterlijk wat er op dat moment gezegd wordt`);
+      kaarten = blijven;
+    }
+  }
+
   // --- 5. Comedy: het sterkste moment niet afgekapt ------------------------
   if (formaat === 'comedy' && opties.energie?.length && shots.length) {
     const laatste = shots[shots.length - 1];
@@ -438,11 +494,13 @@ export function pasClipRegelsToe(
     if (f.waarde < 0.15) signalen.push(`shot ${s.volgorde} (${s.functie}): ${f.redenen.join(', ') || 'weinig functie'} — zou de clip zonder dit shot slechter zijn?`);
   }
 
-  const clip: Clip = { ...invoer, shots: shots.map((s, i) => ({ ...s, volgorde: i + 1 })) };
+  const clip: Clip = { ...invoer, hook, hooks, context_kaart: contextKaart, shots: shots.map((s, i) => ({ ...s, volgorde: i + 1 })) };
   // Kaarten hangen aan een shotnummer: na weghalen/hernummeren opnieuw koppelen.
-  if (invoer.kaarten?.length) {
+  if (kaarten?.length) {
     const nieuw = new Map(shots.map((s, i) => [s.volgorde, i + 1]));
-    clip.kaarten = invoer.kaarten.filter((k) => nieuw.has(k.shot)).map((k) => ({ ...k, shot: nieuw.get(k.shot)! }));
+    clip.kaarten = kaarten.filter((k) => nieuw.has(k.shot)).map((k) => ({ ...k, shot: nieuw.get(k.shot)! }));
+  } else if (invoer.kaarten) {
+    clip.kaarten = [];
   }
   return { clip, oordeel: { fouten, signalen, ingrepen } };
 }
@@ -455,7 +513,7 @@ export function pasClipRegelsToe(
 export function pasPlanRegelsToe(
   plan: ClipPlan,
   formaat: Formaat,
-  opties: { energie?: Energiemoment[]; transcript?: TranscriptSegment[]; log?: (m: string) => void } = {},
+  opties: { energie?: Energiemoment[]; transcript?: TranscriptSegment[]; titel?: string; log?: (m: string) => void } = {},
 ): { plan: ClipPlan; oordelen: { titel: string; oordeel: ClipOordeel }[] } {
   const oordelen: { titel: string; oordeel: ClipOordeel }[] = [];
   const clips = plan.clips.map((c) => {

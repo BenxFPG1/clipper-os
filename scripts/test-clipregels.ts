@@ -310,6 +310,31 @@ async function main() {
     toets('schets stuurt niet meer op fragmenten die ver uit elkaar liggen', !/fragmenten die ver uit elkaar liggen/.test(schetsSystem(4, { naam: 'uitleg', min: 25, max: 50 })));
   }
 
+  console.log('wat de kijker leest voegt toe');
+  {
+    // PLATINA plan-7.1 clip 1, echte teksten.
+    const basis = clip(
+      [
+        shot(1, 274, 279, 'hook', 'Platina is niet goud. En dat is het punt. Platina combineert iets wat weinig assets hebben.'),
+        shot(2, 279, 293, 'escalatie', 'Vier jaar op rij meer vragen dan aanbod. En aanbod dat voor het grootste deel uit één land komt.'),
+        shot(3, 293, 307, 'payoff', 'Maar het is geen tweede goud. En Platina beweegt ook daarop, maar ook op autoverkopen.'),
+      ],
+      {
+        hook: { type: 'x', tekst_overlay: 'Platina is niet goud. En dat is het punt.', gesproken_start: 'Platina is niet goud.' },
+        context_kaart: 'MacroCheck over platina, het derde edelmetaal',
+        kaarten: [{ shot: 2, tekst: 'Vier jaar: meer vraag dan aanbod' }, { shot: 3, tekst: '1,8 miljoen ounce tekort' }],
+      },
+    );
+    basis.verhaallijn = { ...basis.verhaallijn, open_vraag: 'Tekort, en tóch geen hogere prijs?' };
+    const r = pasClipRegelsToe(basis, 'uitleg', { titel: 'Waarom PLATINA ineens weer belangrijk is | MacroCheck' });
+    toets('overlay die de gesproken opening herhaalt → de open vraag', r.clip.hook.tekst_overlay === 'Tekort, en tóch geen hogere prijs?', r.clip.hook.tekst_overlay);
+    toets('contextkaart met de programmanaam weg', r.clip.context_kaart === null, String(r.clip.context_kaart));
+    toets('kaart die letterlijk zegt wat er gezegd wordt weg, een getal dat je niet hoort blijft', r.clip.kaarten?.length === 1 && r.clip.kaarten[0].tekst === '1,8 miljoen ounce tekort', JSON.stringify(r.clip.kaarten));
+    const eigen = pasClipRegelsToe(clip([shot(1, 0, 5, 'hook', 'Ik kocht een horloge van vijf miljoen.'), shot(2, 5, 30, 'payoff', 'En zij vond het lelijk.')], { hook: { type: 'x', tekst_overlay: 'Wie betaalt de rekening?', gesproken_start: 'Ik kocht een horloge van vijf miljoen.' } }), 'interview', {});
+    toets('een overlay die iets toevoegt blijft staan', eigen.clip.hook.tekst_overlay === 'Wie betaalt de rekening?');
+    toets('prompt: hook is spanning, geen stelling; overlay herhaalt niet', /DE HOOK IS SPANNING/.test(planExamenSystem(4, { naam: 'uitleg', min: 25, max: 50 })) && /WAT DE KIJKER LEEST VOEGT TOE/.test(planExamenSystem(4, { naam: 'uitleg', min: 25, max: 50 })));
+  }
+
   console.log(`\n${gedaan - gefaald}/${gedaan} geslaagd`);
   if (gefaald > 0) process.exit(1);
 }
