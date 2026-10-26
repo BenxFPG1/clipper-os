@@ -252,6 +252,9 @@ const STANDAARD = {
   GRAPHIC_INHOUD_BOVEN: 0.24,
   /** Verandert bij een graphic-wissel minder dan dit deel van het beeld, dan is het een opbouw van dezelfde pagina (één leesmoment). */
   GRAPHIC_OPBOUW_MAX: 0.35,
+  /** Langzame push-in op een ingezoomde graphic die minstens zo lang in beeld staat (s), en hoeveel (5% = 1,05). */
+  GRAPHIC_BEWEGING_VANAF: 3.5,
+  GRAPHIC_BEWEGING: 0.05,
   GRAPHIC_INHOUD_ONDER: 0.665,
 
   /**

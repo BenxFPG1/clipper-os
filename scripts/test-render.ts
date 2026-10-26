@@ -642,6 +642,21 @@ async function main() {
             if (px[i] > 220 && px[i + 1] > 220 && px[i + 2] > 220) wit++;
           }
           toets('bronregel staat in het eindbeeld (niet weggesneden)', wit > 20, `${wit} witte pixels in ${lo.x},${lo.y}-${hi.x},${hi.y}`);
+          // Een graphic van 3,6 s krijgt een langzame push-in: aan het eind
+          // beslaat de witte tekst meer beeld dan aan het begin (≈ +10%
+          // oppervlak bij 5% zoom), en de lengte verandert niet.
+          const witOp = async (t: number) => {
+            const f = join(map, `graphic-${t}.raw`);
+            ff(['-ss', t.toFixed(2), '-i', uit, '-frames:v', '1', '-f', 'rawvideo', '-pix_fmt', 'rgb24', f]);
+            const p2 = await readFile(f);
+            let n = 0;
+            for (let q = 0; q < p2.length; q += 3) if (p2[q] > 220 && p2[q + 1] > 220 && p2[q + 2] > 220) n++;
+            return n;
+          };
+          const begin = await witOp(0.1);
+          const eind = await witOp(3.4);
+          toets('langzame push-in op de graphic (meer beeld aan het eind)', eind > begin * 1.05 && eind < begin * 1.2, `${begin} → ${eind} witte pixels`);
+          toets('lengte ongewijzigd door de beweging', Math.abs(probe(uit).duur - 3.6) < 0.1, `${probe(uit).duur}s`);
         } catch (e) {
           toets('render met ingezoomde graphic slaagt', false, (e as Error).message.slice(-400));
         }

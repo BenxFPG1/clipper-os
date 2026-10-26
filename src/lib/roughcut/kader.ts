@@ -34,6 +34,14 @@ export function kaderKeten(
      * passend op volle breedte.
      */
     inhoud?: { r: { x0: number; y0: number; x1: number; y1: number }; fgB: number; fgH: number; y0: number };
+    /**
+     * Alleen bij een ingezoomde graphic: een langzame push-in over de hele
+     * tijd dat hij in beeld staat (duur), met `vanaf` als startpunt voor een
+     * los gerenderd deel (het vastgehouden frame loopt door waar de beweging
+     * was). Een graphic van elf seconden zonder enige beweging was het
+     * zwakste stuk van PLATINA plan-7.1 clip 1.
+     */
+    beweging?: { duur: number; vanaf: number; fps: number };
   } = {},
 ): string {
   const zoom = opties.zoom ?? 1;
@@ -48,8 +56,15 @@ export function kaderKeten(
     const i = opties.inhoud;
     // Met gemeten inhoud: alleen dat gebied als voorgrond, zo groot als in
     // 9:16 past. De geblurde achtergrond blijft het hele beeld.
+    const b = opties.beweging;
+    const beweegt = Boolean(i && b && b.duur >= instelling('GRAPHIC_BEWEGING_VANAF'));
+    // Push-in op dubbele resolutie (anders trilt zoompan op hele pixels),
+    // binnen de marge die inhoudKader rond de inhoud laat.
+    const push = beweegt && i && b
+      ? `,scale=${i.fgB * 2}:${i.fgH * 2}:flags=lanczos,zoompan=z='1+${instelling('GRAPHIC_BEWEGING').toFixed(3)}*min(1,(in/${b.fps}+${b.vanaf.toFixed(3)})/${b.duur.toFixed(3)})':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=${i.fgB}x${i.fgH}:fps=${b.fps}`
+      : '';
     const voorgrond = i
-      ? `crop=iw*${(i.r.x1 - i.r.x0).toFixed(4)}:ih*${(i.r.y1 - i.r.y0).toFixed(4)}:iw*${i.r.x0.toFixed(4)}:ih*${i.r.y0.toFixed(4)},scale=${i.fgB}:${i.fgH}:flags=lanczos`
+      ? `crop=iw*${(i.r.x1 - i.r.x0).toFixed(4)}:ih*${(i.r.y1 - i.r.y0).toFixed(4)}:iw*${i.r.x0.toFixed(4)}:ih*${i.r.y0.toFixed(4)},scale=${i.fgB}:${i.fgH}:flags=lanczos${push}`
       : 'scale=1080:-2:flags=lanczos';
     // De voorgrond op de hoogte die inhoudKader koos (de inhoud tussen de
     // kaarten en de ondertitels); zonder gemeten inhoud gecentreerd.
