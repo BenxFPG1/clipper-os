@@ -335,6 +335,27 @@ async function main() {
     toets('prompt: hook is spanning, geen stelling; overlay herhaalt niet', /DE HOOK IS SPANNING/.test(planExamenSystem(4, { naam: 'uitleg', min: 25, max: 50 })) && /WAT DE KIJKER LEEST VOEGT TOE/.test(planExamenSystem(4, { naam: 'uitleg', min: 25, max: 50 })));
   }
 
+  console.log('de belofte van de overlay klinkt in de opening');
+  {
+    // Trainingsronde 2: overlay "Vier jaar tekort. En toch geen hogere prijs?",
+    // maar de clip opende met "Platina combineert iets…".
+    const maak = () =>
+      clip(
+        [
+          shot(1, 277, 284, 'hook', 'Platina combineert iets wat weinig assets hebben. Het is zeldzaam en onmisbaar.'),
+          shot(2, 284, 293, 'escalatie', 'Vier jaar op rij meer vragen dan aanbod. En de prijs die nog ver onder zijn eigen record staat.'),
+          shot(3, 293, 298, 'barst', 'Maar het is geen tweede goud. Goud beweegt op vertrouwen en monetaire politiek.'),
+          shot(4, 298, 307, 'payoff', 'En platina beweegt ook daarop, maar ook op autoverkopen. Dat maakt het volatieler en minder voorspelbaar.'),
+        ],
+        { hook: { type: 'x', tekst_overlay: 'Vier jaar tekort. En toch geen hogere prijs?', gesproken_start: 'Platina combineert iets wat weinig assets hebben.' } },
+      );
+    const r = pasClipRegelsToe(maak(), 'uitleg');
+    toets('uitleg: het shot dat de belofte uitspreekt gaat vooraan', /^Vier jaar op rij/.test(r.clip.shots[0].transcript_fragment ?? '') && r.clip.shots[0].functie === 'hook' && r.clip.hook.gesproken_start.startsWith('Vier jaar'), JSON.stringify(r.clip.shots.map((x) => x.transcript_fragment?.slice(0, 20))));
+    toets('de payoff blijft het laatste shot', r.clip.shots[r.clip.shots.length - 1].functie === 'payoff');
+    const verhaal = pasClipRegelsToe(maak(), 'interview');
+    toets('bij een verhaal (interview/comedy) blijft de volgorde staan', /^Platina combineert/.test(verhaal.clip.shots[0].transcript_fragment ?? ''));
+  }
+
   console.log(`\n${gedaan - gefaald}/${gedaan} geslaagd`);
   if (gefaald > 0) process.exit(1);
 }

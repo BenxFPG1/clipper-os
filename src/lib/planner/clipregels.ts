@@ -441,6 +441,34 @@ export function pasClipRegelsToe(
     }
   }
 
+  // --- 8. De belofte van de overlay klinkt in de eerste seconden -----------
+  // De overlay belooft een spanning ("Vier jaar tekort. En toch geen hogere
+  // prijs?"), maar de eerste gesproken zin had er niets mee te maken
+  // ("Platina combineert iets wat weinig assets hebben") — de spanning kwam
+  // pas na 16 s (trainingsronde 2). Spreekt een later shot die belofte wél
+  // uit, dan gaat dat shot vooraan: een andere volgorde, geen herhaling.
+  // Alleen bij uitleg: in een verhaal of een grap telt de volgorde van de
+  // gebeurtenissen (bij "De nep-Daytona" zou de onthulling naar voren komen),
+  // en alleen een escalatie die niet direct vóór de payoff staat.
+  if (formaat === 'uitleg' && hook?.tekst_overlay && shots.length >= 3) {
+    const opening = zinnen(shots[0].transcript_fragment ?? '').slice(0, 2).join(' ');
+    if (woordOverlap(hook.tekst_overlay, opening) < 0.15) {
+      const kandidaat = shots
+        .slice(1, -2)
+        .map((s) => ({ s, zin: zinnen(s.transcript_fragment ?? '')[0] ?? '' }))
+        .filter(({ s, zin }) => s.functie === 'escalatie' && s.end - s.start <= 12 && instappuntKwaliteit(zin).oordeel !== 'zwak' && !wijstTerug(zin))
+        .map((k) => ({ ...k, overlap: woordOverlap(hook!.tekst_overlay, k.zin) }))
+        .filter((k) => k.overlap >= 0.25)
+        .sort((a, b) => b.overlap - a.overlap)[0];
+      if (kandidaat) {
+        const oudEerste = shots[0];
+        shots = [{ ...kandidaat.s, functie: 'hook' }, ...shots.filter((s) => s !== kandidaat.s).map((s) => (s === oudEerste && s.functie === 'hook' ? { ...s, functie: 'setup' as const } : s))];
+        hook = { ...hook, gesproken_start: kandidaat.zin };
+        ingrepen.push(`de belofte van de overlay klonk niet in de opening: shot ${kandidaat.s.volgorde} ("${kandidaat.zin.slice(0, 50)}") vooraan gezet`);
+      }
+    }
+  }
+
   // --- 5. Comedy: het sterkste moment niet afgekapt ------------------------
   if (formaat === 'comedy' && opties.energie?.length && shots.length) {
     const laatste = shots[shots.length - 1];
