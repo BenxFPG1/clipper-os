@@ -886,7 +886,7 @@ async function verwerk(job: Job) {
     // volgnummer — retentiedelen en sprekerswissels hebben een fractie erachter),
     // op de huidige segmenten uitgerekend zodat ze elke tijdlijnverschuiving
     // volgen.
-    const planKaarten = () => planKaartenOpTijdlijn(segmenten, clip.kaarten ?? [], hookTot);
+    const planKaarten = () => planKaartenOpTijdlijn(segmenten, clip.kaarten ?? [], hookTot, bronWoorden);
     // Gevuld door de retentie-editor verderop; de re-hookkaart gaat mee in de overlays.
     let retentie: RetentieResultaat | null = null;
     let retentieKaarten: Kaart[] = [];

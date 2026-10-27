@@ -162,7 +162,7 @@ export function woordenOpTijdlijn(segmenten: Shot[], bronWoorden: BronWoord[]): 
       let t0 = s;
       for (const d of delen) {
         const t1 = t0 + ((e - s) * (d.length + 1)) / totaal;
-        uit.push({ w: d, s: t0, e: t1, ...(eersteVanShot && k > 0 && !aansluitendVoor ? { knip: true } : {}) });
+        uit.push({ w: vasteSpelling(d), s: t0, e: t1, ...(eersteVanShot && k > 0 && !aansluitendVoor ? { knip: true } : {}) });
         eersteVanShot = false;
         t0 = t1;
       }
@@ -170,6 +170,26 @@ export function woordenOpTijdlijn(segmenten: Shot[], bronWoorden: BronWoord[]): 
     cursor += duur;
   }
   return plakKoppeltekens(ontwarWoorden(uit));
+}
+
+/**
+ * Vaste spelling voor fouten die de spraakherkenning steeds maakt en die de
+ * correctiepas niet altijd ziet: bijvoeglijke naamwoorden op "-iele" krijgen
+ * een trema ("industriele" → "industriële", "financiele" → "financiële"),
+ * en losse woorden uit een korte lijst ("volatiler" → "volatieler").
+ */
+const VASTE_SPELLING: Record<string, string> = { volatiler: 'volatieler', volatilere: 'volatielere' };
+export function vasteSpelling(woord: string): string {
+  const m = woord.match(/^(["'“„(]*)(\p{L}+)([.,!?;:"'”)]*)$/u);
+  if (!m) return woord;
+  const [, voor, kern, na] = m;
+  const klein = kern.toLowerCase();
+  let nieuw = VASTE_SPELLING[klein];
+  if (!nieuw && /^\p{L}{3,}iele$/u.test(klein)) nieuw = `${klein.slice(0, -4)}iële`;
+  if (!nieuw) return woord;
+  // Hoofdletter van het origineel behouden.
+  if (kern[0] !== kern[0].toLowerCase()) nieuw = nieuw[0].toUpperCase() + nieuw.slice(1);
+  return `${voor}${nieuw}${na}`;
 }
 
 const kaalWoord = (w: string) => w.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');

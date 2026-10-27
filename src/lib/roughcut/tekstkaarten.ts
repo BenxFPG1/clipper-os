@@ -347,14 +347,38 @@ export function planKaartenOpTijdlijn(
   segmenten: { volgorde: number; start: number; end: number; tease?: boolean }[],
   kaarten: { shot: number; tekst: string }[],
   hookTot = 0,
+  /**
+   * De bronwoorden: dan komt een kaart op het woord waar hij over gaat (het
+   * eerste inhoudswoord van de kaart dat in zijn shot klinkt), niet aan het
+   * begin van het shot. "Record: $2.920 — nu ver eronder" stond in beeld
+   * seconden vóór zij het record noemde (PLATINA, trainingsronde 2).
+   */
+  bronWoorden?: { w: string; s: number; e: number }[] | null,
 ): { tekst: string; start: number; end: number }[] {
   const totaal = segmenten.reduce((t, sg) => t + (sg.end - sg.start), 0);
   const uit: { tekst: string; start: number; end: number }[] = [];
+  const kaal = (w: string) => w.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
   for (const k of kaarten) {
+    const sleutels = k.tekst.split(/\s+/).map(kaal).filter((w) => w.length >= 4 && !/^\d+$/.test(w));
+    // Het woord in het shot (op de tijdlijn) waar de kaart over gaat, of null.
+    const opWoord = (): number | null => {
+      if (!bronWoorden?.length || sleutels.length === 0) return null;
+      let c = 0;
+      for (const sg of segmenten) {
+        const duur = sg.end - sg.start;
+        if (Math.floor(sg.volgorde) === k.shot && !sg.tease) {
+          const w = bronWoorden.find((x) => x.s >= sg.start - 0.05 && x.s < sg.end && sleutels.some((sl) => kaal(x.w).length >= 4 && (kaal(x.w).startsWith(sl.slice(0, 5)) || sl.startsWith(kaal(x.w).slice(0, 5)))));
+          if (w) return c + Math.max(0, w.s - sg.start) - 0.1;
+        }
+        c += duur;
+      }
+      return null;
+    };
+    const opHetWoord = opWoord();
     let cursor = 0;
     for (const sg of segmenten) {
       if (Math.floor(sg.volgorde) === k.shot && !sg.tease) {
-        const start = Math.max(hookTot, cursor + 0.2);
+        const start = Math.max(hookTot, opHetWoord ?? cursor + 0.2);
         if (start < totaal - 0.8) uit.push({ tekst: k.tekst, start, end: Math.min(totaal, start + 2.4) });
         break;
       }

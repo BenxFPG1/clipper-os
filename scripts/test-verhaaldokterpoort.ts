@@ -287,6 +287,16 @@ console.log('plankaarten op de tijdlijn');
   toets('kaart op het begin van zijn shot (+0,2 s)', Math.abs(k[0].start - 3.2) < 1e-6 && Math.abs(k[0].end - 5.6) < 1e-6, JSON.stringify(k));
   toets('kaart bij shot 3 volgt de ingekorte tijdlijn', Math.abs(k[1].start - 7.7) < 1e-6, JSON.stringify(k));
   toets('kaart bij een onbekend shot vervalt', k.length === 2);
+  {
+    // Op het woord: "Record: $2.920 — nu ver eronder" komt in beeld als zij
+    // "record" zegt, niet aan het begin van het shot (trainingsronde 2).
+    const segs = [{ volgorde: 1, start: 10, end: 14 }, { volgorde: 2, start: 50, end: 58 }];
+    const woorden = [{ w: 'Vier', s: 50.2, e: 50.5 }, { w: 'jaar', s: 50.5, e: 50.8 }, { w: 'record', s: 55.1, e: 55.6 }, { w: 'staat.', s: 55.6, e: 56 }];
+    const [kaart] = planKaartenOpTijdlijn(segs, [{ shot: 2, tekst: 'Record: $2.920 — nu ver eronder' }], 2.4, woorden);
+    toets('plankaart op het woord waar hij over gaat ("record")', Math.abs(kaart.start - (4 + 5.1 - 0.1)) < 0.01, JSON.stringify(kaart));
+    const [zonder] = planKaartenOpTijdlijn(segs, [{ shot: 2, tekst: 'Iets heel anders' }], 2.4, woorden);
+    toets('geen passend woord: aan het begin van het shot', Math.abs(zonder.start - 4.2) < 0.01, JSON.stringify(zonder));
+  }
   const onderHook = planKaartenOpTijdlijn(segmenten, [{ shot: 1, tekst: 'vroeg' }], 2.4);
   toets('nooit onder de hookkaart', onderHook[0].start >= 2.4, JSON.stringify(onderHook));
 }

@@ -14,7 +14,7 @@ import { join } from 'node:path';
 import { resolveBinary } from '../src/lib/ingest/binaries';
 import { groveWoorden, haalBronWoorden, type BronWoord, type BronWoordCache } from '../src/lib/roughcut/woorden';
 import { corrigeerWoorden, pasCorrectiesToe } from '../src/lib/roughcut/ondertitelwoorden';
-import { bouwAss, groepeerRegels, keurOndertitelOverlap, REGEL_GAT, woordenOpTijdlijn } from '../src/lib/roughcut/ondertitels';
+import { bouwAss, groepeerRegels, keurOndertitelOverlap, REGEL_GAT, vasteSpelling, woordenOpTijdlijn } from '../src/lib/roughcut/ondertitels';
 import { editorTekst } from '../src/lib/roughcut/editortekst';
 import { kaartSchema } from '../src/lib/planner/schema';
 import type { Shot } from '../src/lib/roughcut';
@@ -173,6 +173,7 @@ async function main() {
         [{ volgorde: 3, start: 135, end: 137.2, functie: 'setup' }, { volgorde: 4, start: 164.5, end: 166.5, functie: 'setup' }],
         [{ w: 'wereld', s: 135.2, e: 135.6 }, { w: 'komt', s: 135.6, e: 135.9 }, { w: 'uit', s: 135.9, e: 136.2 }, { w: 'Zuid-Afrika.', s: 136.3, e: 137.1 }, { w: 'De', s: 164.58, e: 164.7 }, { w: 'Platinamarkt', s: 164.7, e: 165.4 }, { w: 'heeft', s: 165.4, e: 165.7 }],
       ));
+      toets('vaste spelling: industriele → industriële, volatiler → volatieler, rest ongemoeid', vasteSpelling('industriele') === 'industriële' && vasteSpelling('Financiele,') === 'Financiële,' && vasteSpelling('volatiler') === 'volatieler' && vasteSpelling('vele') === 'vele' && vasteSpelling('goud.') === 'goud.');
       toets('nieuwe regel na een knip, nooit "Afrika De"', overKnip.every((r) => !(r.woorden.some((w) => /Afrika/.test(w.w)) && r.woorden.some((w) => w.w === 'De'))), JSON.stringify(overKnip.map((r) => r.woorden.map((w) => w.w).join(' '))));
       toets('een losse slotzin-staart schuift bij de vorige regel als dat past', groepeerRegels([{ w: 'Het', s: 0, e: 0.2 }, { w: 'is', s: 0.2, e: 0.4 }, { w: 'zo', s: 0.4, e: 0.6 }, { w: 'klaar.', s: 0.6, e: 0.9 }]).map((r) => r.woorden.map((w) => w.w).join(' ')).join(' | ') === 'Het is zo klaar.', JSON.stringify(groepeerRegels([{ w: 'Het', s: 0, e: 0.2 }, { w: 'is', s: 0.2, e: 0.4 }, { w: 'zo', s: 0.4, e: 0.6 }, { w: 'klaar.', s: 0.6, e: 0.9 }]).map((r) => r.woorden.map((w) => w.w))));
     }
