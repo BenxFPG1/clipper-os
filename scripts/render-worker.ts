@@ -27,6 +27,7 @@ import {
   kaartenMap,
   planKaartenOpTijdlijn,
   editorTekst,
+  zelfstandigeKaart,
   type Huisstijl,
 } from '../src/lib/roughcut/tekstkaarten';
 import { controleerAssFont, maakOndertitels, type Ondertitels } from '../src/lib/roughcut/ondertitels';
@@ -967,10 +968,13 @@ async function verwerk(job: Job) {
       // Kandidaten voor de re-hook: eerst die van de edit-agent (die kent de
       // curve), dan uitvalrisico-regels die nog nergens als kaart staan.
       const geplaatst = new Set(vast.map((k) => k.tekst).filter(Boolean));
+      // Zelfstandig: geen flard van wat er gezegd wordt ("en dan die prijs
+      // nog"), dan de volgende kandidaat.
+      const gesproken = clip.shots.map((sh) => (sh as { transcript_fragment?: string }).transcript_fragment ?? '').join(' ');
       const rehookRegels = [
         (editClip as { rehook?: string | null } | null)?.rehook ?? null,
         ...(clip.uitval_risicos ?? []).map((r) => kaartRegelUit(r.fix)),
-      ].filter((r): r is string => Boolean(r) && !geplaatst.has(r as string) && !editorTekst(r));
+      ].filter((r): r is string => Boolean(r) && !geplaatst.has(r as string) && !editorTekst(r) && zelfstandigeKaart(r as string, gesproken));
       try {
         retentie = pasRetentieToe(segmenten, {
           formaat,

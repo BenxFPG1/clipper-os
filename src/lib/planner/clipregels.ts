@@ -239,6 +239,24 @@ export function woordOverlap(a: string, b: string): number {
   return wa.filter((w) => wb.has(w)).length / wa.length;
 }
 
+// Spanning in gesproken tekst: een tegenstelling, een getal, iets extreems of
+// iets waar veel van afhangt. Grof, maar genoeg om "Platina combineert iets
+// wat weinig assets hebben" (0) te onderscheiden van "Vier jaar op rij meer
+// vraag dan aanbod … de prijs nog ver onder zijn eigen record" (5).
+const SPANNING: RegExp[] = [
+  /\ben toch\b|\bmaar\b|\bterwijl\b|\bondanks\b|\btoch\b/,
+  /\d|\b(twee|drie|vier|vijf|zes|zeven|acht|negen|tien|twaalf|twintig|honderd|duizend|miljoen|miljard|procent|helft|dubbel)\b/,
+  /\b(tekort|record|crash|nooit|niemand|alles|verdubbel\w*|gehalveerd|halveer\w*|verlies\w*|failliet|schuld\w*)\b/,
+  /\bver (onder|boven|weg)\b|\b(meer|minder|groter|kleiner|duurder|goedkoper|zeldzamer) dan\b/,
+  /\b(grootste|kleinste|meeste|minste|hoogste|laagste|eerste|enige|slechts|zelfs|alleen maar)\b/,
+  /\?/,
+];
+/** Hoeveel soorten spanning er in deze tekst zitten (0–6). */
+export function spanning(tekst: string): number {
+  const t = tekst.toLowerCase();
+  return SPANNING.filter((re) => re.test(t)).length;
+}
+
 export type ClipOordeel = {
   /** Harde fouten die na de mechanische reparatie overblijven: score ≤ 5. */
   fouten: string[];
@@ -466,6 +484,29 @@ export function pasClipRegelsToe(
         hook = { ...hook, gesproken_start: kandidaat.zin };
         ingrepen.push(`de belofte van de overlay klonk niet in de opening: shot ${kandidaat.s.volgorde} ("${kandidaat.zin.slice(0, 50)}") vooraan gezet`);
       }
+    }
+  }
+
+  // --- 8b. De opening met de meeste spanning ------------------------------
+  // Ook als de overlay bij een vlakke opening past (trainingsronde 3:
+  // "Zeldzamer dan goud. En toch geen goud." bij "Platina combineert iets
+  // wat weinig assets hebben"), bleef de spannendste zin halverwege staan.
+  // Heeft de opening weinig spanning en een latere escalatie duidelijk meer,
+  // dan gaat die vooraan. Zelfde grenzen als 8: alleen uitleg, nooit het shot
+  // vlak vóór de payoff.
+  if (formaat === 'uitleg' && shots.length >= 3 && shots[0].functie !== 'escalatie') {
+    const nu = spanning(shots[0].transcript_fragment ?? '');
+    const kandidaat = shots
+      .slice(1, -2)
+      .filter((s) => s.functie === 'escalatie' && s.end - s.start <= 12)
+      .map((s) => ({ s, zin: zinnen(s.transcript_fragment ?? '')[0] ?? '', score: spanning(s.transcript_fragment ?? '') }))
+      .filter((k) => k.score >= 3 && k.score >= nu + 2 && instappuntKwaliteit(k.zin).oordeel !== 'zwak' && !wijstTerug(k.zin))
+      .sort((a, b) => b.score - a.score)[0];
+    if (nu <= 1 && kandidaat) {
+      const oudEerste = shots[0];
+      shots = [{ ...kandidaat.s, functie: 'hook' }, ...shots.filter((s) => s !== kandidaat.s).map((s) => (s === oudEerste && s.functie === 'hook' ? { ...s, functie: 'setup' as const } : s))];
+      if (hook) hook = { ...hook, gesproken_start: kandidaat.zin };
+      ingrepen.push(`opening met weinig spanning (${nu}): shot ${kandidaat.s.volgorde} ("${kandidaat.zin.slice(0, 50)}", spanning ${kandidaat.score}) vooraan gezet`);
     }
   }
 

@@ -82,7 +82,7 @@ const editSchema = z.object({
         .string()
         .nullable()
         .describe(
-          'Korte re-hookregel (hoogstens zes woorden, spreektaal) die de render in het grootste risicogat vóór de payoff zet; null als de clip zonder kan.',
+          'Korte re-hookregel (hoogstens zes woorden, spreektaal) die de render in het grootste risicogat vóór de payoff zet: een zelfstandige zin of vraag met een hoofdletter die iets toevoegt ("Wat beweegt platina dan wél?"), nooit een flard van wat er gezegd wordt ("en dan die prijs nog"); null als de clip zonder kan.',
         ),
       eindcontrole: z.string().describe('Uitkomst van stap 7: wat is de zwakste plek van deze montage?'),
     }),

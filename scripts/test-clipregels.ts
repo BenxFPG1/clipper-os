@@ -12,6 +12,7 @@ import {
   herhaaldeZinnen,
   isAfsluiter,
   maxSprongen,
+  spanning,
   knipSlot,
   lengteBereik,
   pasClipRegelsToe,
@@ -354,6 +355,25 @@ async function main() {
     toets('de payoff blijft het laatste shot', r.clip.shots[r.clip.shots.length - 1].functie === 'payoff');
     const verhaal = pasClipRegelsToe(maak(), 'interview');
     toets('bij een verhaal (interview/comedy) blijft de volgorde staan', /^Platina combineert/.test(verhaal.clip.shots[0].transcript_fragment ?? ''));
+  }
+
+  console.log('de opening met de meeste spanning');
+  {
+    // Trainingsronde 3: de overlay paste bij de vlakke opening, dus regel 8
+    // greep niet in; de spannendste zin stond nog halverwege.
+    const c = clip(
+      [
+        shot(1, 277, 284, 'hook', 'Platina combineert iets wat weinig assets hebben. Het is zeldzaam en onmisbaar.'),
+        shot(2, 284, 293, 'escalatie', 'Vier jaar op rij meer vragen dan aanbod. En de prijs die nog ver onder zijn eigen record staat.'),
+        shot(3, 293, 298, 'barst', 'Maar het is geen tweede goud. Goud beweegt op vertrouwen.'),
+        shot(4, 298, 307, 'payoff', 'En platina beweegt ook daarop. Dat maakt het volatieler.'),
+      ],
+      { hook: { type: 'x', tekst_overlay: 'Zeldzamer dan goud. En toch geen goud.', gesproken_start: 'Platina combineert iets wat weinig assets hebben.' } },
+    );
+    toets('spanning meet een paradox met getal en record hoog, een vlakke zin laag', spanning('Vier jaar op rij meer vragen dan aanbod. En de prijs die nog ver onder zijn eigen record staat.') >= 3 && spanning('Platina combineert iets wat weinig assets hebben.') === 0);
+    const r = pasClipRegelsToe(c, 'uitleg');
+    toets('uitleg: de escalatie met de meeste spanning gaat vooraan', /^Vier jaar op rij/.test(r.clip.shots[0].transcript_fragment ?? ''), JSON.stringify(r.oordeel.ingrepen));
+    toets('…niet bij comedy', /^Platina combineert/.test(pasClipRegelsToe(c, 'comedy').clip.shots[0].transcript_fragment ?? ''));
   }
 
   console.log(`\n${gedaan - gefaald}/${gedaan} geslaagd`);

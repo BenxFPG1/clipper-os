@@ -250,8 +250,32 @@ function kaartkleuren(stijl?: Huisstijl | null): { vlak: string; tekst: string; 
   return { vlak: accent, tekst: tekstOp(accent), rand: tekstOp(accent) === '#FFFFFF' ? null : 'rgba(0,0,0,0.25)' };
 }
 
+/**
+ * Is dit een zelfstandige kaarttekst? Een flard die met een verbindingswoord
+ * begint en geen vraag is ("en dan die prijs nog", trainingsronde 3), of een
+ * tekst die vooral herhaalt wat er gezegd wordt, hoort niet als kaart in beeld.
+ */
+export function zelfstandigeKaart(tekst: string, gesproken = ''): boolean {
+  const t = tekst.trim();
+  if (t.length < 3) return false;
+  const laag = t.toLowerCase();
+  if (/^(en|en dan|maar|dus|want|of|toen|dan|nou)\b/.test(laag) && !t.endsWith('?')) return false;
+  if (gesproken) {
+    const woorden = (x: string) => x.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/).filter((w) => w.length > 2);
+    const eigen = woorden(t);
+    const set = new Set(woorden(gesproken));
+    if (eigen.length && eigen.filter((w) => set.has(w)).length / eigen.length >= 0.7) return false;
+  }
+  return true;
+}
+
+/** Een kaart begint met een hoofdletter. */
+export function metHoofdletter(tekst: string): string {
+  return tekst.replace(/^(\s*["'“„(]*)(\p{Ll})/u, (_, voor: string, l: string) => voor + l.toUpperCase());
+}
+
 export async function tekenKaart(ruweTekst: string, pad: string, stijl?: Huisstijl | null): Promise<void> {
-  const tekst = veiligeTekst(ruweTekst);
+  const tekst = metHoofdletter(veiligeTekst(ruweTekst));
   const accent = stijl?.accent ?? undefined;
   const font = fontVoor(stijl);
   const B = 1080;

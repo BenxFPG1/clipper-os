@@ -20,7 +20,7 @@ import { deelstukken, kiesBevries, splitsOpBeeldsoort, vulScenes, type GezichtMe
 import { keurGraphics } from '../src/lib/roughcut/keuring';
 import { behandelEindscherm, keurOverlay, overlayUitPixels, vermijdOverlay } from '../src/lib/roughcut/eindscherm';
 import { plakKoppeltekens, plaatsRegels } from '../src/lib/roughcut/ondertitels';
-import { verdeelOverRegels } from '../src/lib/roughcut/tekstkaarten';
+import { metHoofdletter, verdeelOverRegels, zelfstandigeKaart } from '../src/lib/roughcut/tekstkaarten';
 import { pythonMetOpenCV } from '../src/lib/python';
 import { keurLeesbaar, leesLogregel, leestijd, leestijdPlan } from '../src/lib/roughcut/leestijd';
 import { instelling } from '../src/lib/roughcut/instellingen';
@@ -113,6 +113,16 @@ console.log('tekstkaart: altijd binnen het beeld');
   const kort = verdeelOverRegels(meet, 'Vier jaar: meer vraag dan aanbod', 600);
   toets('gelijk verdeeld, geen los woord eronder', kort.length === 2 && Math.abs(kort[0].length - kort[1].length) <= 8, JSON.stringify(kort));
   toets('past het op één regel, dan één regel', verdeelOverRegels(meet, 'Korte kaart', 900).length === 1);
+}
+
+console.log('kaarttekst: zelfstandig en met een hoofdletter');
+{
+  // Trainingsronde 3: de re-hook "en dan die prijs nog" stond in beeld.
+  const gesproken = 'Vier jaar op rij meer vragen dan aanbod. En de prijs die nog ver onder zijn eigen record staat.';
+  toets('flard met verbindingswoord, geen vraag: niet zelfstandig', !zelfstandigeKaart('en dan die prijs nog'));
+  toets('herhaling van wat er gezegd wordt: niet zelfstandig', !zelfstandigeKaart('De prijs ver onder zijn eigen record', gesproken));
+  toets('een vraag die iets toevoegt: wel', zelfstandigeKaart('Wat beweegt platina dan wél?', gesproken) && zelfstandigeKaart('Maar waarom dan niet duurder?'));
+  toets('hoofdletter vooraan, ook na een aanhalingsteken', metHoofdletter('record: $2.920') === 'Record: $2.920' && metHoofdletter('"waarom?"') === '"Waarom?"');
 }
 
 console.log('leestijd: één graphic over twee shots (kaderwissel)');
