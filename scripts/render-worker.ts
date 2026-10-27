@@ -81,6 +81,7 @@ import {
 import { editDoelen, type NormContext } from '../src/lib/vault/normen';
 import { resolveBinary } from '../src/lib/ingest/binaries';
 import { pythonMetOpenCV } from '../src/lib/python';
+import { richtGraphics } from '../src/lib/roughcut/graphiclezer';
 import { begrensOpschaal, keurStreamOverlay, meetStreamOverlays, wijkVoorOverlays } from '../src/lib/roughcut/streamoverlay';
 import { isDirecteBron } from '../src/lib/ingest/bron-url';
 import { pakFrames } from '../src/lib/roughcut/frames';
@@ -783,6 +784,14 @@ async function verwerk(job: Job) {
           `${sc.graphic} zonder (passend; ${sc.ingezoomd} ingezoomd op de inhoud, ${sc.animerend} animerend → niet ingezoomd), ${sc.wijd} wijd camerabeeld zonder gevonden gezicht (vullend), ` +
           `${sc.overgangen} overgang(en) op de scènepiek (${(sc.ms / 1000).toFixed(1).replace('.', ',')} s)`,
       );
+      // Graphics die lang in beeld staan: lezen welke blokken erop staan, en
+      // de zoom laten volgen wanneer de spreker ze noemt (graphiclezer.ts).
+      try {
+        const gericht = await richtGraphics(segmenten, bronPad, bronWoorden, (m) => console.log(`     ${m}`));
+        if (gericht) console.log(`     graphiclezer: ${gericht} graphic(s) met gerichte zoom`);
+      } catch (e) {
+        console.log(`     graphiclezer overgeslagen (${(e as Error).message.slice(0, 70)})`);
+      }
     } catch (e) {
       console.log(`     scènedetectie overgeslagen (${(e as Error).message.slice(0, 70)})`);
     }

@@ -820,6 +820,68 @@ async function main() {
 
     // 8. Ondertitelplek: onder de kin, boven de 78%-grens, nooit over het
     //    gezicht; zonder gezicht op de standaardhoogte.
+    console.log('graphic: de zoom volgt de spreker naar het genoemde blok');
+    {
+      // Drie kolommen (rood, groen, blauw), zoals "Zeldzaam / Industrieel
+      // onmisbaar / Geopolitiek kwetsbaar" in PLATINA. Zoompunten: groen op
+      // 1,5 s, blauw op 3,5 s. Daarna moet die kleur het beeld domineren.
+      const werk = join(map, 'focuswerk');
+      const fsp = await import('node:fs/promises');
+      await fsp.mkdir(werk, { recursive: true });
+      const doek = createCanvas(1280, 720);
+      const c = doek.getContext('2d');
+      c.fillStyle = '#ffffff';
+      c.fillRect(0, 0, 1280, 720);
+      const kolommen = [['#d22020', 90], ['#20a040', 490], ['#2040d0', 890]] as const;
+      for (const [kleur, x] of kolommen) {
+        c.fillStyle = kleur;
+        c.fillRect(x, 220, 300, 360);
+      }
+      const png = join(werk, 'g.png');
+      await fsp.writeFile(png, doek.toBuffer('image/png'));
+      const bron = join(werk, 'bron.mp4');
+      const gen = ff(['-loop', '1', '-i', png, '-f', 'lavfi', '-i', 'sine=frequency=220:duration=6', '-t', '6', '-r', '25', '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', bron]);
+      toets('bron met drie kolommen gegenereerd', gen.ok, gen.uit.slice(-200));
+      const kolom = (x: number) => ({ cx: (x + 150) / 1280, cy: 400 / 720, b: 300 / 1280, h: 360 / 720 });
+      const shot: Shot = {
+        volgorde: 1, start: 0, end: 6, functie: 'setup',
+        scenes: [{ van: 0, tot: 6, gezicht: false, inhoud: { x0: 0.05, y0: 0.27, x1: 0.95, y1: 0.83 }, focus: [{ t: 1.5, ...kolom(490) }, { t: 3.5, ...kolom(890) }] }],
+      };
+      const uit = join(map, 'focus.mp4');
+      try {
+        await maakRuweMontage({ sourceUrl: 'lokaal://test', shots: [shot], alGesegmenteerd: true, outputPad: uit, werkmap: werk, kader: 'vullend' });
+        const aandeel = async (t: number) => {
+          const f = join(map, `focus-${t}.raw`);
+          ff(['-ss', t.toFixed(2), '-i', uit, '-frames:v', '1', '-vf', 'scale=108:192', '-f', 'rawvideo', '-pix_fmt', 'rgb24', f]);
+          const px = await readFile(f);
+          const n = { r: 0, g: 0, b: 0 };
+          // Alleen de band van de graphic zelf (inhoudKader.y0..y0+fgH), niet
+          // de vervaagde achtergrond eromheen.
+          const k = inhoudKader({ x0: 0.05, y0: 0.27, x1: 0.95, y1: 0.83 });
+          const rij0 = Math.ceil((k.y0 / 1920) * 192) + 1;
+          const rij1 = Math.floor(((k.y0 + k.fgH) / 1920) * 192) - 1;
+          for (let q = rij0 * 108 * 3; q < Math.min(px.length, rij1 * 108 * 3); q += 3) {
+            if (px[q] > 170 && px[q + 1] < 90 && px[q + 2] < 90) n.r++;
+            if (px[q + 1] > 130 && px[q] < 90 && px[q + 2] < 120) n.g++;
+            if (px[q + 2] > 170 && px[q] < 90 && px[q + 1] < 120) n.b++;
+          }
+          return n;
+        };
+        const begin = await aandeel(0.5);
+        const midden = await aandeel(2.8);
+        const eind = await aandeel(5.2);
+        toets('begin: alle drie de kolommen in beeld', begin.r > 0 && begin.g > 0 && begin.b > 0, JSON.stringify(begin));
+        toets('na "groen" genoemd: groen domineert', midden.g > midden.r * 1.5 && midden.g > midden.b * 1.5, JSON.stringify(midden));
+        // Een kolom aan de rand kan niet in het midden: de uitsnede blijft
+        // binnen de graphic. Wel: de linker kolom uit beeld, de rechter veel
+        // groter dan in het overzicht.
+        toets('na "blauw" genoemd: rood uit beeld, blauw veel groter', eind.r < begin.r * 0.2 && eind.b > begin.b * 1.8 && eind.b >= eind.g * 0.8, JSON.stringify({ begin, eind }));
+        toets('lengte ongewijzigd door de gerichte zoom', Math.abs(probe(uit).duur - 6) < 0.1, `${probe(uit).duur}s`);
+      } catch (e) {
+        toets('render met gerichte zoom slaagt', false, (e as Error).message.slice(-400));
+      }
+    }
+
     console.log('ondertitelplek');
     {
       const regelH = ondertitelMaat(null).assGrootte;

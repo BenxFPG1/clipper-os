@@ -42,6 +42,12 @@ export function kaderKeten(
      * zwakste stuk van PLATINA plan-7.1 clip 1.
      */
     beweging?: { duur: number; vanaf: number; fps: number };
+    /**
+     * Gerichte beweging (graphiclezer.ts): zoompunten in seconden vanaf het
+     * begin van dit deel, met hun plek in het bronbeeld. Wint van de
+     * gelijkmatige push-in.
+     */
+    focus?: { t: number; cx: number; cy: number; b: number; h: number }[];
   } = {},
 ): string {
   const zoom = opties.zoom ?? 1;
@@ -60,9 +66,12 @@ export function kaderKeten(
     const beweegt = Boolean(i && b && b.duur >= instelling('GRAPHIC_BEWEGING_VANAF'));
     // Push-in op dubbele resolutie (anders trilt zoompan op hele pixels),
     // binnen de marge die inhoudKader rond de inhoud laat.
-    const push = beweegt && i && b
-      ? `,scale=${i.fgB * 2}:${i.fgH * 2}:flags=lanczos,zoompan=z='1+${instelling('GRAPHIC_BEWEGING').toFixed(3)}*min(1,(in/${b.fps}+${b.vanaf.toFixed(3)})/${b.duur.toFixed(3)})':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=${i.fgB}x${i.fgH}:fps=${b.fps}`
-      : '';
+    const gericht = beweegt && i && b && opties.focus && opties.focus.length >= 2 ? gerichteZoom(i, opties.focus, b) : null;
+    const push = gericht
+      ? `,scale=${i!.fgB * 2}:${i!.fgH * 2}:flags=lanczos,${gericht}`
+      : beweegt && i && b
+        ? `,scale=${i.fgB * 2}:${i.fgH * 2}:flags=lanczos,zoompan=z='1+${instelling('GRAPHIC_BEWEGING').toFixed(3)}*min(1,(in/${b.fps}+${b.vanaf.toFixed(3)})/${b.duur.toFixed(3)})':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=${i.fgB}x${i.fgH}:fps=${b.fps}`
+        : '';
     const voorgrond = i
       ? `crop=iw*${(i.r.x1 - i.r.x0).toFixed(4)}:ih*${(i.r.y1 - i.r.y0).toFixed(4)}:iw*${i.r.x0.toFixed(4)}:ih*${i.r.y0.toFixed(4)},scale=${i.fgB}:${i.fgH}:flags=lanczos${push}`
       : 'scale=1080:-2:flags=lanczos';
@@ -93,6 +102,54 @@ export function kaderKeten(
     // controle en hier in de render.
     `crop=1080:1920:min(max(iw*${f}-540\\,0)\\,iw-1080):min(max(ih*${fy}-960\\,0)\\,ih-1920)${scherp},` +
     'format=yuv420p'
+  );
+}
+
+/**
+ * zoompan die de spreker volgt: eerst de hele graphic, en op het moment dat
+ * een blok genoemd wordt een vloeiende overgang (0,35 s) naar dat blok, zo
+ * ver ingezoomd dat het blok heel in beeld blijft (hoogstens
+ * GRAPHIC_FOCUS_ZOOM). Tijd T loopt vanaf het begin van wat er van dit deel
+ * in beeld staat (b.vanaf voor het vastgehouden frame).
+ */
+export function gerichteZoom(
+  i: { r: { x0: number; y0: number; x1: number; y1: number }; fgB: number; fgH: number },
+  focus: { t: number; cx: number; cy: number; b: number; h: number }[],
+  b: { vanaf: number; fps: number },
+): string {
+  const rb = i.r.x1 - i.r.x0;
+  const rh = i.r.y1 - i.r.y0;
+  const overgang = 0.35;
+  type Sleutel = { t: number; fx: number; fy: number; z: number };
+  const sleutels: Sleutel[] = [{ t: 0, fx: 0.5, fy: 0.5, z: 1 }];
+  for (const p of focus) {
+    const fx = Math.min(1, Math.max(0, (p.cx - i.r.x0) / rb));
+    const fy = Math.min(1, Math.max(0, (p.cy - i.r.y0) / rh));
+    const deel = Math.max(p.b / rb, p.h / rh, 0.05);
+    const z = Math.max(1, Math.min(instelling('GRAPHIC_FOCUS_ZOOM'), 0.85 / deel));
+    const vorige = sleutels[sleutels.length - 1];
+    const t = Math.max(p.t, vorige.t + overgang + 0.05);
+    sleutels.push({ ...vorige, t: t - overgang });
+    sleutels.push({ t, fx, fy, z });
+  }
+  const T = `(in/${b.fps}+${b.vanaf.toFixed(3)})`;
+  // Stuksgewijs lineair: na de laatste sleutel blijft de waarde staan.
+  const lijn = (v: (s: Sleutel) => number): string => {
+    let expr = v(sleutels[sleutels.length - 1]).toFixed(4);
+    for (let k = sleutels.length - 2; k >= 0; k--) {
+      const a = sleutels[k];
+      const c = sleutels[k + 1];
+      const duur = Math.max(0.001, c.t - a.t);
+      expr = `if(lt(${T},${c.t.toFixed(3)}),${v(a).toFixed(4)}+(${(v(c) - v(a)).toFixed(4)})*(${T}-${a.t.toFixed(3)})/${duur.toFixed(3)},${expr})`;
+    }
+    return expr;
+  };
+  const z = lijn((s) => s.z);
+  const fx = lijn((s) => s.fx);
+  const fy = lijn((s) => s.fy);
+  return (
+    `zoompan=z='${z}':x='max(0,min(iw-iw/zoom,(${fx})*iw-iw/zoom/2))':y='max(0,min(ih-ih/zoom,(${fy})*ih-ih/zoom/2))'` +
+    `:d=1:s=${i.fgB}x${i.fgH}:fps=${b.fps}`
   );
 }
 

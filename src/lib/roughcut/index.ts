@@ -423,7 +423,7 @@ export async function maakRuweMontage(opties: {
       ]
         .filter(Boolean)
         .join(',') || null;
-    const ketenVoor = (deel: (typeof delen)[number], beweging?: { duur: number; vanaf: number }) => {
+    const ketenVoor = (deel: (typeof delen)[number], beweging?: { duur: number; vanaf: number; bronStart: number }) => {
       // Een graphic wordt passend getoond: het paneel van de spreker ertussen
       // uitsnijden zou de graphic juist weer aansnijden.
       const knip = deel.gezicht === false ? '' : paneelKnip;
@@ -456,7 +456,9 @@ export async function maakRuweMontage(opties: {
           focusYExpr: spoorYDeel ? (spoorExpressie(spoorYDeel) ?? undefined) : undefined,
           bronHoogte,
           inhoud,
-          beweging: beweging ? { ...beweging, fps: Number(fpsUit) || 25 } : undefined,
+          beweging: beweging ? { duur: beweging.duur, vanaf: beweging.vanaf, fps: Number(fpsUit) || 25 } : undefined,
+          // Zoompunten in seconden vanaf het begin van wat er van dit deel in beeld staat.
+          focus: beweging && deel.focus?.length ? deel.focus.map((p) => ({ ...p, t: p.t - beweging.bronStart })) : undefined,
         }) +
         // Kleurcorrectie alleen op camerabeeld: een graphic heeft de kleuren
         // van het merk, die blijven zoals ze zijn.
@@ -484,7 +486,7 @@ export async function maakRuweMontage(opties: {
     const aanpassing = delen.map((_, k) => lees.aanpassing.get(`${i}:${k}`) ?? { vasthouden: 0, inkorten: 0 });
     if (delen.length === 1 && aanpassing[0].vasthouden === 0 && aanpassing[0].inkorten === 0) {
       delenVideo.push(
-        `[${i * 2}:v]setpts=PTS-STARTPTS,fps=${fpsUit},${ketenVoor(delen[0], { duur: delen[0].tot - delen[0].van, vanaf: 0 })}${effect ? `,${effect}` : ''},setsar=1[v${i}]`,
+        `[${i * 2}:v]setpts=PTS-STARTPTS,fps=${fpsUit},${ketenVoor(delen[0], { duur: delen[0].tot - delen[0].van, vanaf: 0, bronStart: shot.start + delen[0].van })}${effect ? `,${effect}` : ''},setsar=1[v${i}]`,
       );
     } else {
       // Eén invoer, gesplitst en per deelstuk getrimd: het geluid blijft één
@@ -529,13 +531,13 @@ export async function maakRuweMontage(opties: {
         const vast = vasthouden > 0 && !h ? `,tpad=stop_mode=clone:stop_duration=${vasthouden.toFixed(3)}` : '';
         graaf +=
           `;[${labels[k]}i]trim=start=${van.toFixed(3)}:end=${deel.tot.toFixed(3)},setpts=PTS-STARTPTS,` +
-          `${ketenVoor({ ...deel, van }, { duur: zichtbaar, vanaf: 0 })}${vast},setsar=1[${labels[k]}${h ? 'a' : ''}]`;
+          `${ketenVoor({ ...deel, van }, { duur: zichtbaar, vanaf: 0, bronStart: shot.start + van })}${vast},setsar=1[${labels[k]}${h ? 'a' : ''}]`;
         if (h) {
           graaf +=
             // Precies één frame: na het fps-filter ligt er in elk venster van
             // één frameduur exact één frame.
             `;[v${i}h${k}i]trim=start=${h.rel.toFixed(3)}:duration=${frameDuur.toFixed(4)},setpts=PTS-STARTPTS,` +
-            `${ketenVoor({ ...deel, van: h.rel }, { duur: zichtbaar, vanaf: deel.tot - van })},tpad=stop_mode=clone:stop_duration=${Math.max(0, h.h - frameDuur).toFixed(3)},setsar=1[${labels[k]}b]` +
+            `${ketenVoor({ ...deel, van: h.rel }, { duur: zichtbaar, vanaf: deel.tot - van, bronStart: shot.start + van })},tpad=stop_mode=clone:stop_duration=${Math.max(0, h.h - frameDuur).toFixed(3)},setsar=1[${labels[k]}b]` +
             `;[${labels[k]}a][${labels[k]}b]concat=n=2:v=1:a=0[${labels[k]}]`;
         }
       });

@@ -41,6 +41,8 @@ export type Scene = {
   geenBevries?: string;
   /** Deze graphic bouwt voort op de vorige (er kwam een punt bij op dezelfde pagina): samen één leesmoment. */
   opbouw?: boolean;
+  /** Zoompunten (graphiclezer.ts): wanneer de spreker welk blok van de graphic noemt, in brontijd en bronbeeld. */
+  focus?: { t: number; cx: number; cy: number; b: number; h: number }[];
 };
 
 /** Een deelstuk van een shot in shot-tijd (0 = begin van het shot), met het kader dat de render gebruikt. */
@@ -57,6 +59,7 @@ export type Deelstuk = {
   bevries?: number;
   geenBevries?: string;
   opbouw?: boolean;
+  focus?: { t: number; cx: number; cy: number; b: number; h: number }[];
 };
 
 /**
@@ -119,6 +122,7 @@ export function deelstukken(shot: Shot, kader: Kader): Deelstuk[] {
       })(),
       geenBevries: s.geenBevries,
       opbouw: s.opbouw,
+      focus: s.focus,
     }))
     .sort((a, b) => a.van - b.van);
   // Gaten dichten en de randen op de shotgrenzen: de poort en de

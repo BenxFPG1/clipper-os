@@ -21,6 +21,7 @@ import { keurGraphics } from '../src/lib/roughcut/keuring';
 import { behandelEindscherm, keurOverlay, overlayUitPixels, vermijdOverlay } from '../src/lib/roughcut/eindscherm';
 import { plakKoppeltekens, plaatsRegels } from '../src/lib/roughcut/ondertitels';
 import { metHoofdletter, verdeelOverRegels, zelfstandigeKaart } from '../src/lib/roughcut/tekstkaarten';
+import { focusPunten } from '../src/lib/roughcut/graphiclezer';
 import { pythonMetOpenCV } from '../src/lib/python';
 import { keurLeesbaar, leesLogregel, leestijd, leestijdPlan } from '../src/lib/roughcut/leestijd';
 import { instelling } from '../src/lib/roughcut/instellingen';
@@ -123,6 +124,23 @@ console.log('kaarttekst: zelfstandig en met een hoofdletter');
   toets('herhaling van wat er gezegd wordt: niet zelfstandig', !zelfstandigeKaart('De prijs ver onder zijn eigen record', gesproken));
   toets('een vraag die iets toevoegt: wel', zelfstandigeKaart('Wat beweegt platina dan wél?', gesproken) && zelfstandigeKaart('Maar waarom dan niet duurder?'));
   toets('hoofdletter vooraan, ook na een aanhalingsteken', metHoofdletter('record: $2.920') === 'Record: $2.920' && metHoofdletter('"waarom?"') === '"Waarom?"');
+}
+
+console.log('graphiclezer: blokken gekoppeld aan het moment dat ze genoemd worden');
+{
+  // Echte lezing van de PLATINA-graphic en de woordtijden van de spreker.
+  const items = [
+    { tekst: 'ZELDZAAM', box: { x0: 0.07, y0: 0.31, x1: 0.35, y1: 0.82 } },
+    { tekst: 'INDUSTRIEEL ONMISBAAR', box: { x0: 0.37, y0: 0.31, x1: 0.65, y1: 0.82 } },
+    { tekst: 'GEOPOLITIEK KWETSBAAR', box: { x0: 0.66, y0: 0.31, x1: 0.96, y1: 0.82 } },
+  ];
+  const woorden = [
+    { w: 'zeldzaam,', s: 279.7, e: 280.4 }, { w: 'industrieel', s: 280.7, e: 281.2 }, { w: 'onmisbaar', s: 281.2, e: 281.8 },
+    { w: 'en', s: 281.8, e: 281.9 }, { w: 'geopolitiek', s: 282.24, e: 282.8 }, { w: 'kwetsbaar.', s: 282.8, e: 283.4 },
+  ];
+  const p = focusPunten(items, woorden, 280.4, 290);
+  toets('twee blokken genoemd terwijl de graphic in beeld is, in volgorde', p.length === 2 && p[0].t === 280.7 && Math.abs(p[0].cx - 0.51) < 1e-9 && p[1].t === 282.24 && Math.abs(p[1].cx - 0.81) < 1e-9, JSON.stringify(p));
+  toets('een blok dat niet genoemd wordt valt weg', focusPunten([{ tekst: 'Iets anders', box: items[0].box }], woorden, 280, 290).length === 0);
 }
 
 console.log('leestijd: één graphic over twee shots (kaderwissel)');

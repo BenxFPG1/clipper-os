@@ -255,6 +255,8 @@ const STANDAARD = {
   /** Langzame push-in op een ingezoomde graphic die minstens zo lang in beeld staat (s), en hoeveel. 5% bleek in trainingsronde 2 niet te zien; 10% valt binnen de marge rond de inhoud. */
   GRAPHIC_BEWEGING_VANAF: 3.5,
   GRAPHIC_BEWEGING: 0.1,
+  /** Hoe ver de gerichte zoom op een genoemd blok van een graphic hoogstens inzoomt (het blok blijft altijd heel in beeld). Een graphic is al verkleind tot 1080 px breed, dus tot ~1,8 blijft hij scherp. */
+  GRAPHIC_FOCUS_ZOOM: 1.6,
   GRAPHIC_INHOUD_ONDER: 0.665,
 
   /**
