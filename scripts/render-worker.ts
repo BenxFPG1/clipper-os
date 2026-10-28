@@ -65,7 +65,7 @@ import {
 import { controleerScript, kopInBron } from '../src/lib/roughcut/scriptcontrole';
 import { haalBronWoorden, vindFragment } from '../src/lib/roughcut/woorden';
 import { poort, verzetGrens } from '../src/lib/roughcut/poort';
-import { herhaaldInBron, keurGezichtDetail, keurGraphicsDetail, keurMontage, type Keuringsrapport } from '../src/lib/roughcut/keuring';
+import { herhaaldInBron, keurGezichtDetail, keurGraphicsDetail, keurMontage, keurScriptCompleet, type Keuringsrapport } from '../src/lib/roughcut/keuring';
 import { zelfherstelStap } from '../src/lib/roughcut/herstel';
 import { corrigeerWoorden, tweedeLezing, verfijnWoorden } from '../src/lib/roughcut/ondertitelwoorden';
 import { ruimBronCacheOp } from '../src/lib/roughcut/broncache';
@@ -1115,6 +1115,9 @@ async function verwerk(job: Job) {
       for (const ing of uitkomst.ingrepen) {
         console.log(`     POORT shot ${ing.volgorde} [${ing.regel}]: ${ing.wat}`);
       }
+      for (const n of new Set(segmenten.map((sg) => Math.floor(sg.volgorde)))) {
+        if (!uitkomst.segmenten.some((sg) => Math.floor(sg.volgorde) === n)) console.log(`     ⚠ POORT: shot ${n} uit het plan is helemaal vervallen`);
+      }
       if (uitkomst.segmenten.length !== segmenten.length) {
         segmenten.length = 0;
         segmenten.push(...uitkomst.segmenten);
@@ -1947,6 +1950,12 @@ async function verwerk(job: Job) {
         graphicsRegel: laatsteGraphicsKeuring && laatsteGraphicsKeuring.sleutel === segmentSleutel(segmenten) ? laatsteGraphicsKeuring.regel : undefined,
         streamOverlay: streamVakken.length ? keurStreamOverlay(streamVakken, streamNogInBeeld) : undefined,
       });
+      const compleet = keurScriptCompleet(clip.shots.map((sh) => sh.volgorde), segmenten);
+      rapport.regels.push(compleet);
+      if (compleet.goed === false) {
+        rapport.goed = false;
+        if (rapport.status === 'goed') rapport.status = 'review_nodig';
+      }
       tijd.keuring = (Date.now() - tKeuring) / 1000;
       if (retentieEind) await vulMontageplanAan(supabase, job.video_id, nummer, { retentie_eind: retentieEind });
       const s = (x: number) => `${x.toFixed(0)} s`;

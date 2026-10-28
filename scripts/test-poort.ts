@@ -11,7 +11,7 @@
  * Draaien: npm run test:poort
  */
 import { poort, verzetGrens, woordOnder } from '../src/lib/roughcut/poort';
-import { keurKnippen, keurOverlap, keuringStatus } from '../src/lib/roughcut/keuring';
+import { keurKnippen, keurOverlap, keurScriptCompleet, keuringStatus } from '../src/lib/roughcut/keuring';
 import { corrigeerKadrering, uitsnedeVan } from '../src/lib/roughcut/kadercontrole';
 import { basisZoom, type Shot } from '../src/lib/roughcut';
 import type { BronWoord } from '../src/lib/roughcut/woorden';
@@ -245,6 +245,24 @@ console.log('poort — regel 2: de tease (cold open) blijft staan');
   const payoff: Shot = { ...shot(2, 10.0, 16.0), ankerStart: 10.0, ankerEind: 16.0 };
   const { segmenten } = poort([lang, payoff], woorden);
   toets('een lange tease geldt niet als tease en vervalt als duplicaat', segmenten.length === 1);
+}
+
+{
+  // Trainingsronde 11: de opening (284,3–285,5 "Vier jaar op rij meer") lag in
+  // de bron ná een later shot (281,3–284,5, met ademruimte tot over "Vier").
+  // De poort kon alleen de eerdere inkorten en liet de openingszin vervallen.
+  const opening: Shot = { ...shot(1, 284.3, 285.54), functie: 'hook', ankerStart: 284.3, ankerEind: 285.54 };
+  const later: Shot = { ...shot(2.02, 281.28, 284.5), ankerStart: 281.28, ankerEind: 284.05 };
+  const { segmenten, ingrepen } = poort([opening, later], null);
+  const o = segmenten.find((s) => s.volgorde === 1);
+  const l = segmenten.find((s) => s.volgorde === 2.02);
+  toets('de opening blijft staan als hij in de staart van een later shot begint', o?.start === 284.3 && o?.end === 285.54, JSON.stringify(ingrepen));
+  toets('het latere shot levert zijn staart in', (l?.end ?? 0) <= 284.3 + 1e-9 && (l?.end ?? 0) >= 284.05 - 1e-9, `eind=${l?.end}`);
+  toets('geen overlap meer volgens de keuring', keurOverlap(segmenten).goed === true, keurOverlap(segmenten).detail);
+  const mist = keurScriptCompleet([1, 2, 3], [{ volgorde: 1.002 }, { volgorde: 2.02 }, { volgorde: 3 }]);
+  toets('script compleet: deelstukken tellen voor hun shot', mist.goed === true, mist.detail);
+  const zonderOpening = keurScriptCompleet([1, 2, 3], [{ volgorde: 2 }, { volgorde: 2.02 }, { volgorde: 3 }]);
+  toets('script compleet: ontbrekende opening is rood en wordt zo genoemd', zonderOpening.goed === false && /opent niet zoals gepland/.test(zonderOpening.detail), zonderOpening.detail);
 }
 
 console.log('poort — regel 0: een fragment wordt nooit gehalveerd');

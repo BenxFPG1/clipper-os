@@ -127,6 +127,24 @@ export function keurFragmenten(segmenten: Shot[]): KeuringRegel {
   };
 }
 
+/**
+ * Staat elk shot uit het plan nog in de montage? De poort kan een shot laten
+ * vervallen; dat hoort een uitzondering te zijn die opvalt. In trainingsronde
+ * 11 viel de openingszin weg en stond de keuring toch op groen — de
+ * scriptcontrole zag alleen de shots die er nog wél waren.
+ */
+export function keurScriptCompleet(planVolgordes: number[], segmenten: Pick<Shot, 'volgorde'>[]): KeuringRegel {
+  const over = new Set(segmenten.map((s) => Math.floor(s.volgorde)));
+  const plan = [...new Set(planVolgordes.map((v) => Math.floor(v)))].sort((a, b) => a - b);
+  const weg = plan.filter((n) => !over.has(n));
+  const eersteWeg = plan.length > 0 && weg.includes(plan[0]);
+  return {
+    naam: 'script compleet',
+    goed: weg.length === 0,
+    detail: weg.length === 0 ? `alle ${plan.length} shots uit het plan in de montage` : `shot ${weg.join(', ')} uit het plan ontbreekt${eersteWeg ? ' — de clip opent niet zoals gepland' : ''}`,
+  };
+}
+
 /** Regel 2: geen twee segmenten delen bronmateriaal. */
 export function keurOverlap(segmenten: Shot[]): KeuringRegel {
   const fouten: string[] = [];

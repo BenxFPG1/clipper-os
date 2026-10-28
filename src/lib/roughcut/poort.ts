@@ -333,6 +333,17 @@ export function poort(
           wat: `liep ${overlap.toFixed(1)}s in shot ${a.volgorde}; start → ${a.end.toFixed(2)}`,
         });
         b.start = a.end;
+      } else if (a.start > b.start && a.start - b.start >= 0.8 && (b.ankerEind === undefined || a.start >= b.ankerEind - 0.15)) {
+        // De eerdere (in de clip) ligt in de bron ná de latere en begint in
+        // zijn staart: de latere levert die staart in. Zonder deze tak viel in
+        // trainingsronde 11 de hele openingszin ("Vier jaar op rij meer") weg
+        // voor 0,2 s ademruimte aan het eind van een later shot.
+        ingrepen.push({
+          volgorde: b.volgorde,
+          regel: 'overlap',
+          wat: `liep ${overlap.toFixed(1)}s in shot ${a.volgorde}; eind → ${a.start.toFixed(2)}`,
+        });
+        b.end = a.start;
       } else {
         // Niet in te korten zonder een zin te halveren: de eerdere vervalt.
         vervallen.add(a.volgorde);
