@@ -273,10 +273,11 @@ export function effectKeten(
     return "drawbox=x=0:y=0:w=iw:h=ih:color=white@1:t=fill:enable='lt(t,0.067)'";
   }
 
-  if (effect === 'zwart_frame') {
-    // Eén ademteug zwart, vlak vóór wat er komt.
-    return "drawbox=x=0:y=0:w=iw:h=ih:color=black@1:t=fill:enable='lt(t,0.04)'";
-  }
+  // zwart_frame is geschrapt: een zwart frame midden in een verticale clip
+  // leest als een haperende video, niet als een ademteug (trainingsronde 8:
+  // "Maar het is" op zwart). Een plan of edit van vóór de schrapping krijgt
+  // geen effect.
+  if (effect === 'zwart_frame') return null;
 
   if (effect === 'shake') {
     // Korte trilling die uitdempt (exp), niet langer dan een fractie van een

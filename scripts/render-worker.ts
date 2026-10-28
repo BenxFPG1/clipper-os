@@ -31,7 +31,7 @@ import {
   type Huisstijl,
 } from '../src/lib/roughcut/tekstkaarten';
 import { controleerAssFont, maakOndertitels, type Ondertitels } from '../src/lib/roughcut/ondertitels';
-import { deelstukken, gezichtMeterVia, kiesBevries, meetOvergangen, vulScenes, waaromGeenBevries } from '../src/lib/roughcut/scenes';
+import { gezichtMeterVia, kiesBevries, meetOvergangen, vulScenes, waaromGeenBevries } from '../src/lib/roughcut/scenes';
 import { graphicMeterVia, lijktGraphic } from '../src/lib/roughcut/graphics';
 import { behandelEindscherm, bronDuur, keurOverlayDetail, overlayMeterVia, vermijdOverlay } from '../src/lib/roughcut/eindscherm';
 import { afwijkendeInstellingen, gebruikteInstellingen, instelling, ondertitelStijlStandaard } from '../src/lib/roughcut/instellingen';
@@ -1671,9 +1671,13 @@ async function verwerk(job: Job) {
           // staat ("wijd"): daar zit het risico op een bijgesneden titel of
           // logo. Trainingsronde 7: het ene frame per shot viel op het goede
           // deel, en de bijgesneden intro ("ROC") bleef staan.
-          for (const d of deelstukken(sg, kaderClip)) {
-            const sc = (sg.scenes ?? []).find((x) => x.wijd && x.van - sg.start <= d.van + 0.01 && x.tot - sg.start >= d.tot - 0.01);
-            if (sc && d.kader === 'vullend' && duurSeg > 0) punten.push(Math.min(0.98, (d.van + d.tot) / 2 / duurSeg));
+          // De scène zelf, niet het deelstuk: een "wijd" stuk (beweging, dus
+          // vermoedelijk een persoon) gaat op in één groot vullend deelstuk
+          // met de spreker eromheen (trainingsronde 8: de intro 12,5–18,7 s).
+          for (const sc of sg.scenes ?? []) {
+            if (!sc.wijd || duurSeg <= 0) continue;
+            const midden = (Math.max(sg.start, sc.van) + Math.min(sg.end, sc.tot)) / 2 - sg.start;
+            if (midden > 0 && midden < duurSeg) punten.push(Math.min(0.98, midden / duurSeg));
           }
           for (const [k, fractie] of punten.entries()) {
             const beeldPad = join(kaartMap, `eind-${String(sg.volgorde).padStart(4, '0')}-${k}.jpg`);
@@ -1701,7 +1705,9 @@ async function verwerk(job: Job) {
           // Ook: de meting vond geen gezicht ("wijd") en het beeld is volgens
           // het model een graphic — samen een sterk signaal (ronde 5: "geen
           // mens in beeld, alleen een rood vlak").
-          const wijd = (seg?.scenes ?? []).filter((sc) => sc.gezicht !== true && sc.wijd);
+          // Ook "wijd met persoon": de scènedetectie zag beweging en nam een
+          // persoon aan (de MACROCHECK-intro kreeg gezicht: true, wijd: true).
+          const wijd = (seg?.scenes ?? []).filter((sc) => sc.wijd);
           if (!seg || !(o.afgesneden_tekst || (o.beeldtype === 'graphic' && wijd.length > 0))) continue;
           for (const sc of wijd) {
             sc.wijd = false;

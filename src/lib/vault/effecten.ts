@@ -34,7 +34,6 @@ export const BEELD_EFFECT_SLUGS = [
   'speed_ramp',
   'slow_motion',
   'flits_wit',
-  'zwart_frame',
   'tekstkaart',
   'pijl_of_cirkel',
   'split_screen',
@@ -76,7 +75,6 @@ BEELD (veld "beeld_effect"):
 - speed_ramp: versnelt saaie aanloop en vertraagt op het moment dat het gebeurt.
 - slow_motion: alleen op reacties die je wilt laten landen; nooit op praten (de audio wordt onbruikbaar).
 - flits_wit: dekt een harde tijdsprong af; twee frames is genoeg.
-- zwart_frame: één zwart frame vlak vóór de payoff; werkt als een ademteug.
 - tekstkaart: kaart in beeld met een korte regel ("3 minuten later", "hij weet dit niet"). Verplicht bij elke tijdsprong.
 - pijl_of_cirkel: wijst aan waar je moet kijken bij een detail dat anders gemist wordt.
 - split_screen: twee reacties tegelijk, of vraag en antwoord naast elkaar.
