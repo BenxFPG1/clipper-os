@@ -31,7 +31,7 @@ import {
   type Huisstijl,
 } from '../src/lib/roughcut/tekstkaarten';
 import { controleerAssFont, maakOndertitels, type Ondertitels } from '../src/lib/roughcut/ondertitels';
-import { gezichtMeterVia, kiesBevries, meetOvergangen, vulScenes, waaromGeenBevries } from '../src/lib/roughcut/scenes';
+import { deelstukken, gezichtMeterVia, kiesBevries, meetOvergangen, vulScenes, waaromGeenBevries } from '../src/lib/roughcut/scenes';
 import { graphicMeterVia, lijktGraphic } from '../src/lib/roughcut/graphics';
 import { behandelEindscherm, bronDuur, keurOverlayDetail, overlayMeterVia, vermijdOverlay } from '../src/lib/roughcut/eindscherm';
 import { afwijkendeInstellingen, gebruikteInstellingen, instelling, ondertitelStijlStandaard } from '../src/lib/roughcut/instellingen';
@@ -1667,6 +1667,14 @@ async function verwerk(job: Job) {
           // eind niet — dan drie momenten.
           const beweegt = Boolean(sg.spoor?.length) || (sg.spreiding ?? 0) > 0.08;
           const punten = beweegt ? [0.2, 0.5, 0.85] : [0.5];
+          // En midden in elk stuk zonder gemeten gezicht dat vullend in beeld
+          // staat ("wijd"): daar zit het risico op een bijgesneden titel of
+          // logo. Trainingsronde 7: het ene frame per shot viel op het goede
+          // deel, en de bijgesneden intro ("ROC") bleef staan.
+          for (const d of deelstukken(sg, kaderClip)) {
+            const sc = (sg.scenes ?? []).find((x) => x.wijd && x.van - sg.start <= d.van + 0.01 && x.tot - sg.start >= d.tot - 0.01);
+            if (sc && d.kader === 'vullend' && duurSeg > 0) punten.push(Math.min(0.98, (d.van + d.tot) / 2 / duurSeg));
+          }
           for (const [k, fractie] of punten.entries()) {
             const beeldPad = join(kaartMap, `eind-${String(sg.volgorde).padStart(4, '0')}-${k}.jpg`);
             await new Promise<void>((klaar) => {
