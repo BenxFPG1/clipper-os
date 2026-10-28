@@ -67,7 +67,7 @@ import { haalBronWoorden, vindFragment } from '../src/lib/roughcut/woorden';
 import { poort, verzetGrens } from '../src/lib/roughcut/poort';
 import { herhaaldInBron, keurGezichtDetail, keurGraphicsDetail, keurMontage, type Keuringsrapport } from '../src/lib/roughcut/keuring';
 import { zelfherstelStap } from '../src/lib/roughcut/herstel';
-import { corrigeerWoorden, verfijnWoorden } from '../src/lib/roughcut/ondertitelwoorden';
+import { corrigeerWoorden, tweedeLezing, verfijnWoorden } from '../src/lib/roughcut/ondertitelwoorden';
 import { ruimBronCacheOp } from '../src/lib/roughcut/broncache';
 import {
   herstelWissels,
@@ -1240,6 +1240,7 @@ async function verwerk(job: Job) {
             verhaallijn: [clip.verhaallijn?.belofte, clip.verhaallijn?.payoff].filter(Boolean).join(' — ') || null,
             fragmenten: clip.shots.map((sh) => (sh as { transcript_fragment?: string }).transcript_fragment ?? '').filter(Boolean),
             captions: captionsVoor(segmenten),
+            tweede: tweedeLezing(inClip.map((x) => x.w), bronWoorden),
           },
         );
         const samen = [...v.woorden];

@@ -213,7 +213,53 @@ export type CorrectieContext = {
    * straattaal die Whisper verhaspelt ("Skaard-japtom").
    */
   captions?: string | null;
+  /**
+   * Per woord (zelfde index) wat de tweede, onafhankelijke herkenning (de
+   * hele-video-transcriptie, 'small') op hetzelfde moment hoorde; null als
+   * daar niets lag. Zie tweedeLezing.
+   */
+  tweede?: (string | null)[];
 };
+
+/** Korte woorden die bijna hetzelfde klinken en die de modellen door elkaar halen. */
+const VERWARBAAR = new Set(['en', 'een', 'de', 'het', 'op', 'of', 'dat', 'wat', 'die', 'dit', 'is', 'in']);
+
+/**
+ * Wat de tweede herkenning hoorde op het moment van elk woord: het
+ * bronwoord met de meeste overlap in tijd, of null.
+ */
+export function tweedeLezing(woorden: BronWoord[], bron: BronWoord[]): (string | null)[] {
+  return woorden.map((w) => {
+    let beste: BronWoord | null = null;
+    let besteOverlap = 0;
+    for (const b of bron) {
+      if (b.e <= w.s || b.s >= w.e) continue;
+      const o = Math.min(b.e, w.e) - Math.max(b.s, w.s);
+      if (o > besteOverlap) (beste = b), (besteOverlap = o);
+    }
+    return beste ? kaal(beste.w) : null;
+  });
+}
+
+function afstand(a: string, b: string): number {
+  const d = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    let vorige = d[0];
+    d[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const t = d[j];
+      d[j] = Math.min(d[j] + 1, d[j - 1] + 1, vorige + (a[i - 1] === b[j - 1] ? 0 : 1));
+      vorige = t;
+    }
+  }
+  return d[b.length];
+}
+
+/** Alle woorden waarmee een correctie onderbouwd kan worden, in kleine letters. */
+function contextWoorden(c: CorrectieContext): Set<string> {
+  const tekst = [c.titel, c.campagne, ...(c.namen ?? []), c.verhaallijn, ...(c.fragmenten ?? []), c.captions].filter(Boolean).join(' ');
+  return new Set(tekst.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean));
+}
 
 const kaal = (w: string) => w.replace(/[.,!?;:"'“”„()]+$/g, '').replace(/^["'“„(]+/, '');
 
@@ -225,6 +271,7 @@ const kaal = (w: string) => w.replace(/[.,!?;:"'“”„()]+$/g, '').replace(/^
 export function pasCorrectiesToe(
   woorden: BronWoord[],
   correcties: Correctie[],
+  context: CorrectieContext = {},
 ): { woorden: BronWoord[]; toegepast: { van: string; naar: string }[]; afgewezen: { van: string; naar: string; waarom: string }[] } {
   const uit = woorden.map((w) => ({ ...w }));
   const toegepast: { van: string; naar: string }[] = [];
@@ -254,6 +301,17 @@ export function pasCorrectiesToe(
     const verhouding = nieuwKaal.replace(/ /g, '').length / Math.max(1, oudKaal.length);
     if (verhouding > 3 || verhouding < 0.34) {
       weg('lengte wijkt te veel af');
+      continue;
+    }
+    // Een spellingsgok: een lang woord dat maar een letter of twee verandert
+    // ("volatiler" → "volatider") terwijl de context of de tweede herkenning
+    // het oude woord bevestigt en het nieuwe nergens voorkomt, is geen
+    // herkenningsfout maar het model dat gaat spellen.
+    const nieuwKlein = nieuwKaal.toLowerCase();
+    const oudKlein = oudKaal.toLowerCase();
+    const gesteund = (w: string) => contextWoorden(context).has(w) || context.tweede?.[c.index]?.toLowerCase() === w;
+    if (!nieuwKaal.includes(' ') && oudKaal.length >= 6 && afstand(oudKlein, nieuwKlein) <= 2 && gesteund(oudKlein) && !gesteund(nieuwKlein)) {
+      weg('spellingsgok zonder bron');
       continue;
     }
     const voor = oud.match(/^["'“„(]+/)?.[0] ?? '';
@@ -296,7 +354,16 @@ Corrigeer ALLEEN duidelijke herkenningsfouten: een woord dat zo niet gezegd kan 
 
 Let ook op korte woorden die bijna hetzelfde klinken: "En"/"Een", "de"/"een", "op"/"of", "dat"/"wat". Aan het begin van een zin na een punt is "Een aanbod dat…" bijna altijd "En aanbod dat…". De scriptfragmenten komen uit een tweede, onafhankelijke herkenning van dezelfde audio: wijkt een kort woord daarvan af, kies dan de variant die in de zin klopt (grammatica en betekenis) — het fragment is niet altijd juist ("Goud beweegt of vertrouwen" moet "op vertrouwen" zijn).
 
+Woorden met "≠" erachter: daar hoorde de tweede herkenning iets anders ("12:een≠de" = dit model hoorde "een", het andere "de"). Kies op die plekken ALTIJD expliciet: lever voor elk zo'n index een correctie met het woord dat in de zin klopt — ook als dat het huidige woord is. Een lidwoord dat naar iets bekends verwijst ("En de prijs die nog ver onder zijn record staat") is "de", niet "een".
+
 Niet doen: herschrijven, stijl of grammatica verbeteren, woorden toevoegen of weglaten, spreektaal netjes maken, getallen veranderen. Twijfel je, dan laat je het staan. Geen fout gevonden: een lege lijst.`;
+  // Alleen korte, verwarbare woorden markeren: bij lange woorden is het
+  // grote model vrijwel altijd beter en zou een markering alleen ruis zijn.
+  const twijfel = (i: number) => {
+    const a = kaal(woorden[i].w).toLowerCase();
+    const b = context.tweede?.[i]?.toLowerCase();
+    return !!b && a !== b && VERWARBAAR.has(a) && VERWARBAAR.has(b);
+  };
   const regels = [
     context.titel ? `Video: ${context.titel}` : null,
     context.campagne ? `Campagne/merk: ${context.campagne}` : null,
@@ -308,10 +375,10 @@ Niet doen: herschrijven, stijl of grammatica verbeteren, woorden toevoegen of we
   const user = `${regels.join('\n')}
 
 Ondertitelwoorden (index:woord):
-${woorden.map((w, i) => `${i}:${w.w}`).join(' ')}`;
+${woorden.map((w, i) => `${i}:${w.w}${twijfel(i) ? `≠${context.tweede![i]}` : ''}`).join(' ')}`;
   try {
     const r = await call(system, user);
-    const { woorden: uit, toegepast, afgewezen } = pasCorrectiesToe(woorden, r.correcties ?? []);
+    const { woorden: uit, toegepast, afgewezen } = pasCorrectiesToe(woorden, r.correcties ?? [], context);
     return { woorden: uit, toegepast, afgewezen, voorgesteld: (r.correcties ?? []).length };
   } catch (e) {
     return { woorden, toegepast: [], fout: (e as Error).message.slice(0, 100) };

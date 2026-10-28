@@ -231,6 +231,20 @@ async function vervolg() {
   const focus2 = segs[1].scenes?.[0].focus;
   toets('drie korte stukken van één pagina: één keer gelezen, alle stukken gericht', n === 1 && gelezen === 1 && (segs[0].scenes?.[1].focus?.length ?? 0) === 2 && (focus2?.length ?? 0) === 2, JSON.stringify({ n, gelezen, focus2 }));
   }
+  console.log('graphiclezer: blokken niet genoemd → zoom in leesvolgorde (trainingsronde 9)');
+  {
+  // Ronde 9: graphic 284,0–291,1 s, drie blokken gelezen, geen ervan
+  // genoemd ("Vier jaar op rij meer vraag dan aanbod…") — de graphic stond stil.
+  const segs = [{ volgorde: 1, start: 284, end: 291.1, functie: 'hook', scenes: [{ van: 284, tot: 291.1, gezicht: false }] }] as unknown as import('../src/lib/roughcut').Shot[];
+  const regels: string[] = [];
+  const n = await richtGraphics(segs, '/geen/bron', [{ w: 'Vier', s: 284.2, e: 284.4 }, { w: 'aanbod', s: 286, e: 286.4 }], (m) => regels.push(m), async () => [items[2], items[0], items[1]]);
+  const f = segs[0].scenes?.[0].focus ?? [];
+  toets('gericht in leesvolgorde (links → rechts), gelijk verdeeld', n === 1 && f.length === 3 && f[0].cx < f[1].cx && f[1].cx < f[2].cx && f[0].t > 284 && f[2].t < 291.1 - 1.2, JSON.stringify(f));
+  toets('gelogd als leesvolgorde', regels.some((r) => /leesvolgorde langs 3 blokken/.test(r)), regels.join(' | '));
+  const kort = [{ volgorde: 1, start: 284, end: 288, functie: 'hook', scenes: [{ van: 284, tot: 288, gezicht: false }] }] as unknown as import('../src/lib/roughcut').Shot[];
+  await richtGraphics(kort, '/geen/bron', [{ w: 'x', s: 284.2, e: 284.4 }], () => {}, async () => items);
+  toets('te kort voor drie blokken (< 1,2 s per blok): geen gerichte zoom', !kort[0].scenes?.[0].focus);
+  }
   }
   const fix = (n: string) => join(process.cwd(), 'scripts', 'fixtures', n);
   const map = mkdtempSync(join(tmpdir(), 'clipper-test-graphics-'));

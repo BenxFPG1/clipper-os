@@ -13,7 +13,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { resolveBinary } from '../src/lib/ingest/binaries';
 import { groveWoorden, haalBronWoorden, type BronWoord, type BronWoordCache } from '../src/lib/roughcut/woorden';
-import { corrigeerWoorden, pasCorrectiesToe } from '../src/lib/roughcut/ondertitelwoorden';
+import { corrigeerWoorden, pasCorrectiesToe, tweedeLezing } from '../src/lib/roughcut/ondertitelwoorden';
 import { bouwAss, groepeerRegels, keurOndertitelOverlap, REGEL_GAT, vasteSpelling, woordenOpTijdlijn } from '../src/lib/roughcut/ondertitels';
 import { editorTekst } from '../src/lib/roughcut/editortekst';
 import { kaartSchema } from '../src/lib/planner/schema';
@@ -218,6 +218,35 @@ async function main() {
         return { correcties: [] };
       });
       toets('zonder captions geen leeg blok', !/Ondertitels van de video zelf/.test(zonder));
+    }
+
+    console.log('ondertitelcorrectie: geen spellingsgokken, twijfel tussen modellen expliciet (PLATINA ronde 9)');
+    {
+      // Ronde 9: het lichte model maakte van "volatiler" "volatider", en het
+      // grote model hoorde "En een prijs" waar "En de prijs" gezegd werd.
+      const gok = pasCorrectiesToe([{ w: 'volatiler', s: 1, e: 2 }], [{ index: 0, woord: 'volatider' }], { fragmenten: ['Dat maakt het volatiler'] });
+      toets('spellingsgok zonder bron afgewezen', gok.toegepast.length === 0 && gok.afgewezen[0]?.waarom === 'spellingsgok zonder bron', JSON.stringify(gok));
+      const metBron = pasCorrectiesToe([{ w: 'platinum', s: 1, e: 2 }], [{ index: 0, woord: 'platina' }], { titel: 'Platina: zeldzamer dan goud' });
+      toets('kleine wijziging mét bron in de context: toegepast', metBron.toegepast.length === 1, JSON.stringify(metBron));
+      const tweede = pasCorrectiesToe([{ w: 'Rendment', s: 1, e: 2 }], [{ index: 0, woord: 'Rendement' }], { tweede: ['rendement'] });
+      toets('kleine wijziging die de tweede herkenning bevestigt: toegepast', tweede.toegepast.length === 1);
+      const groot = pasCorrectiesToe([{ w: 'enimetaal', s: 1, e: 2 }], [{ index: 0, woord: 'edelmetaal' }]);
+      toets('echte herkenningsfout (groot verschil) blijft toegestaan', groot.toegepast.length === 1);
+      toets('"volatider" staat in de ondertitels als "volatieler"', vasteSpelling('volatider.') === 'volatieler.');
+
+      const groot2 = [{ w: 'En', s: 0, e: 0.2 }, { w: 'een', s: 0.2, e: 0.35 }, { w: 'prijs', s: 0.35, e: 0.7 }];
+      const klein = [{ w: 'En', s: 0, e: 0.18 }, { w: 'de', s: 0.2, e: 0.33 }, { w: 'prijs', s: 0.36, e: 0.7 }];
+      const t = tweedeLezing(groot2, klein);
+      toets('tweede lezing per woord op tijd', JSON.stringify(t) === '["En","de","prijs"]', JSON.stringify(t));
+      let gezien = '';
+      let systeem = '';
+      await corrigeerWoorden(groot2, { tweede: t }, async (sys, user) => {
+        systeem = sys;
+        gezien = user;
+        return { correcties: [{ index: 1, woord: 'de' }] };
+      });
+      toets('verschil tussen de modellen staat bij het woord', / 1:een≠de /.test(gezien) && !/prijs≠/.test(gezien), gezien);
+      toets('prompt eist een keuze op die plekken', /Kies op die plekken ALTIJD expliciet/.test(systeem));
     }
   } finally {
     rmSync(map, { recursive: true, force: true });

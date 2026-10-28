@@ -97,6 +97,28 @@ export function focusPunten(items: GraphicItem[], woorden: BronWoord[], van: num
 }
 
 /**
+ * Terugval als de spreker de blokken niet noemt: de blokken in leesvolgorde
+ * (boven naar beneden, links naar rechts), gelijk verdeeld over de tijd dat
+ * de pagina in beeld staat. In trainingsronde 9 stond een graphic met drie
+ * blokken zeven seconden vrijwel stil omdat de spreker het over iets anders
+ * had; zo leidt de zoom het oog toch langs wat er staat.
+ */
+export function leesvolgordePunten(items: GraphicItem[], van: number, tot: number): FocusPunt[] {
+  const regel = (b: GraphicItem['box']) => Math.round(((b.y0 + b.y1) / 2) / 0.12);
+  const blokken = [...items]
+    .sort((a, b) => regel(a.box) - regel(b.box) || a.box.x0 - b.box.x0)
+    .slice(0, instelling('GRAPHIC_LEESVOLGORDE_MAX'));
+  if (blokken.length < 2) return [];
+  const begin = van + 0.6;
+  const stap = (tot - begin) / blokken.length;
+  if (stap < 1.2) return [];
+  return blokken.map((it, k) => {
+    const b = it.box;
+    return { t: begin + k * stap, cx: (b.x0 + b.x1) / 2, cy: (b.y0 + b.y1) / 2, b: b.x1 - b.x0, h: b.y1 - b.y0 };
+  });
+}
+
+/**
  * Leest de graphics die lang genoeg in beeld staan en zet hun zoompunten op
  * de scènes (scene.focus). Aaneengesloten graphic-stukken — gesplitst op een
  * opbouwstap of over een kaderwissel heen in twee shots — zijn één pagina:
@@ -139,11 +161,13 @@ export async function richtGraphics(
     const momenten = pagina.map((x) => x.sc.bevries).filter((t): t is number => typeof t === 'number' && t >= van && t <= tot);
     const moment = momenten.length ? Math.max(...momenten) : van + 0.8 * (tot - van);
     const items = await lezer(bronPad, moment);
-    const punten = focusPunten(items, woorden, van, tot);
+    const genoemd = focusPunten(items, woorden, van, tot);
+    const punten = genoemd.length >= 2 ? genoemd : leesvolgordePunten(items, van, tot);
     if (punten.length < 2) {
-      log(`graphic ${van.toFixed(1)}–${tot.toFixed(1)} s: ${items.length} blok(ken) gelezen, ${punten.length} genoemd — geen gerichte zoom`);
+      log(`graphic ${van.toFixed(1)}–${tot.toFixed(1)} s: ${items.length} blok(ken) gelezen, ${genoemd.length} genoemd — geen gerichte zoom`);
       continue;
     }
+    if (punten !== genoemd) log(`graphic ${van.toFixed(1)}–${tot.toFixed(1)} s: ${genoemd.length} genoemd → zoom in leesvolgorde langs ${punten.length} blokken`);
     for (const st of pagina) st.sc.focus = punten;
     gericht++;
     log(`graphic ${van.toFixed(1)}–${tot.toFixed(1)} s: ${punten.length} punten gericht (${items.map((i) => i.tekst).join(' / ')})`);

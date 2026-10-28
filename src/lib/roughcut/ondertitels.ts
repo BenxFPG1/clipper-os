@@ -178,7 +178,7 @@ export function woordenOpTijdlijn(segmenten: Shot[], bronWoorden: BronWoord[]): 
  * een trema ("industriele" → "industriële", "financiele" → "financiële"),
  * en losse woorden uit een korte lijst ("volatiler" → "volatieler").
  */
-const VASTE_SPELLING: Record<string, string> = { volatiler: 'volatieler', volatilere: 'volatielere' };
+const VASTE_SPELLING: Record<string, string> = { volatiler: 'volatieler', volatilere: 'volatielere', volatider: 'volatieler', volatieder: 'volatieler' };
 export function vasteSpelling(woord: string): string {
   const m = woord.match(/^(["'“„(]*)(\p{L}+)([.,!?;:"'”)]*)$/u);
   if (!m) return woord;
