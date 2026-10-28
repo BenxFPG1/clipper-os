@@ -337,6 +337,25 @@ const standaardCall: CorrectieCall = (system, user) =>
     model: CLAUDE_LICHT_MODEL,
   });
 
+export type KeuzeCall = (system: string, user: string) => Promise<{ keuzes: Correctie[] }>;
+
+const keuzeSchema = z.object({
+  keuzes: z.array(z.object({ index: z.number().int().min(0), woord: z.string().describe('Een van de twee woorden tussen de haken.') })),
+});
+
+const standaardKeuze: KeuzeCall = (system, user) =>
+  structuredCall({
+    system,
+    user,
+    schema: keuzeSchema,
+    toolName: 'lever_keuzes',
+    toolDescription: 'Lever per plek (index) het woord dat de spreker zei: een van de twee tussen de haken.',
+    maxTokens: 800,
+    effort: 'low',
+    operation: 'ondertitel_keuze',
+    model: CLAUDE_LICHT_MODEL,
+  });
+
 /**
  * Eén call per clip met het lichte model. De woorden gaan er genummerd in,
  * de correcties komen terug als {index, woord}; toegepast met
@@ -346,6 +365,7 @@ export async function corrigeerWoorden(
   woorden: BronWoord[],
   context: CorrectieContext,
   call: CorrectieCall = standaardCall,
+  kies: KeuzeCall = standaardKeuze,
 ): Promise<{ woorden: BronWoord[]; toegepast: { van: string; naar: string }[]; afgewezen?: { van: string; naar: string; waarom: string }[]; voorgesteld?: number; fout?: string }> {
   if (woorden.length === 0) return { woorden, toegepast: [] };
   const system = `Je controleert automatische ondertitels (spraakherkenning, Nederlands) op herkenningsfouten. Je krijgt de woorden genummerd, plus context over de video.
@@ -378,8 +398,31 @@ Ondertitelwoorden (index:woord):
 ${woorden.map((w, i) => `${i}:${w.w}${twijfel(i) ? `≠${context.tweede![i]}` : ''}`).join(' ')}`;
   try {
     const r = await call(system, user);
-    const { woorden: uit, toegepast, afgewezen } = pasCorrectiesToe(woorden, r.correcties ?? [], context);
-    return { woorden: uit, toegepast, afgewezen, voorgesteld: (r.correcties ?? []).length };
+    // Twijfelplekken: altijd één gerichte vraag per plek ("En [een | de]
+    // prijs die nog ver onder…"), en die beslist. In trainingsronde 10 koos de
+    // brede pas "de", in ronde 12 bij exact dezelfde audio "een" — een keuze
+    // tussen veertig andere woorden is een gok. Deze vraag is klein en kan
+    // maar twee antwoorden hebben.
+    const open = woorden.map((_, i) => i).filter((i) => twijfel(i));
+    const correcties = (r.correcties ?? []).filter((c) => !open.includes(c.index));
+    if (open.length > 0) {
+      const zin = (i: number) =>
+        woorden
+          .slice(Math.max(0, i - 6), i + 8)
+          .map((w, k) => (Math.max(0, i - 6) + k === i ? `[${kaal(w.w)} | ${context.tweede![i]}]` : w.w))
+          .join(' ');
+      const k = await kies(
+        'Je kiest per plek welk van twee bijna gelijk klinkende woorden de spreker zei. Kies het woord dat grammaticaal en inhoudelijk in de zin past; bij een lidwoord dat naar iets bepaalds verwijst ("de prijs die nog ver onder zijn record staat") is het "de".',
+        open.map((i) => `${i}: ${zin(i)}`).join('\n'),
+      ).catch(() => ({ keuzes: [] as Correctie[] }));
+      for (const c of k.keuzes ?? []) {
+        if (!open.includes(c.index)) continue;
+        const opties = [kaal(woorden[c.index].w).toLowerCase(), context.tweede![c.index]!.toLowerCase()];
+        if (opties.includes(kaal(c.woord).toLowerCase())) correcties.push(c);
+      }
+    }
+    const { woorden: uit, toegepast, afgewezen } = pasCorrectiesToe(woorden, correcties, context);
+    return { woorden: uit, toegepast, afgewezen, voorgesteld: correcties.length };
   } catch (e) {
     return { woorden, toegepast: [], fout: (e as Error).message.slice(0, 100) };
   }

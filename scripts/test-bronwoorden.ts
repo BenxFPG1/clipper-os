@@ -247,6 +247,23 @@ async function main() {
       });
       toets('verschil tussen de modellen staat bij het woord', / 1:een≠de /.test(gezien) && !/prijs≠/.test(gezien), gezien);
       toets('prompt eist een keuze op die plekken', /Kies op die plekken ALTIJD expliciet/.test(systeem));
+      // Ronde 12: de brede pas liet "een" staan. Dan volgt altijd de gerichte keuzevraag.
+      let gevraagd = '';
+      const r12 = await corrigeerWoorden(
+        groot2,
+        { tweede: t },
+        async () => ({ correcties: [] }),
+        async (_s, user) => {
+          gevraagd = user;
+          return { keuzes: [{ index: 1, woord: 'de' }] };
+        },
+      );
+      toets('gerichte keuzevraag met beide opties in de zin', /1: En \[een \| de\] prijs/.test(gevraagd), gevraagd);
+      toets('keuze "de" toegepast', r12.woorden[1].w === 'de', JSON.stringify(r12.woorden));
+      const raar = await corrigeerWoorden(groot2, { tweede: t }, async () => ({ correcties: [] }), async () => ({ keuzes: [{ index: 1, woord: 'het' }] }));
+      toets('een antwoord dat geen van beide opties is: genegeerd', raar.woorden[1].w === 'een');
+      const brede = await corrigeerWoorden(groot2, { tweede: t }, async () => ({ correcties: [{ index: 1, woord: 'een' }] }), async () => ({ keuzes: [{ index: 1, woord: 'de' }] }));
+      toets('de gerichte vraag beslist, ook als de brede pas al "een" koos', brede.woorden[1].w === 'de', JSON.stringify(brede.woorden));
     }
   } finally {
     rmSync(map, { recursive: true, force: true });

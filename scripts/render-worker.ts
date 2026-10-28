@@ -1720,6 +1720,12 @@ async function verwerk(job: Job) {
           if (wijd.length) {
             tekstHersteld++;
             console.log(`     eindbeeldcontrole shot ${o.volgorde}: afgesneden tekst uit de bron → ${wijd.length} wijd stuk(ken) passend`);
+          } else if (o.afgesneden_tekst && seg.gezicht) {
+            // Een gemeten gezicht in dit shot: dan is het een camerabeeld van
+            // de spreker en geen afgesneden graphic. De "afgesneden tekst" was
+            // in trainingsronde 11 en 12 de ingebrande kaart of ondertitel; elk
+            // keer passend → terug naar persoon → opnieuw, drie renders lang.
+            console.log(`     eindbeeldcontrole shot ${o.volgorde}: "afgesneden tekst" genegeerd — gemeten gezicht in beeld (spreker, geen graphic)`);
           } else if (o.afgesneden_tekst && !seg.scenes?.length && seg.beeldtype !== 'graphic') {
             seg.beeldtype = 'graphic';
             tekstHersteld++;

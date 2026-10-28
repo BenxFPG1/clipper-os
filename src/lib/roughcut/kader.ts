@@ -126,7 +126,7 @@ export function focusUitsnede(
   const deel = Math.max(p.b / rb, p.h / rh, 0.05);
   let z = Math.max(1, Math.min(instelling('GRAPHIC_FOCUS_ZOOM'), 0.85 / deel));
   const onder = Math.min(1, (p.cy + p.h / 2 - i.r.y0) / rh);
-  // De titel van de dia blijft heel in beeld (trainingsronde 10: "…NA IS
+  // De titel van de dia en het blok blijven heel in beeld (trainingsronde 10: "…NA IS
   // GEEN TWEEDE GOUD" bij de zoom op het rechterblok). Dat begrenst de
   // zoom (de uitsnede moet breed genoeg zijn voor de titel én hoog genoeg
   // voor titel plus blok) en de plek (de uitsnede schuift niet verder
@@ -134,8 +134,12 @@ export function focusUitsnede(
   const t = p.titel;
   if (t) {
     const marge = 0.03;
-    const tx0 = Math.max(0, (t.x0 - i.r.x0) / rb - marge);
-    const tx1 = Math.min(1, (t.x1 - i.r.x0) / rb + marge);
+    // Het blok zelf ook: in ronde 12 hield de uitsnede de titel heel, maar
+    // sneed hij het linker- en rechterblok half af ("…LDZAAM", "GEOPOLI…").
+    const bx0 = Math.max(0, (p.cx - p.b / 2 - i.r.x0) / rb - marge);
+    const bx1 = Math.min(1, (p.cx + p.b / 2 - i.r.x0) / rb + marge);
+    const tx0 = Math.min(bx0, Math.max(0, (t.x0 - i.r.x0) / rb - marge));
+    const tx1 = Math.max(bx1, Math.min(1, (t.x1 - i.r.x0) / rb + marge));
     const ty0 = Math.max(0, (t.y0 - i.r.y0) / rh - marge);
     z = Math.max(1, Math.min(z, 1 / Math.max(0.01, tx1 - tx0), 1 / Math.max(0.01, onder + marge - ty0)));
     const w = 1 / z;

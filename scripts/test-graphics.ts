@@ -258,11 +258,12 @@ async function vervolg() {
   toets('titel is geen zoompunt; twee genoemde blokken + terug naar het geheel', f.length === 3 && f[2].b === 1 && Math.abs(f[2].t - (282.24 + instelling('GRAPHIC_FOCUS_VASTHOUDEN'))) < 1e-6, JSON.stringify(f.map((p) => [p.t, p.cx])));
   toets('gelogd: titel in beeld en terug', regels.some((r) => /titel blijft in beeld, daarna terug naar het geheel/.test(r)), regels.join(' | '));
   const vlak = { r: { x0: 0, y0: 0, x1: 1, y1: 1 } };
-  for (const p of f.slice(0, 2)) {
+  const zijblokken = [{ t: 0, cx: 0.21, cy: 0.565, b: 0.28, h: 0.51, titel }, { t: 0, cx: 0.81, cy: 0.565, b: 0.3, h: 0.51, titel }];
+  for (const p of [...f.slice(0, 2), ...zijblokken]) {
     const u = focusUitsnede(vlak, p);
     const w = 1 / u.z;
     const links = u.fx - w / 2;
-    toets(`zoom op blok bij x=${p.cx.toFixed(2)}: titel heel in beeld (uitsnede ${links.toFixed(2)}–${(links + w).toFixed(2)})`, links <= titel.x0 + 1e-9 && links + w >= titel.x1 - 1e-9 && u.fy <= titel.y0 + 1e-9 && u.fy + w >= p.cy + p.h / 2 - 1e-9);
+    toets(`zoom op blok bij x=${p.cx.toFixed(2)}: titel én blok heel in beeld (uitsnede ${links.toFixed(2)}–${(links + w).toFixed(2)})`, links <= Math.min(titel.x0, p.cx - p.b / 2) + 1e-9 && links + w >= Math.max(titel.x1, p.cx + p.b / 2) - 1e-9 && u.fy <= titel.y0 + 1e-9 && u.fy + w >= p.cy + p.h / 2 - 1e-9);
   }
   const zonderTitel = focusUitsnede(vlak, { ...f[1], titel: undefined });
   toets('zonder titel blijft de oude zoom (1,35)', Math.abs(zonderTitel.z - instelling('GRAPHIC_FOCUS_ZOOM')) < 1e-9);

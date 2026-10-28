@@ -9,7 +9,7 @@
  *
  * Draaien: npm run test:scriptcontrole
  */
-import { vindKopIndex } from '../src/lib/roughcut/scriptcontrole';
+import { norm, vindKopIndex } from '../src/lib/roughcut/scriptcontrole';
 
 let gefaald = 0;
 let gedaan = 0;
@@ -25,7 +25,6 @@ function toets(naam: string, voorwaarde: boolean, detail = '') {
 
 /** Bouwt een woordenreeks van getranscribeerde tekst; elk woord 0,4s. */
 function woordenVan(tekst: string): { w: string; n: string; s: number }[] {
-  const norm = (t: string) => t.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
   return tekst.split(/\s+/).map((w, i) => ({ w, n: norm(w), s: i * 0.4 }));
 }
 
@@ -92,6 +91,14 @@ console.log('limiet beperkt de zoekruimte (voor de aanloop-check)');
   const idxZonderLimiet = vindKopIndex('Specifiekezin hier.', woorden);
   toets('binnen limiet 30: niet gevonden', idxBinnenLimiet === null, `idx=${idxBinnenLimiet}`);
   toets('zonder limiet: wel gevonden', idxZonderLimiet !== null, `idx=${idxZonderLimiet}`);
+}
+
+console.log('getal als cijfer in de terugluistering (trainingsronde 12)');
+{
+  // Whisper hoorde "4 jaar op rij", het script zegt "Vier jaar op rij": geen aanloop.
+  const woorden = woordenVan('4 jaar op rij meer vragen dan aanbod');
+  const idx = vindKopIndex('Vier jaar op rij meer vragen dan aanbod.', woorden, 30);
+  toets('"4" telt als "vier": index 0, geen aanloop', idx === 0, `idx=${idx}`);
 }
 
 console.log(`\n${gedaan - gefaald}/${gedaan} geslaagd`);
