@@ -609,6 +609,31 @@ export function pasRetentieToe(
     });
   }
 
+  // 1b. Een pauze precies op een naad tussen twee segmenten die in de bron
+  // aansluiten (een kaderwissel of een scènegrens knipte daar): de lus
+  // hierboven ziet alleen gaten binnen één segment. Trainingsronde 6: 4,2 s
+  // stilte met de tussentitel "MACRO TERM TALK" bleef zo in de clip staan.
+  if (woorden) {
+    for (let i = 0; i + 1 < segmenten.length; i++) {
+      const a = segmenten[i];
+      const b = segmenten[i + 1];
+      if (a.tease || b.tease || Math.abs(a.end - b.start) > 0.01) continue;
+      const wa = woordenIn(woorden, a.start, a.end).filter((w) => w.e <= a.end + 0.05).pop();
+      const wb = woordenIn(woorden, b.start, b.end).find((w) => w.s >= b.start - 0.05);
+      if (!wa || !wb) continue;
+      const gat = wb.s - wa.e;
+      if (gat <= drempel || /\?["')]*$/.test(wa.w)) continue;
+      if (b.functie === 'payoff' && segmenten[i].functie !== 'payoff') continue;
+      const blijft = /[.!]["')]*$/.test(wa.w) ? instelling('RETENTIE_PAUZE_REST_ZIN') : rest;
+      const nieuwEind = rond(wa.e + blijft / 2, 3);
+      const nieuwBegin = rond(wb.s - blijft / 2, 3);
+      if (nieuwEind - a.start < minDeel || b.end - nieuwBegin < minDeel) continue;
+      verzetGrens(a, { end: nieuwEind });
+      verzetGrens(b, { start: nieuwBegin });
+      ingrepen.push({ soort: 'pauze', volgorde: b.volgorde, bron: rond(wa.e), wat: `pauze ${nl(gat)} s op een naad → ${nl(blijft)} s (na "${wa.w}")` });
+    }
+  }
+
   // 2. Kaderwissels waar het beeld te lang stilstaat, en de eerste wissel
   // uiterlijk op eersteKnipMaxS. Gepland op de tijdlijn ná de pauzeknippen
   // (die zijn zelf al wissels), op een woordgrens binnen een venster vóór de

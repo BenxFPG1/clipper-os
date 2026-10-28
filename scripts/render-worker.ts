@@ -926,10 +926,11 @@ async function verwerk(job: Job) {
       // aangehaalde uitvalrisico's en de re-hook.
       const overlays: BurnOverlay[] = [];
       const totaal = segmenten.reduce((t, sg) => t + (sg.end - sg.start), 0);
+      let hookKaart: BurnOverlay | null = null;
       if (eenVersie) {
         const hookPad = join(kaartMap, `c${nummer}-hook-1.png`);
         await tekenHookKaart(hookTeksten[0], hookPad, stijl);
-        overlays.push({ pad: hookPad, start: 0, end: Math.min(totaal, hookDuur(hookTeksten[0])) });
+        hookKaart = { pad: hookPad, start: 0, end: Math.min(totaal, hookDuur(hookTeksten[0])) };
       }
 
       // De contextkaart (één regel situering, uit het plan) komt direct na de
@@ -973,7 +974,9 @@ async function verwerk(job: Job) {
       for (let k = 0; k + 1 < overlays.length; k++) {
         if (overlays[k].end > overlays[k + 1].start) overlays[k] = { ...overlays[k], end: overlays[k + 1].start };
       }
-      return overlays.filter((o) => o.end - o.start >= 0.5);
+      // De hookkaart zelf pas ná het uitwijken erbij: anders schoof die regel
+      // ook de hook weg (trainingsronde 6 had geen hook-tekst in beeld).
+      return [...(hookKaart ? [hookKaart] : []), ...overlays.filter((o) => o.end - o.start >= 0.5)];
     };
 
     if (clip.kaarten?.length) {

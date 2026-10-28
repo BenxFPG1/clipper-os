@@ -260,5 +260,26 @@ console.log('opnieuw draaien op al gesplitste segmenten: unieke volgnummers');
   toets('en oplopend in montagevolgorde', nrs.every((n, i) => i === 0 || n > nrs[i - 1]), nrs.join(','));
 }
 
+console.log('pauze op een naad tussen twee aansluitende segmenten');
+{
+  // Trainingsronde 6: "…troy ounce." (171,96) — 4,2 s stilte met een
+  // tussentitel — "De bovengrondse…" (176,18). Het shot was op 172,2 in twee
+  // segmenten geknipt, dus de pauze viel op de naad en bleef staan.
+  const ws: BronWoord[] = [
+    { w: 'tekort', s: 169.0, e: 169.5 }, { w: 'van', s: 169.5, e: 169.8 }, { w: 'circa', s: 169.8, e: 170.3 }, { w: '297.000', s: 170.3, e: 171.36 }, { w: 'troy', s: 171.36, e: 171.74 }, { w: 'ounce.', s: 171.74, e: 171.96 },
+    { w: 'De', s: 176.18, e: 176.4 }, { w: 'bovengrondse', s: 176.4, e: 177.0 }, { w: 'voorraden', s: 177.0, e: 177.6 }, { w: 'slinken.', s: 177.6, e: 178.3 },
+  ];
+  const segs: Shot[] = [
+    { volgorde: 1, start: 168.9, end: 172.2, functie: 'hook' },
+    { volgorde: 1.01, start: 172.2, end: 178.5, functie: 'escalatie' },
+    { volgorde: 2, start: 200, end: 205, functie: 'payoff' },
+  ];
+  const uit = pasRetentieToe(segs, { bronWoorden: ws, doelen, ondertitels: true });
+  const a = uit.segmenten.find((x) => Math.floor(x.volgorde) === 1 && x.start < 170);
+  const b = uit.segmenten.find((x) => x.start > 172 && x.start < 177);
+  toets('de stilte op de naad is weggeknipt', Boolean(a && b && b.start - a.end > 3.5 && a.end < 172.3 && b.start > 175.8), JSON.stringify(uit.segmenten.map((x) => [x.volgorde, x.start, x.end])));
+  toets('en gemeld als pauze-ingreep', uit.ingrepen.some((g) => g.soort === 'pauze' && /op een naad/.test(g.wat)), JSON.stringify(uit.ingrepen.map((g) => g.wat)));
+}
+
 console.log(`\n${gedaan - gefaald}/${gedaan} geslaagd`);
 if (gefaald > 0) process.exit(1);
