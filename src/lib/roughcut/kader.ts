@@ -127,23 +127,24 @@ export function gerichteZoom(
   const rb = i.r.x1 - i.r.x0;
   const rh = i.r.y1 - i.r.y0;
   const overgang = 0.35;
+  // fy is hier de bovenrand van de uitsnede (fractie): de titel van de
+  // graphic blijft in beeld, en er wordt alleen omlaag geschoven als het
+  // blok anders onderaan wegvalt (trainingsronde 5: "…A IS GEEN TWEEDE GOUD").
   type Sleutel = { t: number; fx: number; fy: number; z: number };
   const plek = (p: { cx: number; cy: number; b: number; h: number }) => {
     const fx = Math.min(1, Math.max(0, (p.cx - i.r.x0) / rb));
-    const fy = Math.min(1, Math.max(0, (p.cy - i.r.y0) / rh));
     const deel = Math.max(p.b / rb, p.h / rh, 0.05);
-    return { fx, fy, z: Math.max(1, Math.min(instelling('GRAPHIC_FOCUS_ZOOM'), 0.85 / deel)) };
+    const z = Math.max(1, Math.min(instelling('GRAPHIC_FOCUS_ZOOM'), 0.85 / deel));
+    const onder = Math.min(1, (p.cy + p.h / 2 - i.r.y0) / rh);
+    return { fx, fy: Math.max(0, Math.min(1 - 1 / z, onder + 0.03 - 1 / z)), z };
   };
   // Een later stuk van dezelfde pagina begint waar de beweging was: op het
   // laatste blok dat vóór dit stuk al genoemd werd, niet terug op het overzicht.
   const eerder = focus.filter((p) => p.t <= 0);
-  const start = eerder.length ? plek(eerder[eerder.length - 1]) : { fx: 0.5, fy: 0.5, z: 1 };
+  const start = eerder.length ? plek(eerder[eerder.length - 1]) : { fx: 0.5, fy: 0, z: 1 };
   const sleutels: Sleutel[] = [{ t: 0, ...start }];
   for (const p of focus.filter((x) => x.t > 0)) {
-    const fx = Math.min(1, Math.max(0, (p.cx - i.r.x0) / rb));
-    const fy = Math.min(1, Math.max(0, (p.cy - i.r.y0) / rh));
-    const deel = Math.max(p.b / rb, p.h / rh, 0.05);
-    const z = Math.max(1, Math.min(instelling('GRAPHIC_FOCUS_ZOOM'), 0.85 / deel));
+    const { fx, fy, z } = plek(p);
     const vorige = sleutels[sleutels.length - 1];
     const t = Math.max(p.t, vorige.t + overgang + 0.05);
     sleutels.push({ ...vorige, t: t - overgang });
@@ -165,7 +166,7 @@ export function gerichteZoom(
   const fx = lijn((s) => s.fx);
   const fy = lijn((s) => s.fy);
   return (
-    `zoompan=z='${z}':x='max(0,min(iw-iw/zoom,(${fx})*iw-iw/zoom/2))':y='max(0,min(ih-ih/zoom,(${fy})*ih-ih/zoom/2))'` +
+    `zoompan=z='${z}':x='max(0,min(iw-iw/zoom,(${fx})*iw-iw/zoom/2))':y='max(0,min(ih-ih/zoom,(${fy})*ih))'` +
     `:d=1:s=${i.fgB}x${i.fgH}:fps=${b.fps}`
   );
 }

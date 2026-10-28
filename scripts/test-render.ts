@@ -837,6 +837,10 @@ async function main() {
         c.fillStyle = kleur;
         c.fillRect(x, 220, 300, 360);
       }
+      // Een titelbalk bovenaan ("PLATINA IS GEEN TWEEDE GOUD"): die moet bij
+      // het inzoomen in beeld blijven (trainingsronde 5 sneed hem af).
+      c.fillStyle = '#e8c020';
+      c.fillRect(140, 150, 1000, 50);
       const png = join(werk, 'g.png');
       await fsp.writeFile(png, doek.toBuffer('image/png'));
       const bron = join(werk, 'bron.mp4');
@@ -854,7 +858,7 @@ async function main() {
           const f = join(map, `focus-${t}.raw`);
           ff(['-ss', t.toFixed(2), '-i', uit, '-frames:v', '1', '-vf', 'scale=108:192', '-f', 'rawvideo', '-pix_fmt', 'rgb24', f]);
           const px = await readFile(f);
-          const n = { r: 0, g: 0, b: 0 };
+          const n = { r: 0, g: 0, b: 0, geel: 0 };
           // Alleen de band van de graphic zelf (inhoudKader.y0..y0+fgH), niet
           // de vervaagde achtergrond eromheen.
           const k = inhoudKader({ x0: 0.05, y0: 0.27, x1: 0.95, y1: 0.83 });
@@ -864,6 +868,7 @@ async function main() {
             if (px[q] > 170 && px[q + 1] < 90 && px[q + 2] < 90) n.r++;
             if (px[q + 1] > 130 && px[q] < 90 && px[q + 2] < 120) n.g++;
             if (px[q + 2] > 170 && px[q] < 90 && px[q + 1] < 120) n.b++;
+            if (px[q] > 200 && px[q + 1] > 160 && px[q + 2] < 90) n.geel++;
           }
           return n;
         };
@@ -871,11 +876,12 @@ async function main() {
         const midden = await aandeel(2.8);
         const eind = await aandeel(5.2);
         toets('begin: alle drie de kolommen in beeld', begin.r > 0 && begin.g > 0 && begin.b > 0, JSON.stringify(begin));
-        toets('na "groen" genoemd: groen domineert', midden.g > midden.r * 1.5 && midden.g > midden.b * 1.5, JSON.stringify(midden));
+        toets('na "groen" genoemd: groen domineert', midden.g > midden.r * 1.25 && midden.g > midden.b * 1.25, JSON.stringify(midden));
         // Een kolom aan de rand kan niet in het midden: de uitsnede blijft
         // binnen de graphic. Wel: de linker kolom uit beeld, de rechter veel
         // groter dan in het overzicht.
-        toets('na "blauw" genoemd: rood uit beeld, blauw veel groter', eind.r < begin.r * 0.2 && eind.b > begin.b * 1.8 && eind.b >= eind.g * 0.8, JSON.stringify({ begin, eind }));
+        toets('na "blauw" genoemd: rood (bijna) uit beeld, blauw groter', eind.r < begin.r * 0.4 && eind.b > begin.b * 1.4 && eind.b >= eind.g * 0.8, JSON.stringify({ begin, eind }));
+        toets('de titel bovenaan blijft in beeld bij het inzoomen', eind.geel > begin.geel * 0.5 && midden.geel > begin.geel * 0.5, JSON.stringify({ begin: begin.geel, midden: midden.geel, eind: eind.geel }));
         toets('lengte ongewijzigd door de gerichte zoom', Math.abs(probe(uit).duur - 6) < 0.1, `${probe(uit).duur}s`);
       } catch (e) {
         toets('render met gerichte zoom slaagt', false, (e as Error).message.slice(-400));
@@ -915,9 +921,9 @@ async function main() {
         const naNaad = await kleuren(3.15);
         const eind = await kleuren(5.2);
         toets('zonder inhoud: begin in het overzicht', begin.r > 0 && begin.g > 0 && begin.b > 0, JSON.stringify(begin));
-        toets('zonder inhoud: groen na "groen"', voorNaad.g > voorNaad.r * 1.5 && voorNaad.g > voorNaad.b * 1.5, JSON.stringify(voorNaad));
-        toets('over de naad: geen sprong terug naar het overzicht', naNaad.g > naNaad.r * 1.5, JSON.stringify(naNaad));
-        toets('tweede (korte) shot volgt de zoom naar blauw', eind.r < begin.r * 0.2 && eind.b > begin.b * 1.8, JSON.stringify({ begin, eind }));
+        toets('zonder inhoud: groen na "groen"', voorNaad.g > voorNaad.r * 1.25 && voorNaad.g > voorNaad.b * 1.25, JSON.stringify(voorNaad));
+        toets('over de naad: geen sprong terug naar het overzicht', naNaad.g > naNaad.r * 1.25, JSON.stringify(naNaad));
+        toets('tweede (korte) shot volgt de zoom naar blauw', eind.r < begin.r * 0.4 && eind.b > begin.b * 1.4, JSON.stringify({ begin, eind }));
       } catch (e) {
         toets('render met gerichte zoom over twee shots slaagt', false, (e as Error).message.slice(-400));
       }
