@@ -121,12 +121,18 @@ async function main() {
     // niet fataal
   }
 
-  const { data: jobs, error } = await supabase
-    .from('render_jobs')
-    .select('*, videos(title, source_url)')
-    .eq('status', 'wachtend')
-    .order('created_at')
-    .limit(3);
+  // Eén vaste opdracht (train-clip.yml): alleen die, ook als hij al op
+  // 'bezig' staat (de trainingsrun zet hem zo, zodat de gewone rij hem niet
+  // tegelijk oppakt).
+  const vast = process.env.RENDER_JOB_ID;
+  const { data: jobs, error } = vast
+    ? await supabase.from('render_jobs').select('*, videos(title, source_url)').eq('id', vast).in('status', ['wachtend', 'bezig'])
+    : await supabase
+        .from('render_jobs')
+        .select('*, videos(title, source_url)')
+        .eq('status', 'wachtend')
+        .order('created_at')
+        .limit(3);
   if (error) throw error;
 
   if (!jobs?.length) {
@@ -871,7 +877,7 @@ async function verwerk(job: Job) {
     const hookTeksten = [
       clip.hook?.tekst_overlay,
       ...(clip.hooks ?? []).map((h) => h.tekst_overlay).filter((t) => t && t !== clip.hook?.tekst_overlay),
-    ].filter((t): t is string => Boolean(t)).slice(0, 3);
+    ].filter((t): t is string => Boolean(t)).slice(0, process.env.HOOK_VARIANTEN === '0' ? 1 : 3);
     // De kaarten wijken uit voor de lángste hook, zodat geen enkele variant
     // twee kaarten tegelijk in beeld heeft.
     const hookTot = hookTeksten.length ? Math.max(...hookTeksten.map(hookDuur)) : 0;

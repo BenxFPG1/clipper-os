@@ -67,7 +67,9 @@ Regels:
  * werk, en verreweg de grootste kostenpost van de hele pijplijn.
  */
 export function schetsSystem(maxClips: number, formaat?: { naam: string; min: number; max: number }): string {
-  const kandidatenPlafond = Math.min(25, maxClips + 8);
+  // Eén clip uit één fragment (doortrainen): drie kandidaten is genoeg; negen
+  // schetsen voor één winnaar kostte minuten zonder betere clip.
+  const kandidatenPlafond = maxClips === 1 ? 3 : Math.min(25, maxClips + 8);
   return `Je bent een clip-strateeg. Je bouwt uit een lange bronvideo kandidaat-verhaallijnen voor short-form clips (TikTok/Reels/Shorts). Dit is de brede, eerste ronde van een toernooi: je SCHETST kandidaten, je schrijft ze niet uit. Van wat je hier levert overleeft straks maar een deel; alleen de overlevers krijgen in de volgende pas hooks, effecten en captions. Besteed je aandacht dus aan het verhaal zelf — dát is waarop je hier beoordeeld wordt, niet op afwerking.
 
 Werk verhaallijn-eerst, in deze volgorde:
@@ -94,7 +96,7 @@ Regels voor shots:
 ${formaat ? `${clipRegels(formaat)}\n\n` : ''}Harde eisen:
 - Alle tijdcodes zijn seconden, binnen de duur van de video, en oplopend binnen een clip.
 - structure_type en hook_richting.type zijn exact een slug uit de vault die je meekrijgt.
-- Lever een BREDE kandidatenset: 15 tot ${kandidatenPlafond} clips, ook clips waar je zelf over twijfelt — de volgende pas snoeit hierna genadeloos naar de sterkste ${maxClips}. Liever een zwakkere kandidaat te veel dan een goede vondst die nooit een kans kreeg.
+- Lever een BREDE kandidatenset: ${maxClips === 1 ? 2 : 15} tot ${kandidatenPlafond} clips, ook clips waar je zelf over twijfelt — de volgende pas snoeit hierna genadeloos naar de sterkste ${maxClips}. Liever een zwakkere kandidaat te veel dan een goede vondst die nooit een kans kreeg.
 
 ${STORYCRAFT}
 
