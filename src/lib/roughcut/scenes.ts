@@ -42,7 +42,7 @@ export type Scene = {
   /** Deze graphic bouwt voort op de vorige (er kwam een punt bij op dezelfde pagina): samen één leesmoment. */
   opbouw?: boolean;
   /** Zoompunten (graphiclezer.ts): wanneer de spreker welk blok van de graphic noemt, in brontijd en bronbeeld. */
-  focus?: { t: number; cx: number; cy: number; b: number; h: number }[];
+  focus?: { t: number; cx: number; cy: number; b: number; h: number; titel?: { x0: number; y0: number; x1: number; y1: number } }[];
   /** Zoveel seconden na het eind van deze graphic is het beeld in de bron een wazige overgang (whip naar de spreker): de graphic blijft zo lang staan. */
   overgangNa?: number;
 };
@@ -61,7 +61,7 @@ export type Deelstuk = {
   bevries?: number;
   geenBevries?: string;
   opbouw?: boolean;
-  focus?: { t: number; cx: number; cy: number; b: number; h: number }[];
+  focus?: { t: number; cx: number; cy: number; b: number; h: number; titel?: { x0: number; y0: number; x1: number; y1: number } }[];
   overgangNa?: number;
 };
 

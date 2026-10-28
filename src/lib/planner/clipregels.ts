@@ -214,6 +214,36 @@ export function wijstTerug(zin: string): boolean {
   return instappuntKwaliteit(zin).redenen.some((r) => /zonder antecedent/.test(r));
 }
 
+/**
+ * Kan de clip met deze zin openen? Eén definitie voor elke regel die de
+ * opening kiest of verplaatst. In trainingsronde 10 toetste regel 8b alleen
+ * "niet zwak", zette "En aanbod dat…" vooraan, en knipte regel 4 daarna naar
+ * "En de prijs die…": twee regels met elk een eigen maatstaf maakten een
+ * goede opening slechter. Nu: geen verbindingswoord vooraan, geen verwijzing
+ * zonder antecedent, niet zwak.
+ */
+export function zelfstandigeOpening(zin: string): boolean {
+  const instap = instappuntKwaliteit(zin);
+  return instap.oordeel !== 'zwak' && !instap.redenen.some((r) => /^begint met "|zonder antecedent/.test(r)) && !wijstTerug(zin);
+}
+
+/**
+ * Een opening die alleen door een los verbindingswoord vooraan faalt ("En de
+ * prijs die nog ver onder zijn eigen record staat.") opent zonder dat woord
+ * prima: knip het eraf (tijd evenredig; de render lijnt uit op de woorden).
+ */
+export function zonderVerbinder(shot: ShotLike): ShotLike | null {
+  const tekst = (shot.transcript_fragment ?? '').replace(/\s+/g, ' ').trim();
+  const m = tekst.match(/^(en|maar|dus)\s+(?=\p{L})/iu);
+  if (!m) return null;
+  const rest = tekst.slice(m[0].length);
+  const opnieuw = rest[0].toUpperCase() + rest.slice(1);
+  if (!zelfstandigeOpening(zinnen(opnieuw)[0] ?? '')) return null;
+  const fractie = m[0].length / tekst.length;
+  const start = Math.round((shot.start + (shot.end - shot.start) * fractie) * 100) / 100;
+  return { ...shot, transcript_fragment: opnieuw, start };
+}
+
 // Een korte onthulling: het antwoord op wat er net gevraagd of opgebouwd is
 // ("En dat is platina.", "Dat heet stagflatie.").
 const ONTHULLING = /^(en |maar )?(dat|dit|het|die|zo'?n) (is|was|zijn|waren|heet|heten|blijkt|bleek|noemen we|wordt)\b/i;
@@ -246,8 +276,8 @@ export function woordOverlap(a: string, b: string): number {
 const SPANNING: RegExp[] = [
   /\ben toch\b|\bmaar\b|\bterwijl\b|\bondanks\b|\btoch\b/,
   /\d|\b(twee|drie|vier|vijf|zes|zeven|acht|negen|tien|twaalf|twintig|honderd|duizend|miljoen|miljard|procent|helft|dubbel)\b/,
-  /\b(tekort|record|crash|nooit|niemand|alles|verdubbel\w*|gehalveerd|halveer\w*|verlies\w*|failliet|schuld\w*)\b/,
-  /\bver (onder|boven|weg)\b|\b(meer|minder|groter|kleiner|duurder|goedkoper|zeldzamer) dan\b/,
+  /\b(tekort|record|crash|nooit|niemand|alles|verdubbel\w*|gehalveerd|halveer\w*|verlies\w*|failliet|schuld\w*)\b|\bop rij\b/,
+  /\bver (onder|boven|weg)\b|\b(meer|minder|groter|kleiner|duurder|goedkoper|zeldzamer)( \p{L}+)? dan\b/u,
   /\b(grootste|kleinste|meeste|minste|hoogste|laagste|eerste|enige|slechts|zelfs|alleen maar)\b/,
   /\?/,
 ];
@@ -273,11 +303,11 @@ function openingProbleem(clip: Pick<Clip, 'shots' | 'hook'>, formaat: Formaat): 
   if (!eerste) return null;
   const coldOpen = formaat === 'comedy' && eerste.functie === 'hook' && eerste.end - eerste.start <= 5 && /[.!?]$/.test((eerste.transcript_fragment ?? '').trim()) && Boolean(clip.hook?.tekst_overlay);
   if (coldOpen && shots[1]) eerste = shots[1];
-  const instap = instappuntKwaliteit(zinnen(eerste.transcript_fragment ?? '')[0] ?? '');
+  const zin = zinnen(eerste.transcript_fragment ?? '')[0] ?? '';
+  if (zelfstandigeOpening(zin)) return null;
+  const instap = instappuntKwaliteit(zin);
   const hard = instap.redenen.filter((r) => /^begint met "|zonder antecedent/.test(r));
-  return instap.oordeel === 'zwak' || hard.some((r) => /zonder antecedent|begint met "(en dan|en toen|dus|en|maar|want|toen|dan|daarna|daarom)"/.test(r))
-    ? { shot: eerste, redenen: hard.length ? hard : instap.redenen }
-    : null;
+  return { shot: eerste, redenen: hard.length ? hard : instap.redenen.length ? instap.redenen : ['verwijst terug'] };
 }
 
 /**
@@ -349,12 +379,16 @@ export function pasClipRegelsToe(
   // --- 4. Opening zonder context-gat --------------------------------------
   {
     const probleem = openingProbleem({ shots, hook: invoer.hook }, formaat);
-    if (probleem) {
+    const zonder = probleem ? zonderVerbinder(probleem.shot) : null;
+    if (probleem && zonder) {
+      shots = shots.map((s) => (s === probleem.shot ? zonder : s));
+      ingrepen.push(`opening zonder los verbindingswoord: "${(zinnen(zonder.transcript_fragment ?? '')[0] ?? '').slice(0, 50)}"`);
+    } else if (probleem) {
       const zs = zinnen(probleem.shot.transcript_fragment ?? '');
       let k = 1;
-      while (k < zs.length && instappuntKwaliteit(zs[k]).oordeel === 'zwak') k++;
+      while (k < zs.length && !zelfstandigeOpening(zs[k])) k++;
       const gekort = k < zs.length ? knipZinnen(probleem.shot, k, 'begin') : null;
-      if (gekort && gekort.end - gekort.start >= 2 && instappuntKwaliteit(zinnen(gekort.transcript_fragment)[0] ?? '').oordeel !== 'zwak') {
+      if (gekort && gekort.end - gekort.start >= 2 && zelfstandigeOpening(zinnen(gekort.transcript_fragment)[0] ?? '')) {
         shots = shots.map((s) => (s === probleem.shot ? gekort : s));
         ingrepen.push(`instappunt verplaatst naar een begrijpelijke zin ("${(zinnen(gekort.transcript_fragment)[0] ?? '').slice(0, 50)}"); weg: "${zs.slice(0, k).join(' ').slice(0, 50)}" (${probleem.redenen.join(', ')})`);
       } else {
@@ -476,7 +510,7 @@ export function pasClipRegelsToe(
       const kandidaat = shots
         .slice(1, -1)
         .map((s) => ({ s, zin: zinnen(s.transcript_fragment ?? '')[0] ?? '' }))
-        .filter(({ s, zin }) => s.functie === 'escalatie' && s.end - s.start <= 12 && instappuntKwaliteit(zin).oordeel !== 'zwak' && !wijstTerug(zin))
+        .filter(({ s, zin }) => s.functie === 'escalatie' && s.end - s.start <= 12 && zelfstandigeOpening(zin))
         .map((k) => ({ ...k, overlap: woordOverlap(hook!.tekst_overlay, k.zin) }))
         .filter((k) => k.overlap >= 0.25)
         .sort((a, b) => b.overlap - a.overlap)[0];
@@ -485,6 +519,33 @@ export function pasClipRegelsToe(
         shots = [{ ...kandidaat.s, functie: 'hook' }, ...shots.filter((s) => s !== kandidaat.s).map((s) => (s === oudEerste && s.functie === 'hook' ? { ...s, functie: 'setup' as const } : s))];
         hook = { ...hook, gesproken_start: kandidaat.zin };
         ingrepen.push(`de belofte van de overlay klonk niet in de opening: shot ${kandidaat.s.volgorde} ("${kandidaat.zin.slice(0, 50)}") vooraan gezet`);
+      }
+    }
+  }
+
+  // --- 8c. Later instappen op de sterke zin -------------------------------
+  // De sterkste opening staat vaak een paar zinnen verderop in hetzelfde
+  // shot: "Platina combineert iets wat weinig assets hebben. Het is zeldzaam…
+  // Vier jaar op rij meer vraag dan aanbod." (trainingsronde 10). Later
+  // instappen houdt de bron doorlopend — geen extra sprong, anders dan
+  // een shot naar voren halen (8b) — en dat was precies de opening van de
+  // beste ronde tot nu toe (ronde 9).
+  if (formaat === 'uitleg' && shots.length >= 2) {
+    const eerste = shots[0];
+    const zs = zinnen(eerste.transcript_fragment ?? '');
+    const nu = spanning(zs[0] ?? '');
+    const duurNu = clipDuur({ shots });
+    const { min } = lengteBereik(formaat);
+    if (nu <= 1) {
+      for (let k = 1; k < zs.length; k++) {
+        if (spanning(zs[k]) < Math.max(3, nu + 2) || !zelfstandigeOpening(zs[k])) continue;
+        const gekort = knipZinnen(eerste, k, 'begin');
+        if (!gekort || gekort.start - eerste.start > 12 || gekort.end - gekort.start < 2) break;
+        if (duurNu - (gekort.start - eerste.start) < min - 0.5) break;
+        shots = [gekort, ...shots.slice(1)];
+        if (hook) hook = { ...hook, gesproken_start: zs[k] };
+        ingrepen.push(`later ingestapt op de sterke zin ("${zs[k].slice(0, 50)}", spanning ${spanning(zs[k])}); weg: "${zs.slice(0, k).join(' ').slice(0, 50)}"`);
+        break;
       }
     }
   }
@@ -501,7 +562,7 @@ export function pasClipRegelsToe(
       .slice(1, -1)
       .filter((s) => s.functie === 'escalatie' && s.end - s.start <= 12)
       .map((s) => ({ s, zin: zinnen(s.transcript_fragment ?? '')[0] ?? '', score: spanning(s.transcript_fragment ?? '') }))
-      .filter((k) => k.score >= 3 && k.score >= nu + 2 && instappuntKwaliteit(k.zin).oordeel !== 'zwak' && !wijstTerug(k.zin))
+      .filter((k) => k.score >= 3 && k.score >= nu + 2 && zelfstandigeOpening(k.zin))
       .sort((a, b) => b.score - a.score)[0];
     if (nu <= 1 && kandidaat) {
       const oudEerste = shots[0];

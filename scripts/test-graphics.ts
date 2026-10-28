@@ -22,6 +22,7 @@ import { behandelEindscherm, keurOverlay, overlayUitPixels, vermijdOverlay } fro
 import { plakKoppeltekens, plaatsRegels } from '../src/lib/roughcut/ondertitels';
 import { metHoofdletter, verdeelOverRegels, zelfstandigeKaart } from '../src/lib/roughcut/tekstkaarten';
 import { focusPunten, richtGraphics } from '../src/lib/roughcut/graphiclezer';
+import { focusUitsnede } from '../src/lib/roughcut/kader';
 import { pythonMetOpenCV } from '../src/lib/python';
 import { keurLeesbaar, leesLogregel, leestijd, leestijdPlan } from '../src/lib/roughcut/leestijd';
 import { instelling } from '../src/lib/roughcut/instellingen';
@@ -244,6 +245,29 @@ async function vervolg() {
   const kort = [{ volgorde: 1, start: 284, end: 288, functie: 'hook', scenes: [{ van: 284, tot: 288, gezicht: false }] }] as unknown as import('../src/lib/roughcut').Shot[];
   await richtGraphics(kort, '/geen/bron', [{ w: 'x', s: 284.2, e: 284.4 }], () => {}, async () => items);
   toets('te kort voor drie blokken (< 1,2 s per blok): geen gerichte zoom', !kort[0].scenes?.[0].focus);
+  }
+  console.log('gerichte zoom: titel blijft in beeld, daarna terug naar het geheel (trainingsronde 10)');
+  {
+  // Ronde 10: bij de zoom op het rechterblok viel "PLATINA IS" links weg, en
+  // de zoom bleef op blok 3 hangen terwijl de spreker al verder was.
+  const titel = { x0: 0.12, y0: 0.12, x1: 0.88, y1: 0.24 };
+  const segs = [{ volgorde: 2, start: 280.5, end: 286.8, functie: 'setup', scenes: [{ van: 280.5, tot: 286.8, gezicht: false }] }] as unknown as import('../src/lib/roughcut').Shot[];
+  const regels: string[] = [];
+  await richtGraphics(segs, '/geen/bron', woorden, (m) => regels.push(m), async () => [...items, { tekst: 'PLATINA IS GEEN TWEEDE GOUD', box: titel, titel: true }]);
+  const f = segs[0].scenes?.[0].focus ?? [];
+  toets('titel is geen zoompunt; twee genoemde blokken + terug naar het geheel', f.length === 3 && f[2].b === 1 && Math.abs(f[2].t - (282.24 + instelling('GRAPHIC_FOCUS_VASTHOUDEN'))) < 1e-6, JSON.stringify(f.map((p) => [p.t, p.cx])));
+  toets('gelogd: titel in beeld en terug', regels.some((r) => /titel blijft in beeld, daarna terug naar het geheel/.test(r)), regels.join(' | '));
+  const vlak = { r: { x0: 0, y0: 0, x1: 1, y1: 1 } };
+  for (const p of f.slice(0, 2)) {
+    const u = focusUitsnede(vlak, p);
+    const w = 1 / u.z;
+    const links = u.fx - w / 2;
+    toets(`zoom op blok bij x=${p.cx.toFixed(2)}: titel heel in beeld (uitsnede ${links.toFixed(2)}–${(links + w).toFixed(2)})`, links <= titel.x0 + 1e-9 && links + w >= titel.x1 - 1e-9 && u.fy <= titel.y0 + 1e-9 && u.fy + w >= p.cy + p.h / 2 - 1e-9);
+  }
+  const zonderTitel = focusUitsnede(vlak, { ...f[1], titel: undefined });
+  toets('zonder titel blijft de oude zoom (1,35)', Math.abs(zonderTitel.z - instelling('GRAPHIC_FOCUS_ZOOM')) < 1e-9);
+  const terug = focusUitsnede(vlak, f[2]);
+  toets('terugpunt: zoom 1, hele graphic', terug.z === 1 && terug.fy === 0);
   }
   }
   const fix = (n: string) => join(process.cwd(), 'scripts', 'fixtures', n);

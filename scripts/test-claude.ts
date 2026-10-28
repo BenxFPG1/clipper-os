@@ -60,6 +60,14 @@ process.stdin.on('end', () => {
     console.log('JSON uit een antwoord halen');
     const tussenTekst = extractJson('Ik lever {de analyse} hieronder:\n{"a": {"b": "x}y"}, "c": 1}\nKlaar {ok}') as { c?: number } | null;
     toets('tekst met eigen accolades rond het JSON', tussenTekst?.c === 1, JSON.stringify(tussenTekst));
+    // Trainingsronde 10: het plan-examen (9080 tekens) was geen geldige JSON
+    // en het herstel kostte een extra call van bijna een minuut.
+    const citaat = extractJson('{"hook":"Ze zegt "schaars" en bedoelt duur","n":2}') as { hook?: string; n?: number } | null;
+    toets('citaat met losse aanhalingstekens lokaal gerepareerd', citaat?.hook === 'Ze zegt "schaars" en bedoelt duur' && citaat?.n === 2, JSON.stringify(citaat));
+    const regel = extractJson('{"a":"een\ntwee"}'.replace('\\n', '\n')) as { a?: string } | null;
+    toets('echte regelovergang in een string', regel?.a === 'een\ntwee', JSON.stringify(regel));
+    const af = extractJson('{"clips":[{"titel":"x","shots":[{"v":1},{"v":2') as { clips?: { shots: unknown[] }[] } | null;
+    toets('afgebroken antwoord netjes gesloten (niet het binnenste object)', af?.clips?.[0]?.shots.length === 2, JSON.stringify(af));
 
     console.log('grote systeemprompt');
     // 1,5 MB: boven Linux' 128 KB per argument én boven macOS' ARG_MAX (1 MB).
@@ -123,8 +131,8 @@ process.stdin.on('data', (d) => (stdin += d));
 process.stdin.on('end', () => {
   fs.appendFileSync(${JSON.stringify(teller)}, (stdin.includes('=== ANTWOORD ===') ? 'herstel' : 'vraag') + '\\n');
   const result = stdin.includes('=== ANTWOORD ===')
-    ? (stdin.includes('"citaat": "hij zei "nee""') ? '{"ok": true, "lengte": 7}' : 'nog steeds kapot')
-    : 'Hier is de analyse:\\n{"ok": true, "lengte": 7, "citaat": "hij zei "nee""}';
+    ? (stdin.includes('"lengte": zeven') ? '{"ok": true, "lengte": 7}' : 'nog steeds kapot')
+    : 'Hier is de analyse:\\n{"ok": true, "lengte": zeven}';
   console.log(JSON.stringify({ result, total_cost_usd: 0, usage: { input_tokens: 1, output_tokens: 1 } }));
 });
 `,

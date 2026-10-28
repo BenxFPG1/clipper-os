@@ -47,7 +47,7 @@ export function kaderKeten(
      * begin van dit deel, met hun plek in het bronbeeld. Wint van de
      * gelijkmatige push-in.
      */
-    focus?: { t: number; cx: number; cy: number; b: number; h: number }[];
+    focus?: { t: number; cx: number; cy: number; b: number; h: number; titel?: { x0: number; y0: number; x1: number; y1: number } }[];
   } = {},
 ): string {
   const zoom = opties.zoom ?? 1;
@@ -113,6 +113,41 @@ export function kaderKeten(
 }
 
 /**
+ * Waar de uitsnede van de gerichte zoom op één blok komt: middelpunt fx
+ * (fractie van het werkvlak), bovenrand fy en zoom z.
+ */
+export function focusUitsnede(
+  i: { r: { x0: number; y0: number; x1: number; y1: number } },
+  p: { cx: number; cy: number; b: number; h: number; titel?: { x0: number; y0: number; x1: number; y1: number } },
+): { fx: number; fy: number; z: number } {
+  const rb = i.r.x1 - i.r.x0;
+  const rh = i.r.y1 - i.r.y0;
+  let fx = Math.min(1, Math.max(0, (p.cx - i.r.x0) / rb));
+  const deel = Math.max(p.b / rb, p.h / rh, 0.05);
+  let z = Math.max(1, Math.min(instelling('GRAPHIC_FOCUS_ZOOM'), 0.85 / deel));
+  const onder = Math.min(1, (p.cy + p.h / 2 - i.r.y0) / rh);
+  // De titel van de dia blijft heel in beeld (trainingsronde 10: "…NA IS
+  // GEEN TWEEDE GOUD" bij de zoom op het rechterblok). Dat begrenst de
+  // zoom (de uitsnede moet breed genoeg zijn voor de titel én hoog genoeg
+  // voor titel plus blok) en de plek (de uitsnede schuift niet verder
+  // opzij dan de titel toelaat).
+  const t = p.titel;
+  if (t) {
+    const marge = 0.03;
+    const tx0 = Math.max(0, (t.x0 - i.r.x0) / rb - marge);
+    const tx1 = Math.min(1, (t.x1 - i.r.x0) / rb + marge);
+    const ty0 = Math.max(0, (t.y0 - i.r.y0) / rh - marge);
+    z = Math.max(1, Math.min(z, 1 / Math.max(0.01, tx1 - tx0), 1 / Math.max(0.01, onder + marge - ty0)));
+    const w = 1 / z;
+    const links = Math.min(Math.max(fx - w / 2, tx1 - w, 0), tx0, 1 - w);
+    fx = links + w / 2;
+    const fy = Math.max(0, Math.min(1 - w, ty0, onder + marge - w));
+    return { fx, fy, z };
+  }
+  return { fx, fy: Math.max(0, Math.min(1 - 1 / z, onder + 0.03 - 1 / z)), z };
+}
+
+/**
  * zoompan die de spreker volgt: eerst de hele graphic, en op het moment dat
  * een blok genoemd wordt een vloeiende overgang (0,35 s) naar dat blok, zo
  * ver ingezoomd dat het blok heel in beeld blijft (hoogstens
@@ -121,7 +156,7 @@ export function kaderKeten(
  */
 export function gerichteZoom(
   i: { r: { x0: number; y0: number; x1: number; y1: number }; fgB: number; fgH: number },
-  focus: { t: number; cx: number; cy: number; b: number; h: number }[],
+  focus: { t: number; cx: number; cy: number; b: number; h: number; titel?: { x0: number; y0: number; x1: number; y1: number } }[],
   b: { vanaf: number; fps: number },
 ): string {
   const rb = i.r.x1 - i.r.x0;
@@ -131,13 +166,7 @@ export function gerichteZoom(
   // graphic blijft in beeld, en er wordt alleen omlaag geschoven als het
   // blok anders onderaan wegvalt (trainingsronde 5: "…A IS GEEN TWEEDE GOUD").
   type Sleutel = { t: number; fx: number; fy: number; z: number };
-  const plek = (p: { cx: number; cy: number; b: number; h: number }) => {
-    const fx = Math.min(1, Math.max(0, (p.cx - i.r.x0) / rb));
-    const deel = Math.max(p.b / rb, p.h / rh, 0.05);
-    const z = Math.max(1, Math.min(instelling('GRAPHIC_FOCUS_ZOOM'), 0.85 / deel));
-    const onder = Math.min(1, (p.cy + p.h / 2 - i.r.y0) / rh);
-    return { fx, fy: Math.max(0, Math.min(1 - 1 / z, onder + 0.03 - 1 / z)), z };
-  };
+  const plek = (p: Parameters<typeof focusUitsnede>[1]) => focusUitsnede(i, p);
   // Een later stuk van dezelfde pagina begint waar de beweging was: op het
   // laatste blok dat vóór dit stuk al genoemd werd, niet terug op het overzicht.
   const eerder = focus.filter((p) => p.t <= 0);

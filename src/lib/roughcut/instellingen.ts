@@ -260,6 +260,8 @@ const STANDAARD = {
   GRAPHIC_FOCUS_ZOOM: 1.35,
   /** Noemt de spreker de blokken niet, dan loopt de zoom hoogstens zoveel blokken in leesvolgorde af (graphiclezer.ts). */
   GRAPHIC_LEESVOLGORDE_MAX: 4,
+  /** Zoveel seconden na het laatste genoemde blok gaat de zoom terug naar de hele graphic (als die dan nog in beeld staat). */
+  GRAPHIC_FOCUS_VASTHOUDEN: 2.5,
   GRAPHIC_INHOUD_ONDER: 0.665,
 
   /**

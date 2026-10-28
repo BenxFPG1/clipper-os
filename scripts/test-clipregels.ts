@@ -13,6 +13,8 @@ import {
   isAfsluiter,
   maxSprongen,
   spanning,
+  zelfstandigeOpening,
+  zonderVerbinder,
   knipSlot,
   lengteBereik,
   pasClipRegelsToe,
@@ -355,6 +357,36 @@ async function main() {
     toets('de payoff blijft het laatste shot', r.clip.shots[r.clip.shots.length - 1].functie === 'payoff');
     const verhaal = pasClipRegelsToe(maak(), 'interview');
     toets('bij een verhaal (interview/comedy) blijft de volgorde staan', /^Platina combineert/.test(verhaal.clip.shots[0].transcript_fragment ?? ''));
+  }
+
+  console.log('één maatstaf voor de opening (trainingsronde 10)');
+  {
+    // Ronde 10: 8b zette "En aanbod dat…" vooraan (niet "zwak", wel een
+    // verbindingswoord), regel 4 knipte daarna naar "En de prijs die…". De
+    // clip opende slechter dan de planner hem had gemaakt.
+    const maak = () =>
+      clip(
+        [
+          shot(1, 277, 287, 'hook', 'Platina combineert iets wat weinig assets hebben. Het is zeldzaam, industrieel onmisbaar en geopolitiek kwetsbaar. Vier jaar op rij meer vragen dan aanbod.'),
+          shot(2, 287, 293, 'escalatie', 'En aanbod dat voor het grootste deel uit één land komt. En de prijs die nog ver onder zijn eigen record staat.'),
+          shot(3, 293, 307, 'barst', 'Maar het is geen tweede goud. Goud beweegt op vertrouwen en monetaire politiek. Dat maakt het volatieler en minder voorspelbaar.'),
+          shot(4, 307, 317, 'payoff', 'De echte vraag bij platina is niet of het schaars is. Want dat is het. De vraag is of de vraag sterk genoeg blijft.'),
+        ],
+        { hook: { type: 'x', tekst_overlay: 'Schaarste bewezen. Waarom volgt de prijs niet?', gesproken_start: 'Platina combineert iets wat weinig assets hebben.' } },
+      );
+    toets('"En aanbod dat…" en "En de prijs die…" zijn geen zelfstandige opening', !zelfstandigeOpening('En aanbod dat voor het grootste deel uit één land komt.') && !zelfstandigeOpening('En de prijs die nog ver onder zijn eigen record staat.'));
+    toets('"Vier jaar op rij meer vragen dan aanbod." wel, en heeft spanning ≥ 3', zelfstandigeOpening('Vier jaar op rij meer vragen dan aanbod.') && spanning('Vier jaar op rij meer vragen dan aanbod.') >= 3, String(spanning('Vier jaar op rij meer vragen dan aanbod.')));
+    const r = pasClipRegelsToe(maak(), 'uitleg');
+    const begin = r.clip.shots[0].transcript_fragment ?? '';
+    toets('clip opent op "Vier jaar op rij", niet met "En"', /^Vier jaar op rij/.test(begin), JSON.stringify(r.oordeel.ingrepen));
+    toets('bron blijft doorlopend: geen extra sprong', sprongen(r.clip).length === 0, JSON.stringify(sprongen(r.clip)));
+    toets('hook-start volgt de nieuwe opening', r.clip.hook.gesproken_start.startsWith('Vier jaar'));
+    // Twee keer door de regels (vóór en na de verhaaldokter): de tweede keer verandert er niets meer.
+    const twee = pasClipRegelsToe(r.clip, 'uitleg');
+    toets('stabiel: een tweede pas laat de opening staan', twee.clip.shots[0].transcript_fragment === begin && twee.oordeel.ingrepen.length === 0, JSON.stringify(twee.oordeel.ingrepen));
+    const los = zonderVerbinder(shot(1, 290, 293, 'hook', 'En de prijs die nog ver onder zijn eigen record staat.'));
+    toets('los "En" vooraan eraf als de rest een goede opening is', los?.transcript_fragment === 'De prijs die nog ver onder zijn eigen record staat.' && (los?.start ?? 0) > 290, JSON.stringify(los));
+    toets('"Want dat is het." wordt geen "Dat is het." (verwijst terug)', zonderVerbinder(shot(1, 1, 2, 'hook', 'Want dat is het.')) === null);
   }
 
   console.log('de opening met de meeste spanning');

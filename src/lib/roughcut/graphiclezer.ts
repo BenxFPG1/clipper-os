@@ -24,9 +24,10 @@ import type { BronWoord } from './woorden';
  * genoemd wordt. De render zoomt dan op die momenten naar dat blok.
  */
 
-export type GraphicItem = { tekst: string; box: Box };
+/** titel: de kop van de hele dia — geen zoompunt, maar moet in beeld blijven. */
+export type GraphicItem = { tekst: string; box: Box; titel?: boolean };
 /** Een zoompunt: op brontijd t richt het beeld op (cx, cy) in het volle bronbeeld, met de breedte en hoogte van het blok. */
-export type FocusPunt = { t: number; cx: number; cy: number; b: number; h: number };
+export type FocusPunt = { t: number; cx: number; cy: number; b: number; h: number; titel?: { x0: number; y0: number; x1: number; y1: number } };
 
 const itemSchema = z.object({
   items: z
@@ -40,6 +41,10 @@ const itemSchema = z.object({
       }),
     )
     .max(8),
+  titel: z
+    .object({ tekst: z.string(), x0: z.number().min(0).max(1), y0: z.number().min(0).max(1), x1: z.number().min(0).max(1), y1: z.number().min(0).max(1) })
+    .nullable()
+    .describe('De titel/kop van de hele dia met zijn vak, of null als die er niet is.'),
 });
 
 /** Leest de tekstblokken (punten, kolommen, labels) van één graphic-frame. Leeg bij een fout. */
@@ -50,7 +55,7 @@ export async function leesGraphic(bronPad: string, seconde: number): Promise<Gra
     if (!(await frame(bronPad, seconde, pad))) return [];
     const uit = await structuredCall({
       system:
-        'Je leest een informatieve graphic uit een video (een dia met punten, kolommen of een grafiek). Geef de afzonderlijke inhoudsblokken die een spreker na elkaar zou noemen: per blok de tekst (de kop of het label) en het vak waarin het blok staat, als fracties van de beeldbreedte en -hoogte (0 = links/boven, 1 = rechts/onder). Niet de titel van de hele dia, geen logo, geen bronvermelding. Zijn er geen afzonderlijke blokken, geef dan een lege lijst.',
+        'Je leest een informatieve graphic uit een video (een dia met punten, kolommen of een grafiek). Geef de afzonderlijke inhoudsblokken die een spreker na elkaar zou noemen: per blok de tekst (de kop of het label) en het vak waarin het blok staat, als fracties van de beeldbreedte en -hoogte (0 = links/boven, 1 = rechts/onder). De titel van de hele dia hoort niet bij de blokken: die geef je apart als titel (met zijn vak). Geen logo, geen bronvermelding. Zijn er geen afzonderlijke blokken, geef dan een lege lijst.',
       user: 'Welke inhoudsblokken staan er op deze graphic, en waar?',
       schema: itemSchema,
       toolName: 'lever_graphicblokken',
@@ -61,9 +66,13 @@ export async function leesGraphic(bronPad: string, seconde: number): Promise<Gra
       beeldPaden: [pad],
       model: CLAUDE_LICHT_MODEL,
     });
-    return uit.items
-      .filter((i) => i.x1 > i.x0 && i.y1 > i.y0 && i.tekst.trim().length >= 2)
-      .map((i) => ({ tekst: i.tekst.trim(), box: { x0: i.x0, y0: i.y0, x1: i.x1, y1: i.y1 } }));
+    const t = uit.titel;
+    return [
+      ...uit.items
+        .filter((i) => i.x1 > i.x0 && i.y1 > i.y0 && i.tekst.trim().length >= 2)
+        .map((i) => ({ tekst: i.tekst.trim(), box: { x0: i.x0, y0: i.y0, x1: i.x1, y1: i.y1 } })),
+      ...(t && t.x1 > t.x0 && t.y1 > t.y0 ? [{ tekst: t.tekst.trim(), box: { x0: t.x0, y0: t.y0, x1: t.x1, y1: t.y1 }, titel: true }] : []),
+    ];
   } catch (e) {
     console.warn('[graphiclezer] overgeslagen:', (e as Error).message.slice(0, 120));
     return [];
@@ -82,7 +91,7 @@ const kaal = (w: string) => w.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
 export function focusPunten(items: GraphicItem[], woorden: BronWoord[], van: number, tot: number): FocusPunt[] {
   const inBereik = woorden.filter((w) => w.s >= van - 0.05 && w.s < tot);
   const punten: FocusPunt[] = [];
-  for (const item of items) {
+  for (const item of items.filter((x) => !x.titel)) {
     const sleutels = item.tekst.split(/\s+/).map(kaal).filter((w) => w.length >= 4);
     if (sleutels.length === 0) continue;
     const w = inBereik.find((x) => {
@@ -105,7 +114,8 @@ export function focusPunten(items: GraphicItem[], woorden: BronWoord[], van: num
  */
 export function leesvolgordePunten(items: GraphicItem[], van: number, tot: number): FocusPunt[] {
   const regel = (b: GraphicItem['box']) => Math.round(((b.y0 + b.y1) / 2) / 0.12);
-  const blokken = [...items]
+  const blokken = items
+    .filter((x) => !x.titel)
     .sort((a, b) => regel(a.box) - regel(b.box) || a.box.x0 - b.box.x0)
     .slice(0, instelling('GRAPHIC_LEESVOLGORDE_MAX'));
   if (blokken.length < 2) return [];
@@ -162,15 +172,25 @@ export async function richtGraphics(
     const moment = momenten.length ? Math.max(...momenten) : van + 0.8 * (tot - van);
     const items = await lezer(bronPad, moment);
     const genoemd = focusPunten(items, woorden, van, tot);
-    const punten = genoemd.length >= 2 ? genoemd : leesvolgordePunten(items, van, tot);
-    if (punten.length < 2) {
+    const titel = items.find((x) => x.titel)?.box;
+    const basis = genoemd.length >= 2 ? genoemd : leesvolgordePunten(items, van, tot);
+    let punten = basis;
+    // Na het laatste blok terug naar het hele beeld als de pagina daarna nog
+    // blijft staan: in trainingsronde 10 bleef de zoom op blok 3 hangen terwijl
+    // de spreker al over "vier jaar tekort" praatte.
+    const laatste = punten[punten.length - 1];
+    if (laatste && tot - (laatste.t + instelling('GRAPHIC_FOCUS_VASTHOUDEN')) > 0.5) {
+      punten = [...punten, { t: laatste.t + instelling('GRAPHIC_FOCUS_VASTHOUDEN'), cx: 0.5, cy: 0.5, b: 1, h: 1 }];
+    }
+    if (titel) punten = punten.map((p) => ({ ...p, titel }));
+    if (basis.length < 2) {
       log(`graphic ${van.toFixed(1)}–${tot.toFixed(1)} s: ${items.length} blok(ken) gelezen, ${genoemd.length} genoemd — geen gerichte zoom`);
       continue;
     }
-    if (punten !== genoemd) log(`graphic ${van.toFixed(1)}–${tot.toFixed(1)} s: ${genoemd.length} genoemd → zoom in leesvolgorde langs ${punten.length} blokken`);
+    if (genoemd.length < 2) log(`graphic ${van.toFixed(1)}–${tot.toFixed(1)} s: ${genoemd.length} genoemd → zoom in leesvolgorde langs ${basis.length} blokken`);
     for (const st of pagina) st.sc.focus = punten;
     gericht++;
-    log(`graphic ${van.toFixed(1)}–${tot.toFixed(1)} s: ${punten.length} punten gericht (${items.map((i) => i.tekst).join(' / ')})`);
+    log(`graphic ${van.toFixed(1)}–${tot.toFixed(1)} s: ${genoemd.length >= 2 ? `${genoemd.length} punten gericht` : 'leesvolgorde'}${titel ? ', titel blijft in beeld' : ''}${punten.length > basis.length ? ', daarna terug naar het geheel' : ''} (${items.filter((i) => !i.titel).map((i) => i.tekst).join(' / ')})`);
   }
   return gericht;
 }

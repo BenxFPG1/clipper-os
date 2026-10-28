@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import Anthropic from '@anthropic-ai/sdk';
 import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
-import { CLAUDE_MODEL, optionalEnv, requireEnv } from './env';
+import { CLAUDE_LICHT_MODEL, CLAUDE_MODEL, optionalEnv, requireEnv } from './env';
 import { logProviderUsage } from './supabase';
 
 let client: Anthropic | null = null;
@@ -242,6 +242,7 @@ Je vorige antwoord bevatte geen parseerbare JSON. Antwoord nu met uitsluitend he
 
     const parsed = opts.schema.safeParse(extracted);
     if (parsed.success) return parsed.data;
+    console.warn(`[claude-cli] schemafout (${opts.operation}, poging ${attempt + 1}): ${parsed.error.issues.slice(0, 4).map((i) => `${i.path.join('.')}: ${i.message}`).join('; ').slice(0, 300)}`);
 
     if (attempt === 1) {
       throw new SchemaValidationError(
@@ -283,7 +284,8 @@ async function herstelJson<T extends z.ZodTypeAny>(
       `Geef alleen het JSON-object: geldig, volgens het schema, met dezelfde inhoud. Is het afgebroken, sluit het dan netjes af ` +
       `zonder inhoud te verzinnen.\n\n=== SCHEMA ===\n${JSON.stringify(jsonSchema)}\n\n=== ANTWOORD ===\n${ruw}`,
     'low',
-    opts.model ?? CLAUDE_MODEL,
+    // Vormwerk: het lichte model is hier even goed en veel sneller.
+    CLAUDE_LICHT_MODEL,
   );
   void logProviderUsage('claude-code', `${opts.operation}:json_herstel`, tokens, costUsd * 0.92).catch(() => undefined);
   return extractJson(result);
@@ -534,6 +536,17 @@ export function extractJson(text: string): unknown | null {
     }
   }
 
+  // Lokale reparatie vóór een herstel-call (die kostte in trainingsronde
+  // 10 bijna een minuut): de twee vormfouten die het model in Nederlandse
+  // tekst maakt — een aanhalingsteken in een citaat dat niet ge-escapet is,
+  // een echte regelovergang in een string — en een afgebroken einde.
+  if (first !== -1) {
+    try {
+      return JSON.parse(repareerJson(text.slice(first)));
+    } catch {
+      // dan de herstel-call
+    }
+  }
   // Tekst rond het JSON met zelf ook accolades ("ik lever {de analyse}…"):
   // dan klopt eerste-tot-laatste niet. Elk gebalanceerd object (strings
   // meegeteld) apart proberen, het grootste eerst.
@@ -546,6 +559,48 @@ export function extractJson(text: string): unknown | null {
     }
   }
   return null;
+}
+
+/**
+ * Repareert JSON-tekst zonder iets aan de inhoud te veranderen: een " binnen
+ * een string die niet door , } ] of : gevolgd wordt is een citaat en wordt
+ * ge-escapet; regelovergangen in strings worden \n; een afgebroken object
+ * wordt netjes gesloten. Alles na het sluitende haakje valt weg.
+ */
+export function repareerJson(tekst: string): string {
+  let uit = '';
+  let inString = false;
+  const stapel: string[] = [];
+  for (let i = 0; i < tekst.length; i++) {
+    const c = tekst[i];
+    if (inString) {
+      if (c === '\\') {
+        uit += c + (tekst[i + 1] ?? '');
+        i++;
+      } else if (c === '"') {
+        const rest = tekst.slice(i + 1).match(/^\s*(.)/)?.[1];
+        if (rest === undefined || /[,}\]:]/.test(rest)) {
+          inString = false;
+          uit += c;
+        } else uit += '\\"';
+      } else if (c === '\n') uit += '\\n';
+      else if (c === '\r') uit += '';
+      else if (c === '\t') uit += '\\t';
+      else uit += c;
+      continue;
+    }
+    if (c === '"') inString = true;
+    else if (c === '{' || c === '[') stapel.push(c === '{' ? '}' : ']');
+    else if (c === '}' || c === ']') {
+      stapel.pop();
+      if (stapel.length === 0) return uit + c;
+    }
+    uit += c;
+  }
+  // Afgebroken: open string sluiten, een half paar of komma weghalen, dan alles dicht.
+  if (inString) uit += '"';
+  uit = uit.replace(/,\s*$/, '').replace(/,\s*"[^"]*"\s*:?\s*$/, '').replace(/:\s*$/, ': null');
+  return uit + stapel.reverse().join('');
 }
 
 /** Alle top-level {…}-blokken in een tekst, met accolades binnen strings genegeerd. */
