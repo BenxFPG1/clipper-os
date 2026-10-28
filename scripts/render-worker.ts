@@ -914,6 +914,10 @@ async function verwerk(job: Job) {
     let retentie: RetentieResultaat | null = null;
     let retentieKaarten: Kaart[] = [];
 
+    // Eén hookversie (trainingsronde): de hookkaart gaat als gewone kaart mee
+    // in de hoofdrender. Geen verliesvrij tussenbestand, geen tweede encode en
+    // geen decode-controle voor één variant (1,7 min in trainingsronde 5).
+    const eenVersie = hookTeksten.length === 1;
     const bouwOverlays = async (): Promise<BurnOverlay[]> => {
       // Tijdsprong- en edit-agentkaarten ("2,5 minuut later") komen niet meer
       // in de mp4: dat zijn markeringen voor de editor, en op TikTok breken ze
@@ -922,6 +926,11 @@ async function verwerk(job: Job) {
       // aangehaalde uitvalrisico's en de re-hook.
       const overlays: BurnOverlay[] = [];
       const totaal = segmenten.reduce((t, sg) => t + (sg.end - sg.start), 0);
+      if (eenVersie) {
+        const hookPad = join(kaartMap, `c${nummer}-hook-1.png`);
+        await tekenHookKaart(hookTeksten[0], hookPad, stijl);
+        overlays.push({ pad: hookPad, start: 0, end: Math.min(totaal, hookDuur(hookTeksten[0])) });
+      }
 
       // De contextkaart (één regel situering, uit het plan) komt direct na de
       // hook — kort, want de hook heeft de belofte al gedaan.
@@ -992,7 +1001,9 @@ async function verwerk(job: Job) {
       const geplaatst = new Set(vast.map((k) => k.tekst).filter(Boolean));
       // Zelfstandig: geen flard van wat er gezegd wordt ("en dan die prijs
       // nog"), dan de volgende kandidaat.
-      const gesproken = clip.shots.map((sh) => (sh as { transcript_fragment?: string }).transcript_fragment ?? '').join(' ');
+      // Ook geen herhaling van de hook-tekst bovenin ("Schaarser dan goud. Dus
+      // veiliger?" en later "Dus toch veiliger dan goud?", trainingsronde 5).
+      const gesproken = [...clip.shots.map((sh) => (sh as { transcript_fragment?: string }).transcript_fragment ?? ''), ...hookTeksten].join(' ');
       const rehookRegels = [
         (editClip as { rehook?: string | null } | null)?.rehook ?? null,
         ...(clip.uitval_risicos ?? []).map((r) => kaartRegelUit(r.fix)),
@@ -1453,7 +1464,7 @@ async function verwerk(job: Job) {
       // Gaan er nog hookkaarten overheen, dan is dit een tussenbestand: bijna
       // verliesvrij, zodat de eindencode (brandOverlays) niet op een al
       // gecomprimeerd beeld stapelt.
-      tussenbestand: hookTeksten.length > 0,
+      tussenbestand: hookTeksten.length > 1,
       // Scherpte uit de renderbron: alleen de gebruikte stukken, in de
       // hoogste kwaliteit; de analysebron blijft voor alle metingen.
       renderSecties: process.env.RENDERBRON !== '0',
@@ -1778,8 +1789,16 @@ async function verwerk(job: Job) {
           retentieHersteld = true;
           const opnieuw = pasRetentieToe(segmenten, { ...ctx, hookTot, rehookRegels: [] });
           const echt = opnieuw.ingrepen.filter((g) => g.soort !== 'overgeslagen');
-          console.log(`     zelfherstel retentie: ${oordeel.detail} → ${echt.length ? opnieuw.logregel : 'geen ingreep mogelijk'}`);
-          if (echt.length) {
+          // Alleen opnieuw renderen als de ingreep de retentie op papier ook
+          // groen maakt: in trainingsronde 5 kostte een herrender 2,5 min en
+          // bleef "3,6 s zonder tekst" gewoon staan (een kaderwissel verhelpt
+          // geen gat in de spraak).
+          const daarna = echt.length ? keurRetentie(meetRetentie(opnieuw.segmenten, ctx), doelen, { ondertitels: Boolean(ondertitels) }) : null;
+          console.log(
+            `     zelfherstel retentie: ${oordeel.detail} → ${echt.length ? opnieuw.logregel : 'geen ingreep mogelijk'}` +
+              (daarna && daarna.goed === false ? ' — lost het niet op, geen herrender' : ''),
+          );
+          if (echt.length && daarna?.goed !== false) {
             segmenten.length = 0;
             segmenten.push(...opnieuw.segmenten);
             corrigeerKadrering(segmenten);
@@ -1801,7 +1820,8 @@ async function verwerk(job: Job) {
     const varianten: { pad: string; naam: string; hook_variant?: number; hook_tekst?: string }[] = [];
     {
       const totaal = segmenten.reduce((t, sg) => t + (sg.end - sg.start), 0);
-      if (hookTeksten.length === 0) {
+      if (hookTeksten.length <= 1) {
+        // Geen hook, of één die al in de hoofdrender zit.
         await rename(basisPad, lokaal);
         varianten.push({ pad: lokaal, naam });
       }
@@ -1811,7 +1831,7 @@ async function verwerk(job: Job) {
       // de hele clip zoals voorheen.
       const tVarianten = Date.now();
       const plan = await Promise.all(
-        hookTeksten.map(async (tekst, i) => {
+        (eenVersie ? [] : hookTeksten).map(async (tekst, i) => {
           const hookPad = join(kaartMap, `c${nummer}-hook-${i + 1}.png`);
           await tekenHookKaart(tekst, hookPad, stijl);
           const uitNaam = i === 0 ? naam : naam.replace(/\.mp4$/, `-hook${i + 1}.mp4`);

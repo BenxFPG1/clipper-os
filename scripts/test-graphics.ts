@@ -123,6 +123,8 @@ console.log('kaarttekst: zelfstandig en met een hoofdletter');
   toets('flard met verbindingswoord, geen vraag: niet zelfstandig', !zelfstandigeKaart('en dan die prijs nog'));
   toets('herhaling van wat er gezegd wordt: niet zelfstandig', !zelfstandigeKaart('De prijs ver onder zijn eigen record', gesproken));
   toets('een vraag die iets toevoegt: wel', zelfstandigeKaart('Wat beweegt platina dan wél?', gesproken) && zelfstandigeKaart('Maar waarom dan niet duurder?'));
+  // Trainingsronde 5: de re-hook herhaalde de hook-tekst bovenin.
+  toets('re-hook die de hook-tekst herhaalt: niet zelfstandig', !zelfstandigeKaart('Dus toch veiliger dan goud?', 'Schaarser dan goud. Dus veiliger?'));
   toets('hoofdletter vooraan, ook na een aanhalingsteken', metHoofdletter('record: $2.920') === 'Record: $2.920' && metHoofdletter('"waarom?"') === '"Waarom?"');
 }
 
