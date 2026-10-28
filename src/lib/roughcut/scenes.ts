@@ -43,6 +43,8 @@ export type Scene = {
   opbouw?: boolean;
   /** Zoompunten (graphiclezer.ts): wanneer de spreker welk blok van de graphic noemt, in brontijd en bronbeeld. */
   focus?: { t: number; cx: number; cy: number; b: number; h: number }[];
+  /** Zoveel seconden na het eind van deze graphic is het beeld in de bron een wazige overgang (whip naar de spreker): de graphic blijft zo lang staan. */
+  overgangNa?: number;
 };
 
 /** Een deelstuk van een shot in shot-tijd (0 = begin van het shot), met het kader dat de render gebruikt. */
@@ -60,6 +62,7 @@ export type Deelstuk = {
   geenBevries?: string;
   opbouw?: boolean;
   focus?: { t: number; cx: number; cy: number; b: number; h: number }[];
+  overgangNa?: number;
 };
 
 /**
@@ -123,6 +126,7 @@ export function deelstukken(shot: Shot, kader: Kader): Deelstuk[] {
       geenBevries: s.geenBevries,
       opbouw: s.opbouw,
       focus: s.focus,
+      overgangNa: s.overgangNa,
     }))
     .sort((a, b) => a.van - b.van);
   // Gaten dichten en de randen op de shotgrenzen: de poort en de
@@ -677,4 +681,56 @@ export function strijkGlad(runs: Run[], stap: number, glad: number): Run[] {
     uit.length = 0;
     uit.push(...samen);
   }
+}
+
+/**
+ * Wazige overgangen in de bron (een whip of een blur van de graphic naar de
+ * spreker) uit beeld houden. PLATINA trainingsronde 5: na de graphic stond
+ * een uitgesmeerd frame in de clip — scherpte 613 op de graphic, 22 midden in
+ * de overgang, pas na 0,3 s weer ~150 op de spreker. Per overgang van een
+ * graphic naar een gezicht (in de bron aansluitend) wordt de scherpte per
+ * 0,1 s gemeten; is het begin van het spreker-stuk wazig, dan krijgt de
+ * graphic `overgangNa`: leestijd.ts houdt hem zo lang vast en het
+ * spreker-stuk begint zoveel later (beeld, niet geluid).
+ */
+export async function meetOvergangen(
+  segmenten: Shot[],
+  meter: (tijden: number[]) => Promise<({ t: number; beeld: number } | null)[]>,
+): Promise<string[]> {
+  type Stuk = { sc: Scene; van: number; tot: number };
+  const stukken: Stuk[] = [];
+  for (const seg of segmenten) {
+    for (const sc of seg.scenes ?? []) {
+      const van = Math.max(seg.start, sc.van);
+      const tot = Math.min(seg.end, sc.tot);
+      if (tot > van) stukken.push({ sc, van, tot });
+    }
+  }
+  const regels: string[] = [];
+  for (let k = 0; k + 1 < stukken.length; k++) {
+    const a = stukken[k];
+    const b = stukken[k + 1];
+    if (a.sc.gezicht !== false || b.sc.gezicht !== true || Math.abs(a.tot - b.van) > 0.05 || a.sc.overgangNa !== undefined) continue;
+    const grens = a.tot;
+    const tijden: number[] = [];
+    for (let t = grens - 0.3; t <= grens + 1.45; t += 0.1) tijden.push(Math.round(t * 100) / 100);
+    const m = await meter(tijden).catch(() => null);
+    if (!m) continue;
+    const punten = m.filter((x): x is { t: number; beeld: number } => x !== null);
+    const med = (xs: number[]) => (xs.length ? [...xs].sort((p, q) => p - q)[Math.floor(xs.length / 2)] : 0);
+    const naRef = med(punten.filter((p) => p.t >= grens + 0.7).map((p) => p.beeld));
+    if (naRef <= 0) continue;
+    // Het wazige dal vlak na de grens (een frame dat nog half graphic is kan
+    // scherp lijken: 200 bij PLATINA), en dan het eerste scherpe frame ná dat dal.
+    const rond = punten.filter((p) => p.t >= grens - 0.05 && p.t <= grens + 0.6);
+    const dal = rond.filter((p) => p.beeld < 0.6 * naRef).pop();
+    const scherp = dal ? punten.find((p) => p.t > dal.t && p.beeld >= 0.6 * naRef) : undefined;
+    const wazig = scherp ? scherp.t - grens : 0;
+    a.sc.overgangNa = 0;
+    if (scherp && wazig >= 0.08 && wazig <= 1) {
+      a.sc.overgangNa = Math.round(wazig * 100) / 100;
+      regels.push(`overgang op ${grens.toFixed(1)} s: ${wazig.toFixed(2)} s wazig → graphic blijft staan tot de spreker scherp is`);
+    }
+  }
+  return regels;
 }

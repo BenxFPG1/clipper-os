@@ -17,6 +17,11 @@ const checkSchema = z.object({
         .min(0)
         .max(1)
         .describe('Hoe groot de ingreep moet zijn: 0,2 is een tikje, 1 is maximaal.'),
+      afgesneden_tekst: z
+        .boolean()
+        .describe(
+          'Staat er tekst of een logo uit de bron in beeld dat aan de rand wordt afgesneden (halve woorden of letters tegen de rand, bv. "ROC" van "MACROCHECK")? Onze ondertitels en tekstkaarten tellen niet.',
+        ),
       beeldtype: z
         .enum(['persoon', 'graphic', 'gemengd'])
         .describe(
@@ -41,6 +46,8 @@ Je oordeelt alleen over wat er in beeld staat, niet over de inhoud. Fout is:
 Goed is: één persoon herkenbaar in beeld, hoofd compleet en rond het midden van het kader (iets hoofdruimte erboven — níet de ogen op een derde: op een telefoon leest dat als "hij hangt bovenin"), en genoeg ruimte aan de kant waar hij naartoe kijkt.
 
 Ondertitels en tekstkaarten in beeld zijn bedoeld: tel ze niet als fout en negeer ze bij je oordeel over de kadrering.
+
+Tekst of een logo úít de bron (een titelanimatie, een intro, een programmanaam) dat aan de rand van het beeld wordt afgesneden — halve woorden, letters tegen de rand — is altijd fout: zet dan "afgesneden_tekst" op true. Zo'n beeld hoort passend in beeld (helemaal zichtbaar), niet bijgesneden.
 
 Zeg per shot ook wat voor beeld het is ("beeldtype"): een sprekend hoofd ("persoon"), een titel/grafiek/tabel/schermopname zonder mens ("graphic"), of allebei ("gemengd"). Bij een graphic gaat het niet om een gezicht maar om of de tekst leesbaar en heel is — de montage kadreert die dan passend in plaats van erop in te zoomen.
 

@@ -31,7 +31,7 @@ import {
   type Huisstijl,
 } from '../src/lib/roughcut/tekstkaarten';
 import { controleerAssFont, maakOndertitels, type Ondertitels } from '../src/lib/roughcut/ondertitels';
-import { gezichtMeterVia, kiesBevries, vulScenes, waaromGeenBevries } from '../src/lib/roughcut/scenes';
+import { gezichtMeterVia, kiesBevries, meetOvergangen, vulScenes, waaromGeenBevries } from '../src/lib/roughcut/scenes';
 import { graphicMeterVia, lijktGraphic } from '../src/lib/roughcut/graphics';
 import { behandelEindscherm, bronDuur, keurOverlayDetail, overlayMeterVia, vermijdOverlay } from '../src/lib/roughcut/eindscherm';
 import { afwijkendeInstellingen, gebruikteInstellingen, instelling, ondertitelStijlStandaard } from '../src/lib/roughcut/instellingen';
@@ -790,6 +790,13 @@ async function verwerk(job: Job) {
           `${sc.graphic} zonder (passend; ${sc.ingezoomd} ingezoomd op de inhoud, ${sc.animerend} animerend → niet ingezoomd), ${sc.wijd} wijd camerabeeld zonder gevonden gezicht (vullend), ` +
           `${sc.overgangen} overgang(en) op de scènepiek (${(sc.ms / 1000).toFixed(1).replace('.', ',')} s)`,
       );
+      // Wazige overgangen (whip/blur) van een graphic naar de spreker: de
+      // graphic blijft staan tot de spreker scherp is (scenes.ts).
+      try {
+        for (const r of await meetOvergangen(segmenten, scherpteMeterVia(bronPad, pythonMetOpenCV()))) console.log(`     ${r}`);
+      } catch (e) {
+        console.log(`     overgangsmeting overgeslagen (${(e as Error).message.slice(0, 70)})`);
+      }
       // Graphics die lang in beeld staan: lezen welke blokken erop staan, en
       // de zoom laten volgen wanneer de spreker ze noemt (graphiclezer.ts).
       try {
@@ -1662,9 +1669,38 @@ async function verwerk(job: Job) {
         }
 
         const oordeel = await controleerKaderVisueel(beelden);
+        // Afgesneden tekst of een logo uit de bron ("ROC" van een
+        // MACROCHECK-intro, trainingsronde 5) is altijd fout: zo'n stuk zonder
+        // gezicht gaat passend in beeld, ook als de vlakheidsmeting het een
+        // camerabeeld vond (een geanimeerde wereldkaart lijkt daar op).
+        let tekstHersteld = 0;
         for (const o of oordeel.shots) {
           const seg = segmenten.find((sg) => sg.volgorde === o.volgorde);
-          if (seg && o.beeldtype) seg.beeldtype = await bevestigBeeldtype(bronPad, seg, o.beeldtype);
+          // Ook: de meting vond geen gezicht ("wijd") en het beeld is volgens
+          // het model een graphic — samen een sterk signaal (ronde 5: "geen
+          // mens in beeld, alleen een rood vlak").
+          const wijd = (seg?.scenes ?? []).filter((sc) => sc.gezicht !== true && sc.wijd);
+          if (!seg || !(o.afgesneden_tekst || (o.beeldtype === 'graphic' && wijd.length > 0))) continue;
+          for (const sc of wijd) {
+            sc.wijd = false;
+            sc.gezicht = false;
+          }
+          if (wijd.length) {
+            tekstHersteld++;
+            console.log(`     eindbeeldcontrole shot ${o.volgorde}: afgesneden tekst uit de bron → ${wijd.length} wijd stuk(ken) passend`);
+          } else if (o.afgesneden_tekst && !seg.scenes?.length && seg.beeldtype !== 'graphic') {
+            seg.beeldtype = 'graphic';
+            tekstHersteld++;
+            console.log(`     eindbeeldcontrole shot ${o.volgorde}: afgesneden tekst uit de bron → passend`);
+          }
+        }
+        for (const o of oordeel.shots) {
+          const seg = segmenten.find((sg) => sg.volgorde === o.volgorde);
+          if (seg && o.beeldtype && !o.afgesneden_tekst) seg.beeldtype = await bevestigBeeldtype(bronPad, seg, o.beeldtype);
+        }
+        if (tekstHersteld > 0 && poging < 4) {
+          console.log('     eindbeeldcontrole: afgesneden tekst hersteld, opnieuw renderen');
+          continue;
         }
         const fout = oordeel.shots.filter((o) => !o.goed && o.beeldtype !== 'graphic');
         if (fout.length === 0) {

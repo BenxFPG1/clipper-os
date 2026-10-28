@@ -16,7 +16,7 @@ import { resolveBinary } from '../src/lib/ingest/binaries';
 import { analyseerGraphic, graphicMeterVia, inhoudKader, inhoudOpBeeld, lijktGraphic, margeBox, schaalTovPassend, stabieleInhoud } from '../src/lib/roughcut/graphics';
 import { keurGraphicsDetail, type GraphicFout } from '../src/lib/roughcut/keuring';
 import { herstelNaKeuring, zelfherstelStap } from '../src/lib/roughcut/herstel';
-import { deelstukken, kiesBevries, splitsOpBeeldsoort, vulScenes, type GezichtMeter } from '../src/lib/roughcut/scenes';
+import { deelstukken, kiesBevries, meetOvergangen, splitsOpBeeldsoort, vulScenes, type GezichtMeter } from '../src/lib/roughcut/scenes';
 import { keurGraphics } from '../src/lib/roughcut/keuring';
 import { behandelEindscherm, keurOverlay, overlayUitPixels, vermijdOverlay } from '../src/lib/roughcut/eindscherm';
 import { plakKoppeltekens, plaatsRegels } from '../src/lib/roughcut/ondertitels';
@@ -189,6 +189,23 @@ console.log('leestijd: graphics direct achter elkaar (blok)');
 }
 
 async function vervolg() {
+  console.log('wazige overgang van graphic naar spreker');
+  {
+    // Echte scherptes uit PLATINA rond 291,1 s (graphic → whip → spreker).
+    const waarden: Record<string, number> = { '290.8': 613, '290.9': 613, '291.0': 613, '291.1': 200, '291.2': 22, '291.3': 89, '291.4': 151, '291.5': 150, '291.6': 148, '291.7': 161, '291.8': 151, '291.9': 170, '292.0': 203, '292.1': 168, '292.2': 160, '292.3': 163, '292.4': 166, '292.5': 158 };
+    const meter = async (tijden: number[]) => tijden.map((t) => ({ t, beeld: waarden[t.toFixed(1)] ?? 160 }));
+    const seg = { volgorde: 3, start: 284, end: 296, functie: 'escalatie', scenes: [{ van: 284, tot: 291.1, gezicht: false, bevries: 290.5 }, { van: 291.1, tot: 296, gezicht: true }] } as unknown as import('../src/lib/roughcut').Shot;
+    const regels = await meetOvergangen([seg], meter);
+    const na = seg.scenes![0].overgangNa ?? 0;
+    toets('wazige overgang gemeten (~0,3 s tot de spreker scherp is)', Math.abs(na - 0.3) < 0.051, JSON.stringify({ na, regels }));
+    const plan = leestijdPlan([seg], 'vullend');
+    const g = plan.aanpassing.get('0:0');
+    const s2 = plan.aanpassing.get('0:1');
+    toets('graphic blijft over de overgang staan, spreker begint zoveel later', (g?.vasthouden ?? 0) >= na - 1e-9 && (s2?.inkorten ?? 0) >= na - 1e-9, JSON.stringify({ g, s2 }));
+    const scherpOveral = { ...seg, scenes: [{ van: 284, tot: 291.1, gezicht: false }, { van: 291.1, tot: 296, gezicht: true }] } as unknown as import('../src/lib/roughcut').Shot;
+    await meetOvergangen([scherpOveral], async (tijden) => tijden.map((t) => ({ t, beeld: 160 })));
+    toets('een scherpe knip krijgt geen vasthouden', (scherpOveral.scenes![0].overgangNa ?? 0) === 0);
+  }
   {
   const items = [
     { tekst: 'ZELDZAAM', box: { x0: 0.07, y0: 0.31, x1: 0.35, y1: 0.82 } },

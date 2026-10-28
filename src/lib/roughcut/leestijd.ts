@@ -63,7 +63,7 @@ const isGraphic = (seg: Shot, d: { kader: Kader; gezicht: boolean | null }) =>
 
 /** Het plan voor een hele montage (segmenten in volgorde). Puur rekenwerk. */
 export function leestijdPlan(segmenten: Shot[], kader: Kader): LeesPlan {
-  type Stuk = { shot: number; deel: number; start: number; duur: number; graphic: boolean; woorden: number | null; functie: string; inhoud?: Box | null; houdbaar: boolean; geenBevries?: string; herkomst: string; opbouw?: boolean; bronVan: number; bronTot: number };
+  type Stuk = { shot: number; deel: number; start: number; duur: number; graphic: boolean; woorden: number | null; functie: string; inhoud?: Box | null; houdbaar: boolean; geenBevries?: string; herkomst: string; opbouw?: boolean; bronVan: number; bronTot: number; overgangNa?: number };
   const stukken: Stuk[] = [];
   let cursor = 0;
   segmenten.forEach((seg, i) => {
@@ -79,6 +79,7 @@ export function leestijdPlan(segmenten: Shot[], kader: Kader): LeesPlan {
         inhoud: d.inhoud,
         geenBevries: d.geenBevries,
         opbouw: d.opbouw,
+        overgangNa: d.overgangNa,
         bronVan: seg.start + d.van,
         bronTot: seg.start + d.tot,
         // Waar dit stuk vandaan komt, voor de logregel: zonder dit was niet te
@@ -211,6 +212,16 @@ export function leestijdPlan(segmenten: Shot[], kader: Kader): LeesPlan {
         });
       }
       vertraging += vasthouden;
+    }
+    // Een wazige overgang in de bron na de laatste graphic (scenes.ts
+    // meetOvergangen): de graphic blijft staan tot de spreker scherp is, en
+    // het spreker-stuk begint zoveel later. Alleen beeld; het geluid loopt door.
+    const laatsteG = blok[blok.length - 1];
+    const overgang = laatsteG.overgangNa ?? 0;
+    if (overgang > 0 && volgende && !volgende.graphic && volgende.duur - totaal - overgang >= instelling('GRAPHIC_MIN_REST')) {
+      const nu = aanpassing.get(`${laatsteG.shot}:${laatsteG.deel}`)?.vasthouden ?? 0;
+      zet(laatsteG, { vasthouden: Math.round((nu + overgang) * 100) / 100 });
+      totaal += overgang;
     }
     if (totaal > 0 && volgende) zet(volgende, { inkorten: Math.round(totaal * 100) / 100 });
   }
