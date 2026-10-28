@@ -374,6 +374,17 @@ async function main() {
     const r = pasClipRegelsToe(c, 'uitleg');
     toets('uitleg: de escalatie met de meeste spanning gaat vooraan', /^Vier jaar op rij/.test(r.clip.shots[0].transcript_fragment ?? ''), JSON.stringify(r.oordeel.ingrepen));
     toets('…niet bij comedy', /^Platina combineert/.test(pasClipRegelsToe(c, 'comedy').clip.shots[0].transcript_fragment ?? ''));
+    // Trainingsronde 4: drie shots, het spannende staat direct vóór de payoff.
+    const drie = clip(
+      [
+        shot(1, 277, 284, 'hook', 'Platina combineert iets wat weinig assets hebben. Het is zeldzaam en onmisbaar.'),
+        shot(2, 284, 293, 'escalatie', 'Vier jaar op rij meer vragen dan aanbod. En de prijs die nog ver onder zijn eigen record staat.'),
+        shot(3, 293, 307, 'payoff', 'Maar het is geen tweede goud. Goud beweegt op vertrouwen. Dat maakt het volatieler.'),
+      ],
+      { hook: { type: 'x', tekst_overlay: 'Zeldzamer dan goud. Dus goud 2.0?', gesproken_start: 'Platina combineert iets wat weinig assets hebben.' } },
+    );
+    const r3 = pasClipRegelsToe(drie, 'uitleg');
+    toets('drie shots: ook de escalatie vlak vóór de payoff gaat vooraan, de payoff blijft laatst', /^Vier jaar op rij/.test(r3.clip.shots[0].transcript_fragment ?? '') && r3.clip.shots[2].functie === 'payoff', JSON.stringify(r3.clip.shots.map((x) => x.transcript_fragment?.slice(0, 15))));
   }
 
   console.log(`\n${gedaan - gefaald}/${gedaan} geslaagd`);

@@ -21,7 +21,7 @@ import { keurGraphics } from '../src/lib/roughcut/keuring';
 import { behandelEindscherm, keurOverlay, overlayUitPixels, vermijdOverlay } from '../src/lib/roughcut/eindscherm';
 import { plakKoppeltekens, plaatsRegels } from '../src/lib/roughcut/ondertitels';
 import { metHoofdletter, verdeelOverRegels, zelfstandigeKaart } from '../src/lib/roughcut/tekstkaarten';
-import { focusPunten } from '../src/lib/roughcut/graphiclezer';
+import { focusPunten, richtGraphics } from '../src/lib/roughcut/graphiclezer';
 import { pythonMetOpenCV } from '../src/lib/python';
 import { keurLeesbaar, leesLogregel, leestijd, leestijdPlan } from '../src/lib/roughcut/leestijd';
 import { instelling } from '../src/lib/roughcut/instellingen';
@@ -189,6 +189,30 @@ console.log('leestijd: graphics direct achter elkaar (blok)');
 }
 
 async function vervolg() {
+  {
+  const items = [
+    { tekst: 'ZELDZAAM', box: { x0: 0.07, y0: 0.31, x1: 0.35, y1: 0.82 } },
+    { tekst: 'INDUSTRIEEL ONMISBAAR', box: { x0: 0.37, y0: 0.31, x1: 0.65, y1: 0.82 } },
+    { tekst: 'GEOPOLITIEK KWETSBAAR', box: { x0: 0.66, y0: 0.31, x1: 0.96, y1: 0.82 } },
+  ];
+  const woorden = [
+    { w: 'industrieel', s: 280.7, e: 281.2 }, { w: 'geopolitiek', s: 282.24, e: 282.8 },
+  ];
+  console.log('graphiclezer: één pagina over korte stukken');
+  {
+  // Trainingsronde 4: één graphic in drie stukken van < 3,5 s (twee shots,
+  // waarvan één zonder gemeten inhoud). Als één pagina: één keer lezen.
+  let gelezen = 0;
+  const lezer = async () => { gelezen++; return items; };
+  const segs = [
+    { volgorde: 2, start: 279.5, end: 282, functie: 'escalatie', scenes: [{ van: 279.5, tot: 280.4, gezicht: true }, { van: 280.4, tot: 282, gezicht: false, inhoud: { x0: 0.05, y0: 0.2, x1: 0.95, y1: 0.8 } }] },
+    { volgorde: 2.01, start: 282, end: 284, functie: 'escalatie', scenes: [{ van: 282, tot: 284, gezicht: false }] },
+  ] as unknown as import('../src/lib/roughcut').Shot[];
+  const n = await richtGraphics(segs, '/geen/bron', woorden, () => {}, lezer);
+  const focus2 = segs[1].scenes?.[0].focus;
+  toets('drie korte stukken van één pagina: één keer gelezen, alle stukken gericht', n === 1 && gelezen === 1 && (segs[0].scenes?.[1].focus?.length ?? 0) === 2 && (focus2?.length ?? 0) === 2, JSON.stringify({ n, gelezen, focus2 }));
+  }
+  }
   const fix = (n: string) => join(process.cwd(), 'scripts', 'fixtures', n);
   const map = mkdtempSync(join(tmpdir(), 'clipper-test-graphics-'));
   const video = (jpg: string, naam: string) => {

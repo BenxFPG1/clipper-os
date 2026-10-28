@@ -882,6 +882,47 @@ async function main() {
       }
     }
 
+    console.log('graphic: gerichte zoom over twee korte shots, zonder gemeten inhoud');
+    {
+      // Trainingsronde 4: de graphic was in stukken van < 3,5 s geknipt en één
+      // stuk had geen inhoud; er gebeurde niets. Nu: zelfde bron, twee shots
+      // van 3 s, geen inhoud, de zoompunten op de scènes.
+      const werk = join(map, 'focuswerk');
+      const bron = join(werk, 'bron.mp4');
+      const kolom = (x: number) => ({ cx: (x + 150) / 1280, cy: 400 / 720, b: 300 / 1280, h: 360 / 720 });
+      const focus = [{ t: 1.5, ...kolom(490) }, { t: 3.5, ...kolom(890) }];
+      const a1: Shot = { volgorde: 1, start: 0, end: 3, functie: 'setup', scenes: [{ van: 0, tot: 6, gezicht: false, focus }] };
+      const a2: Shot = { volgorde: 1.01, start: 3, end: 6, functie: 'setup', scenes: [{ van: 0, tot: 6, gezicht: false, focus }] };
+      const uit = join(map, 'focus2.mp4');
+      try {
+        await maakRuweMontage({ sourceUrl: 'lokaal://test', shots: [a1, a2], alGesegmenteerd: true, outputPad: uit, werkmap: werk, kader: 'vullend' });
+        const kleuren = async (t: number) => {
+          const f = join(map, `focus2-${t}.raw`);
+          ff(['-ss', t.toFixed(2), '-i', uit, '-frames:v', '1', '-vf', 'scale=108:192', '-f', 'rawvideo', '-pix_fmt', 'rgb24', f]);
+          const px = await readFile(f);
+          const n = { r: 0, g: 0, b: 0 };
+          const rij0 = Math.ceil((656 / 1920) * 192) + 1;
+          const rij1 = Math.floor(((656 + 608) / 1920) * 192) - 1;
+          for (let q = rij0 * 108 * 3; q < Math.min(px.length, rij1 * 108 * 3); q += 3) {
+            if (px[q] > 170 && px[q + 1] < 90 && px[q + 2] < 90) n.r++;
+            if (px[q + 1] > 130 && px[q] < 90 && px[q + 2] < 120) n.g++;
+            if (px[q + 2] > 170 && px[q] < 90 && px[q + 1] < 120) n.b++;
+          }
+          return n;
+        };
+        const begin = await kleuren(0.5);
+        const voorNaad = await kleuren(2.8);
+        const naNaad = await kleuren(3.15);
+        const eind = await kleuren(5.2);
+        toets('zonder inhoud: begin in het overzicht', begin.r > 0 && begin.g > 0 && begin.b > 0, JSON.stringify(begin));
+        toets('zonder inhoud: groen na "groen"', voorNaad.g > voorNaad.r * 1.5 && voorNaad.g > voorNaad.b * 1.5, JSON.stringify(voorNaad));
+        toets('over de naad: geen sprong terug naar het overzicht', naNaad.g > naNaad.r * 1.5, JSON.stringify(naNaad));
+        toets('tweede (korte) shot volgt de zoom naar blauw', eind.r < begin.r * 0.2 && eind.b > begin.b * 1.8, JSON.stringify({ begin, eind }));
+      } catch (e) {
+        toets('render met gerichte zoom over twee shots slaagt', false, (e as Error).message.slice(-400));
+      }
+    }
+
     console.log('ondertitelplek');
     {
       const regelH = ondertitelMaat(null).assGrootte;

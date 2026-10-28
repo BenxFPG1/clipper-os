@@ -64,17 +64,24 @@ export function kaderKeten(
     // 9:16 past. De geblurde achtergrond blijft het hele beeld.
     const b = opties.beweging;
     const beweegt = Boolean(i && b && b.duur >= instelling('GRAPHIC_BEWEGING_VANAF'));
+    // Gerichte zoom: ook op een kort stuk (de pagina als geheel was lang
+    // genoeg, graphiclezer.ts) en ook zonder gemeten inhoud — dan is de hele
+    // graphic het werkvlak (passend, 1080 breed).
+    const heel = { r: { x0: 0, y0: 0, x1: 1, y1: 1 }, fgB: 1080, fgH: 608, y0: 656 };
+    const vlak = i ?? heel;
+    const gericht = b && opties.focus && opties.focus.length >= 2 ? gerichteZoom(vlak, opties.focus, b) : null;
     // Push-in op dubbele resolutie (anders trilt zoompan op hele pixels),
     // binnen de marge die inhoudKader rond de inhoud laat.
-    const gericht = beweegt && i && b && opties.focus && opties.focus.length >= 2 ? gerichteZoom(i, opties.focus, b) : null;
     const push = gericht
-      ? `,scale=${i!.fgB * 2}:${i!.fgH * 2}:flags=lanczos,${gericht}`
+      ? `,scale=${vlak.fgB * 2}:${vlak.fgH * 2}:flags=lanczos,${gericht}`
       : beweegt && i && b
         ? `,scale=${i.fgB * 2}:${i.fgH * 2}:flags=lanczos,zoompan=z='1+${instelling('GRAPHIC_BEWEGING').toFixed(3)}*min(1,(in/${b.fps}+${b.vanaf.toFixed(3)})/${b.duur.toFixed(3)})':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=${i.fgB}x${i.fgH}:fps=${b.fps}`
         : '';
     const voorgrond = i
       ? `crop=iw*${(i.r.x1 - i.r.x0).toFixed(4)}:ih*${(i.r.y1 - i.r.y0).toFixed(4)}:iw*${i.r.x0.toFixed(4)}:ih*${i.r.y0.toFixed(4)},scale=${i.fgB}:${i.fgH}:flags=lanczos${push}`
-      : 'scale=1080:-2:flags=lanczos';
+      : gericht
+        ? `scale=${heel.fgB}:${heel.fgH}:flags=lanczos${push}`
+        : 'scale=1080:-2:flags=lanczos';
     // De voorgrond op de hoogte die inhoudKader koos (de inhoud tussen de
     // kaarten en de ondertitels); zonder gemeten inhoud gecentreerd.
     const y = i ? String(i.y0) : '(H-h)/2';
@@ -121,8 +128,18 @@ export function gerichteZoom(
   const rh = i.r.y1 - i.r.y0;
   const overgang = 0.35;
   type Sleutel = { t: number; fx: number; fy: number; z: number };
-  const sleutels: Sleutel[] = [{ t: 0, fx: 0.5, fy: 0.5, z: 1 }];
-  for (const p of focus) {
+  const plek = (p: { cx: number; cy: number; b: number; h: number }) => {
+    const fx = Math.min(1, Math.max(0, (p.cx - i.r.x0) / rb));
+    const fy = Math.min(1, Math.max(0, (p.cy - i.r.y0) / rh));
+    const deel = Math.max(p.b / rb, p.h / rh, 0.05);
+    return { fx, fy, z: Math.max(1, Math.min(instelling('GRAPHIC_FOCUS_ZOOM'), 0.85 / deel)) };
+  };
+  // Een later stuk van dezelfde pagina begint waar de beweging was: op het
+  // laatste blok dat vóór dit stuk al genoemd werd, niet terug op het overzicht.
+  const eerder = focus.filter((p) => p.t <= 0);
+  const start = eerder.length ? plek(eerder[eerder.length - 1]) : { fx: 0.5, fy: 0.5, z: 1 };
+  const sleutels: Sleutel[] = [{ t: 0, ...start }];
+  for (const p of focus.filter((x) => x.t > 0)) {
     const fx = Math.min(1, Math.max(0, (p.cx - i.r.x0) / rb));
     const fy = Math.min(1, Math.max(0, (p.cy - i.r.y0) / rh));
     const deel = Math.max(p.b / rb, p.h / rh, 0.05);

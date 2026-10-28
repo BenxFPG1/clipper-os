@@ -466,13 +466,15 @@ export function pasClipRegelsToe(
   // pas na 16 s (trainingsronde 2). Spreekt een later shot die belofte wél
   // uit, dan gaat dat shot vooraan: een andere volgorde, geen herhaling.
   // Alleen bij uitleg: in een verhaal of een grap telt de volgorde van de
-  // gebeurtenissen (bij "De nep-Daytona" zou de onthulling naar voren komen),
-  // en alleen een escalatie die niet direct vóór de payoff staat.
+  // gebeurtenissen (bij "De nep-Daytona" zou de onthulling naar voren komen).
+  // In een uitleg mag ook de escalatie vlak vóór de payoff naar voren: in
+  // trainingsronde 4 had de planner maar drie shots en stond het spannende
+  // shot precies daar, zodat de regel nooit ingreep. De payoff zelf nooit.
   if (formaat === 'uitleg' && hook?.tekst_overlay && shots.length >= 3) {
     const opening = zinnen(shots[0].transcript_fragment ?? '').slice(0, 2).join(' ');
     if (woordOverlap(hook.tekst_overlay, opening) < 0.15) {
       const kandidaat = shots
-        .slice(1, -2)
+        .slice(1, -1)
         .map((s) => ({ s, zin: zinnen(s.transcript_fragment ?? '')[0] ?? '' }))
         .filter(({ s, zin }) => s.functie === 'escalatie' && s.end - s.start <= 12 && instappuntKwaliteit(zin).oordeel !== 'zwak' && !wijstTerug(zin))
         .map((k) => ({ ...k, overlap: woordOverlap(hook!.tekst_overlay, k.zin) }))
@@ -492,12 +494,11 @@ export function pasClipRegelsToe(
   // "Zeldzamer dan goud. En toch geen goud." bij "Platina combineert iets
   // wat weinig assets hebben"), bleef de spannendste zin halverwege staan.
   // Heeft de opening weinig spanning en een latere escalatie duidelijk meer,
-  // dan gaat die vooraan. Zelfde grenzen als 8: alleen uitleg, nooit het shot
-  // vlak vóór de payoff.
+  // dan gaat die vooraan. Zelfde grenzen als 8: alleen uitleg, nooit de payoff.
   if (formaat === 'uitleg' && shots.length >= 3 && shots[0].functie !== 'escalatie') {
     const nu = spanning(shots[0].transcript_fragment ?? '');
     const kandidaat = shots
-      .slice(1, -2)
+      .slice(1, -1)
       .filter((s) => s.functie === 'escalatie' && s.end - s.start <= 12)
       .map((s) => ({ s, zin: zinnen(s.transcript_fragment ?? '')[0] ?? '', score: spanning(s.transcript_fragment ?? '') }))
       .filter((k) => k.score >= 3 && k.score >= nu + 2 && instappuntKwaliteit(k.zin).oordeel !== 'zwak' && !wijstTerug(k.zin))

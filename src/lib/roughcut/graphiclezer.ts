@@ -98,7 +98,11 @@ export function focusPunten(items: GraphicItem[], woorden: BronWoord[], van: num
 
 /**
  * Leest de graphics die lang genoeg in beeld staan en zet hun zoompunten op
- * de scène (scene.focus). Eén call per graphic-scène, gecachet op brontijd.
+ * de scènes (scene.focus). Aaneengesloten graphic-stukken — gesplitst op een
+ * opbouwstap of over een kaderwissel heen in twee shots — zijn één pagina:
+ * in trainingsronde 4 was de graphic in drie stukken van elk korter dan
+ * 3,5 s geknipt, en één stuk had geen gemeten inhoud, waardoor er niets
+ * gericht werd. Eén call per pagina.
  */
 export async function richtGraphics(
   segmenten: Shot[],
@@ -108,25 +112,41 @@ export async function richtGraphics(
   lezer: (bron: string, t: number) => Promise<GraphicItem[]> = leesGraphic,
 ): Promise<number> {
   if (!woorden?.length) return 0;
-  const gelezen = new Map<string, GraphicItem[]>();
-  let gericht = 0;
+  type Stuk = { sc: NonNullable<Shot['scenes']>[number]; van: number; tot: number };
+  const stukken: Stuk[] = [];
   for (const seg of segmenten) {
     for (const sc of seg.scenes ?? []) {
-      if (sc.gezicht !== false || !sc.inhoud || sc.focus) continue;
+      if (sc.gezicht !== false || sc.focus) continue;
       const van = Math.max(seg.start, sc.van);
       const tot = Math.min(seg.end, sc.tot);
-      if (tot - van < instelling('GRAPHIC_BEWEGING_VANAF')) continue;
-      const moment = sc.bevries ?? van + 0.7 * (tot - van);
-      const sleutel = moment.toFixed(1);
-      if (!gelezen.has(sleutel)) gelezen.set(sleutel, await lezer(bronPad, moment));
-      const items = gelezen.get(sleutel)!;
-      const punten = focusPunten(items, woorden, sc.van, sc.tot);
-      if (punten.length >= 2) {
-        sc.focus = punten;
-        gericht++;
-        log(`graphic ${van.toFixed(1)} s: ${punten.length} punten gericht (${items.filter((i) => punten.some((p) => Math.abs(p.cx - (i.box.x0 + i.box.x1) / 2) < 1e-6)).map((i) => i.tekst).join(' → ')})`);
-      }
+      if (tot > van) stukken.push({ sc, van, tot });
     }
+  }
+  stukken.sort((a, b) => a.van - b.van);
+  // Pagina's: stukken die in de bron op elkaar aansluiten (of overlappen).
+  const paginas: Stuk[][] = [];
+  for (const st of stukken) {
+    const laatste = paginas[paginas.length - 1];
+    if (laatste && st.van <= Math.max(...laatste.map((x) => x.tot)) + 0.15) laatste.push(st);
+    else paginas.push([st]);
+  }
+  let gericht = 0;
+  for (const pagina of paginas) {
+    const van = Math.min(...pagina.map((x) => x.van));
+    const tot = Math.max(...pagina.map((x) => x.tot));
+    if (tot - van < instelling('GRAPHIC_BEWEGING_VANAF')) continue;
+    // Het laatste vasthoudmoment van de pagina: daar staat alles erop.
+    const momenten = pagina.map((x) => x.sc.bevries).filter((t): t is number => typeof t === 'number' && t >= van && t <= tot);
+    const moment = momenten.length ? Math.max(...momenten) : van + 0.8 * (tot - van);
+    const items = await lezer(bronPad, moment);
+    const punten = focusPunten(items, woorden, van, tot);
+    if (punten.length < 2) {
+      log(`graphic ${van.toFixed(1)}–${tot.toFixed(1)} s: ${items.length} blok(ken) gelezen, ${punten.length} genoemd — geen gerichte zoom`);
+      continue;
+    }
+    for (const st of pagina) st.sc.focus = punten;
+    gericht++;
+    log(`graphic ${van.toFixed(1)}–${tot.toFixed(1)} s: ${punten.length} punten gericht (${items.map((i) => i.tekst).join(' / ')})`);
   }
   return gericht;
 }
