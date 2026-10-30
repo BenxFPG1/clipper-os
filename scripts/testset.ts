@@ -59,7 +59,19 @@ async function toets(t: (typeof SET)[number]): Promise<Uitslag> {
   }
 }
 
+/** Alle scripts die de planner uit een hele video haalt, om te lezen vóór er iets gerenderd wordt. */
+async function kandidaten(videoId: string) {
+  const { plan, formaat } = await runPlannerForVideo(videoId, { opslaan: false });
+  console.log(`\n=== KANDIDATEN (${formaat}) ===`);
+  for (const [i, clip] of plan.clips.entries()) {
+    console.log(`\n${i + 1}. ${clip.titel_intern} — ${clipDuur(clip).toFixed(0)} s, score ${clip.score ?? '—'}, ${Math.min(...clip.shots.map((s) => s.start)).toFixed(0)}-${Math.max(...clip.shots.map((s) => s.end)).toFixed(0)} s`);
+    console.log(`   overlay: ${clip.hook?.tekst_overlay ?? '—'}`);
+    for (const s of clip.shots) console.log(`   [${s.functie}] ${s.transcript_fragment ?? ''}`);
+  }
+}
+
 async function main() {
+  if (process.argv[2]?.startsWith('kandidaten:')) return kandidaten(process.argv[2].slice('kandidaten:'.length));
   const keuze = process.argv[2]?.split(',').filter(Boolean);
   const rij = SET.filter((t) => !keuze?.length || keuze.includes(t.naam));
   const uit: Uitslag[] = [];

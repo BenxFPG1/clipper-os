@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       namen:
-        description: 'Alleen deze fragmenten (komma-gescheiden; leeg = alle)'
+        description: 'Alleen deze fragmenten (komma-gescheiden; leeg = alle), of kandidaten:<video-id>'
         required: false
         default: ''
 
