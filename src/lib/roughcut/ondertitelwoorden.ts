@@ -426,6 +426,17 @@ ${woorden.map((w, i) => `${i}:${w.w}${twijfel(i) ? `≠${context.tweede![i]}` : 
     // maar twee antwoorden hebben.
     const open = woorden.map((_, i) => i).filter((i) => twijfel(i));
     const correcties = (r.correcties ?? []).filter((c) => !open.includes(c.index));
+    // "aan het kijken" is vaste grammatica: "aan een kijken" bestaat niet. Dat
+    // hoeft niemand te raden (MUKBANG ronde 3: de keuzevraag koos "een").
+    for (const i of [...open]) {
+      const voor = kaal(woorden[i - 1]?.w ?? '').toLowerCase();
+      const na = kaal(woorden[i + 1]?.w ?? '').toLowerCase();
+      const opties = [kaal(woorden[i].w).toLowerCase(), context.tweede![i]!.toLowerCase()];
+      if (voor === 'aan' && /\p{L}{2,}en$/u.test(na) && opties.includes('het')) {
+        correcties.push({ index: i, woord: 'het' });
+        open.splice(open.indexOf(i), 1);
+      }
+    }
     if (open.length > 0) {
       const zin = (i: number) =>
         woorden

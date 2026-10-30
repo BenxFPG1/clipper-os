@@ -239,6 +239,13 @@ async function main() {
       toets('naam uit de character map vast gespeld', nm.woorden[1].w === 'Archi.' && nm.woorden[2].w === 'Marktdag', JSON.stringify(nm));
       const zinBegin = naamSpelling([{ w: 'Goud', s: 0, e: 1 }], ['Goudtje', 'Gouda']);
       toets('eerste woord van een zin blijft staan (hoofdletter zegt dan niets)', zinBegin.woorden[0].w === 'Goud');
+      const aanHet = [{ w: 'gewoon', s: 0, e: 0.3 }, { w: 'aan', s: 0.3, e: 0.5 }, { w: 'het', s: 0.5, e: 0.6 }, { w: 'kijken', s: 0.6, e: 1 }];
+      let keuzeNodig = false;
+      const ah = await corrigeerWoorden(aanHet, { tweede: ['gewoon', 'aan', 'een', 'kijken'] }, async () => ({ correcties: [{ index: 2, woord: 'een' }] }), async () => {
+        keuzeNodig = true;
+        return { keuzes: [{ index: 2, woord: 'een' }] };
+      });
+      toets('"aan het kijken" blijft staan, zonder keuzevraag', ah.woorden[2].w === 'het' && !keuzeNodig, JSON.stringify(ah.woorden));
       const groot2 = [{ w: 'En', s: 0, e: 0.2 }, { w: 'een', s: 0.2, e: 0.35 }, { w: 'prijs', s: 0.35, e: 0.7 }];
       const klein = [{ w: 'En', s: 0, e: 0.18 }, { w: 'de', s: 0.2, e: 0.33 }, { w: 'prijs', s: 0.36, e: 0.7 }];
       const t = tweedeLezing(groot2, klein);
