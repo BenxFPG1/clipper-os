@@ -83,6 +83,15 @@ async function main() {
     toets('op 4K blijft zoom 1,70 staan', v.zoom === 1.7);
   }
 
+  console.log('kader duwt het hoofd niet onderin (MUKBANG)');
+  {
+    // Een vals vak over de tafel onderin: inzoomen boven het vak zou het hoofd
+    // op 0,80 van het beeld zetten. Dan liever niet ingrijpen.
+    const s = { ...shot(0.5), gezicht: { x: 0.71, breedte: 0.08, top: 0.465, hoogte: 0.145 }, focusX: 0.71, focusY: 0.57, zoom: 1.58 } as unknown as Shot;
+    const r = wijkVoorOverlays([s], [{ x0: 0.31, y0: 0.7, x1: 1, y1: 1 }], 'vullend');
+    toets('geen ingreep die het hoofd onder 58% van het beeld zet', (s.focusY ?? 0) === 0.57 && !r.regels.some((x) => /ingezoomd/.test(x)), JSON.stringify(r));
+  }
+
   console.log('gezichten.py --overlays op synthetische video');
   {
     const ffmpeg = resolveBinary('ffmpeg');

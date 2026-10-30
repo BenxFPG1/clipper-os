@@ -322,6 +322,27 @@ export function pasCorrectiesToe(
   return { woorden: uit, toegepast, afgewezen };
 }
 
+/**
+ * Namen uit de character map, vast gespeld: een woord met een hoofdletter
+ * midden in de zin dat er maar een letter of twee van afwijkt, is die naam
+ * ("Arshi" → "Archi"). Het taalmodel liet dit in MUKBANG staan omdat het
+ * "Archie" verwachtte.
+ */
+export function naamSpelling(woorden: BronWoord[], namen: string[]): { woorden: BronWoord[]; toegepast: { van: string; naar: string }[] } {
+  const delen = [...new Set(namen.flatMap((n) => n.split(/\s+/)).filter((n) => n.length >= 4))];
+  const toegepast: { van: string; naar: string }[] = [];
+  const uit = woorden.map((w, i) => {
+    const k = kaal(w.w);
+    const eersteVanZin = i === 0 || /[.!?…]["'”)]*$/.test(woorden[i - 1].w);
+    if (eersteVanZin || k.length < 4 || !/^\p{Lu}/u.test(k)) return w;
+    const naam = delen.find((n) => n !== k && n[0].toLowerCase() === k[0].toLowerCase() && afstand(n.toLowerCase(), k.toLowerCase()) <= 2);
+    if (!naam) return w;
+    toegepast.push({ van: k, naar: naam });
+    return { ...w, w: w.w.replace(k, naam) };
+  });
+  return { woorden: uit, toegepast };
+}
+
 export type CorrectieCall = (system: string, user: string) => Promise<{ correcties: Correctie[] }>;
 
 const standaardCall: CorrectieCall = (system, user) =>
@@ -422,7 +443,8 @@ ${woorden.map((w, i) => `${i}:${w.w}${twijfel(i) ? `≠${context.tweede![i]}` : 
       }
     }
     const { woorden: uit, toegepast, afgewezen } = pasCorrectiesToe(woorden, correcties, context);
-    return { woorden: uit, toegepast, afgewezen, voorgesteld: correcties.length };
+    const namen = naamSpelling(uit, context.namen ?? []);
+    return { woorden: namen.woorden, toegepast: [...toegepast, ...namen.toegepast], afgewezen, voorgesteld: correcties.length };
   } catch (e) {
     return { woorden, toegepast: [], fout: (e as Error).message.slice(0, 100) };
   }

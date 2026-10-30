@@ -20,6 +20,10 @@ on:
         description: 'Titel van de render'
         required: true
         default: 'TRAIN'
+      modus:
+        description: 'Leeg = opnieuw plannen; herbruik = laatste plan opnieuw monteren'
+        required: false
+        default: ''
 
 concurrency:
   group: train-clip
@@ -121,4 +125,5 @@ jobs:
           VAN: ${{ inputs.van }}
           TOT: ${{ inputs.tot }}
           TITEL: ${{ inputs.titel }}
-        run: npx tsx scripts/train-clip.ts "$VIDEO" "$VAN" "$TOT" "$TITEL"
+          MODUS: ${{ inputs.modus }}
+        run: npx tsx scripts/train-clip.ts "$VIDEO" "$VAN" "$TOT" "$TITEL" "$MODUS"

@@ -6,7 +6,11 @@
  * opzetten en wachten).
  *
  * Draaien (in CI via .github/workflows/train-clip.yml):
- *   npx tsx scripts/train-clip.ts <video-id> <van> <tot> "<titel>"
+ *   npx tsx scripts/train-clip.ts <video-id> <van> <tot> "<titel>" [herbruik]
+ *
+ * Met "herbruik" wordt het laatste plan niet opnieuw geschreven: alleen de
+ * montage wordt opnieuw gerenderd. Zo blijft het script staan terwijl edit-
+ * fixes getest worden, en kost een ronde 10 minuten in plaats van 20.
  */
 import 'dotenv/config';
 import { spawnSync } from 'node:child_process';
@@ -14,7 +18,7 @@ import { db } from '../src/lib/supabase';
 import { runPlannerForVideo } from '../src/lib/planner/run';
 
 async function main() {
-  const [videoId, vanTekst, totTekst, titel = 'TRAIN'] = process.argv.slice(2);
+  const [videoId, vanTekst, totTekst, titel = 'TRAIN', modus] = process.argv.slice(2);
   const van = Number(vanTekst);
   const tot = Number(totTekst);
   if (!videoId || !Number.isFinite(van) || !Number.isFinite(tot) || tot <= van) {
@@ -23,12 +27,17 @@ async function main() {
   const supabase = db();
   const t0 = Date.now();
 
-  const { plan } = await runPlannerForVideo(videoId, { bereik: { van, tot } });
-  const clip = plan.clips[0];
-  if (!clip) throw new Error('het plan leverde geen clip');
-  const tPlan = (Date.now() - t0) / 1000;
-  console.log(`\nplan (${tPlan.toFixed(0)} s): ${clip.titel_intern} | overlay: ${clip.hook.tekst_overlay}`);
-  for (const s of clip.shots) console.log(`  ${s.volgorde} ${s.functie} ${s.start}-${s.end}: ${(s.transcript_fragment ?? '').slice(0, 140)}`);
+  let tPlan = 0;
+  if (modus === 'herbruik') {
+    console.log('plan herbruikt: alleen opnieuw monteren');
+  } else {
+    const { plan } = await runPlannerForVideo(videoId, { bereik: { van, tot } });
+    const clip = plan.clips[0];
+    if (!clip) throw new Error('het plan leverde geen clip');
+    tPlan = (Date.now() - t0) / 1000;
+    console.log(`\nplan (${tPlan.toFixed(0)} s): ${clip.titel_intern} | overlay: ${clip.hook.tekst_overlay}`);
+    for (const s of clip.shots) console.log(`  ${s.volgorde} ${s.functie} ${s.start}-${s.end}: ${(s.transcript_fragment ?? '').slice(0, 140)}`);
+  }
 
   // Direct op 'bezig': de gewone renderrij pakt hem dan niet tegelijk op.
   const { data: job, error } = await supabase

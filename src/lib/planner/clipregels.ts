@@ -1,3 +1,4 @@
+import { isOpdracht } from '../roughcut/tekstkaarten';
 import { instelling } from '../roughcut/instellingen';
 import type { TranscriptSegment } from '../ingest/transcript';
 import type { Clip, ClipPlan, Energiemoment } from './schema';
@@ -208,13 +209,8 @@ export function maxSprongAfstand(f: Formaat): number {
   return instelling(`CLIP_SPRONG_MAX_${sleutel}`);
 }
 
-// Een overlay die de kijker een opdracht geeft in plaats van nieuwsgierig te
-// maken ("Onthoud deze zin: 'overleven op dit'").
-const OVERLAY_OPDRACHT = /^(onthoud|let op|kijk|luister|wacht|blijf|hou vol|houd vol|kijk tot|wacht tot)\b/i;
-/** Is deze overlay een instructie aan de kijker in plaats van spanning? */
-export function overlayIsOpdracht(tekst: string | null | undefined): boolean {
-  return OVERLAY_OPDRACHT.test((tekst ?? '').trim());
-}
+/** Is deze overlay een instructie aan de kijker ("Onthoud deze zin") in plaats van spanning? */
+export const overlayIsOpdracht = isOpdracht;
 
 // Verwijswoorden die altijd naar iets eerders wijzen, waar ze ook in de eerste
 // zes woorden staan ("En platina beweegt ook daarop").
@@ -503,7 +499,8 @@ export function pasClipRegelsToe(
         return !(sh && woordOverlap(k.tekst, sh.transcript_fragment ?? '') >= 0.7);
       });
       if (blijven.length < kaarten.length) ingrepen.push(`${kaarten.length - blijven.length} kaart(en) weggehaald: letterlijk wat er op dat moment gezegd wordt`);
-      kaarten = blijven;
+      kaarten = blijven.filter((k) => !isOpdracht(k.tekst));
+      if (kaarten.length < blijven.length) ingrepen.push(`${blijven.length - kaarten.length} kaart(en) weggehaald: opdracht aan de kijker`);
     }
   }
 

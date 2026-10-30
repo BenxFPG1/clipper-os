@@ -373,6 +373,8 @@ async function main() {
     const r = pasClipRegelsToe(c, 'comedy');
     toets('sprong van 147 s in comedy is een harde fout', r.oordeel.fouten.some((f) => /sprong van 147 s/.test(f)), JSON.stringify(r.oordeel.fouten));
     toets('overlay-opdracht is een harde fout', r.oordeel.fouten.some((f) => /geeft de kijker een opdracht/.test(f)));
+    const k = pasClipRegelsToe({ ...c, kaarten: [{ shot: 1, tekst: 'Let op wat hij straks bidt.' }, { shot: 1, tekst: 'Zijn hele gebed: 6 woorden' }] } as never, 'comedy');
+    toets('kaart met een opdracht wordt weggehaald, de rest blijft', k.clip.kaarten?.length === 1 && /6 woorden/.test(k.clip.kaarten[0].tekst), JSON.stringify(k.clip.kaarten));
     toets('een echte vraag is geen opdracht', !overlayIsOpdracht('Wie bluft hier?') && !overlayIsOpdracht('Kijkers dachten dat het nep was'));
     const pl = pasClipRegelsToe(clip([shot(1, 284, 293, 'hook', 'Vier jaar op rij meer vraag.'), shot(2, 293, 300, 'barst', 'Maar het is geen goud.'), shot(3, 300, 340, 'payoff', 'De echte vraag is de prijs.')], { hook: { type: 'x', tekst_overlay: 'Tekort, en tóch goedkoop?', gesproken_start: 'Vier jaar op rij meer vraag.' } }), 'uitleg');
     toets('doorlopende uitleg: geen sprongfout', !pl.oordeel.fouten.some((f) => /sprong van/.test(f)), JSON.stringify(pl.oordeel.fouten));

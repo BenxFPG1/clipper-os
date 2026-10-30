@@ -129,7 +129,10 @@ export function wijkVoorOverlays(
         if (y0 < 0 || y0 + h > 1) continue;
         const fy = y0 + h / 2;
         const u = uitsnede(seg, seg.focusX ?? 0.5, z, fy);
-        if (!inMidden(seg, u) || g.top - g.hoogte * 0.15 < u.y0 || vakken.some((v) => overlapt(u, v))) continue;
+        // Nooit het hoofd onderin duwen om een vak te ontwijken: liever een
+        // stukje overlay in beeld dan een spreker aan de onderrand.
+        const hoofdInBeeld = (g.top + g.hoogte / 2 - u.y0) / (u.y1 - u.y0);
+        if (!inMidden(seg, u) || g.top - g.hoogte * 0.15 < u.y0 || hoofdInBeeld > 0.58 || vakken.some((v) => overlapt(u, v))) continue;
         seg.zoom = Math.round(z * 1000) / 1000;
         seg.focusY = Math.round(fy * 1000) / 1000;
         seg.spoorY = undefined;

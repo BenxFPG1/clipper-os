@@ -13,7 +13,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { resolveBinary } from '../src/lib/ingest/binaries';
 import { groveWoorden, haalBronWoorden, type BronWoord, type BronWoordCache } from '../src/lib/roughcut/woorden';
-import { corrigeerWoorden, pasCorrectiesToe, tweedeLezing } from '../src/lib/roughcut/ondertitelwoorden';
+import { corrigeerWoorden, naamSpelling, pasCorrectiesToe, tweedeLezing } from '../src/lib/roughcut/ondertitelwoorden';
 import { bouwAss, groepeerRegels, keurOndertitelOverlap, REGEL_GAT, sluitLaatsteZin, vasteSpelling, woordenOpTijdlijn } from '../src/lib/roughcut/ondertitels';
 import { editorTekst } from '../src/lib/roughcut/editortekst';
 import { kaartSchema } from '../src/lib/planner/schema';
@@ -235,6 +235,10 @@ async function main() {
       toets('echte herkenningsfout (groot verschil) blijft toegestaan', groot.toegepast.length === 1);
       toets('"volatider" staat in de ondertitels als "volatieler"', vasteSpelling('volatider.') === 'volatieler.');
 
+      const nm = naamSpelling([{ w: 'alsjeblieft', s: 0, e: 1 }, { w: 'Arshi.', s: 1, e: 2 }, { w: 'Marktdag', s: 2, e: 3 }], ['Archi', 'Goudtje']);
+      toets('naam uit de character map vast gespeld', nm.woorden[1].w === 'Archi.' && nm.woorden[2].w === 'Marktdag', JSON.stringify(nm));
+      const zinBegin = naamSpelling([{ w: 'Goud', s: 0, e: 1 }], ['Goudtje', 'Gouda']);
+      toets('eerste woord van een zin blijft staan (hoofdletter zegt dan niets)', zinBegin.woorden[0].w === 'Goud');
       const groot2 = [{ w: 'En', s: 0, e: 0.2 }, { w: 'een', s: 0.2, e: 0.35 }, { w: 'prijs', s: 0.35, e: 0.7 }];
       const klein = [{ w: 'En', s: 0, e: 0.18 }, { w: 'de', s: 0.2, e: 0.33 }, { w: 'prijs', s: 0.36, e: 0.7 }];
       const t = tweedeLezing(groot2, klein);

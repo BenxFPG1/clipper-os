@@ -66,6 +66,20 @@ if yunet is None:
     profiel = cv2.CascadeClassifier(haar_dir + "haarcascade_profileface.xml")
 
 
+RANDVAST = 0.5
+
+
+def randvastheid(stapel):
+    """Welk deel van de randen staat op exact dezelfde pixels als meestal? Een
+    overlay ligt óver het beeld: zijn tekst staat steeds op dezelfde plek. Een
+    gedekte tafel in een opname met meerdere camera's heeft ook altijd randen,
+    maar telkens ergens anders; het kader schoof er in MUKBANG voor omhoog."""
+    vast = stapel.mean(axis=0) >= 0.5
+    per_frame = stapel.sum(axis=(1, 2))
+    raak = (stapel & vast).sum(axis=(1, 2))
+    return float(np.median(raak[per_frame > 0] / per_frame[per_frame > 0])) if (per_frame > 0).any() else 0.0
+
+
 def stream_overlays():
     """Vaste stream-overlays: chat, teller, watermerk (genormaliseerde vakken).
 
@@ -94,7 +108,7 @@ def stream_overlays():
         n = int(eigen.get(cv2.CAP_PROP_FRAME_COUNT))
         B, H, C = 384, 216, 8
         gx, gy = B // C, H // C
-        dichtheid, gem = [], []
+        dichtheid, gem, randen = [], [], []
         N = 48
         for k in range(N):
             eigen.set(cv2.CAP_PROP_POS_FRAMES, int(n * (0.03 + 0.94 * k / (N - 1))))
@@ -103,21 +117,25 @@ def stream_overlays():
                 continue
             g = cv2.cvtColor(cv2.resize(fr, (B, H), interpolation=cv2.INTER_AREA), cv2.COLOR_BGR2GRAY)
             e = cv2.Canny(g, 80, 160) > 0
+            randen.append(e)
             dichtheid.append(e.reshape(gy, C, gx, C).mean(axis=(1, 3)))
             gem.append(g.reshape(gy, C, gx, C).mean(axis=(1, 3)))
         if len(dichtheid) >= 24:
             D, G = np.array(dichtheid), np.array(gem)
+            randen = np.array(randen)
             vast = (D >= 0.08).mean(axis=0)
             beweegt = (np.abs(G - np.median(G, axis=0)) > 10).mean(axis=0)
             # Studio of podcast: de achtergrond staat stil, dus niets te zeggen.
             if float(np.median(beweegt)) >= 0.35:
                 masker = (vast >= 0.8).astype(np.uint8)
-                aantal, _, st, _ = cv2.connectedComponentsWithStats(masker, 8)
+                aantal, labels, st, _ = cv2.connectedComponentsWithStats(masker, 8)
                 for i in range(1, aantal):
                     x, y, w, h, a = [int(v) for v in st[i]]
                     rand = x <= 1 or y <= 1 or x + w >= gx - 1 or y + h >= gy - 1
                     opp = a / (gx * gy)
                     if not rand or opp < 0.002 or opp > 0.12 or a / (w * h) < 0.35:
+                        continue
+                    if randvastheid(randen[:, y * C:(y + h) * C, x * C:(x + w) * C]) < RANDVAST:
                         continue
                     # Een cel marge: de randen van het chatvenster wisselen.
                     vakken.append({

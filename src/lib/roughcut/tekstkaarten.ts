@@ -255,9 +255,14 @@ function kaartkleuren(stijl?: Huisstijl | null): { vlak: string; tekst: string; 
  * begint en geen vraag is ("en dan die prijs nog", trainingsronde 3), of een
  * tekst die vooral herhaalt wat er gezegd wordt, hoort niet als kaart in beeld.
  */
+/** Een opdracht aan de kijker ("Let op wat hij straks bidt", "Onthoud deze zin") is geen tekst die iets toevoegt. */
+export function isOpdracht(tekst: string | null | undefined): boolean {
+  return /^(onthoud|let op|kijk|luister|wacht|blijf|hou vol|houd vol)\b/i.test((tekst ?? '').trim());
+}
+
 export function zelfstandigeKaart(tekst: string, gesproken = ''): boolean {
   const t = tekst.trim();
-  if (t.length < 3) return false;
+  if (t.length < 3 || isOpdracht(t)) return false;
   const laag = t.toLowerCase();
   if (/^(en|en dan|maar|dus|want|of|toen|dan|nou)\b/.test(laag) && !t.endsWith('?')) return false;
   if (gesproken) {
@@ -382,7 +387,7 @@ export function planKaartenOpTijdlijn(
   const totaal = segmenten.reduce((t, sg) => t + (sg.end - sg.start), 0);
   const uit: { tekst: string; start: number; end: number }[] = [];
   const kaal = (w: string) => w.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
-  for (const k of kaarten) {
+  for (const k of kaarten.filter((x) => !isOpdracht(x.tekst))) {
     const sleutels = k.tekst.split(/\s+/).map(kaal).filter((w) => w.length >= 4 && !/^\d+$/.test(w));
     // Het woord in het shot (op de tijdlijn) waar de kaart over gaat, of null.
     const opWoord = (): number | null => {
