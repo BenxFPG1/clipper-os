@@ -317,6 +317,18 @@ console.log('dode lucht — delen van één shot rekt de poort niet terug');
   toets('script compleet ziet shot 1 en 2', keurScriptCompleet([1, 2], p.segmenten).goed === true);
 }
 
+console.log('knip binnen één woord — het woord blijft heel');
+{
+  const lang: BronWoord[] = [{ w: 'worden', s: 10, e: 10.4 }, { w: 'geholpen', s: 10.5, e: 12 }, { w: 'door', s: 12.1, e: 12.4 }];
+  const [x, y] = [{ ...shot(1, 10, 11) }, { ...shot(1.1, 11.5, 12.4) }] as Shot[];
+  const p = poort([x, y], lang);
+  const dek = p.segmenten.reduce((t, g) => t + Math.max(0, Math.min(g.end, 12) - Math.max(g.start, 10.5)), 0);
+  toets('het hele woord zit in de montage', dek >= 1.49, JSON.stringify(p.segmenten.map((g) => [g.start, g.end])));
+  toets('en maar één keer, zonder de woorden erachter te verliezen', p.segmenten.length === 1 && p.segmenten[0].end >= 12.4, JSON.stringify(p.segmenten.map((g) => [g.start, g.end])));
+  const q = poort([{ ...shot(1, 10, 11) }, { ...shot(1.1, 11.5, 14) }] as Shot[], lang);
+  toets('lang tweede deel: knip schuift naar het eind van het woord', q.segmenten.length === 2 && q.segmenten[0].end === 12 && q.segmenten[1].start === 12, JSON.stringify(q.segmenten.map((g) => [g.start, g.end])));
+}
+
 console.log('reactie — de zin na de punchline blijft erbij');
 {
   const r = (w: string, s: number): BronWoord => ({ w, s, e: s + 0.3 });

@@ -194,6 +194,29 @@ export function poort(
 
   // Regel 1: geen knip middenin een woord.
   if (bronWoorden && bronWoorden.length > 0) {
+    // Valt een weggeknipte pauze binnen één woord, dan beslissen de twee kanten
+    // apart dat het woord bij de ander hoort en verdwijnt het helemaal
+    // ("Mag zij worden ... door": "geholpen" weg). Het woord blijft dus heel.
+    for (let i = 0; i + 1 < uit.length; i++) {
+      const [a, b] = [uit[i], uit[i + 1]];
+      if (b.start <= a.end) continue;
+      const woord = woordOnder(bronWoorden, a.end);
+      if (!woord || woordOnder(bronWoorden, b.start) !== woord) continue;
+      ingrepen.push({
+        volgorde: a.volgorde,
+        regel: 'woordgrens',
+        wat: `knip ${a.end.toFixed(2)}-${b.start.toFixed(2)} viel binnen "${woord.w}"; woord blijft heel`,
+      });
+      // Blijft er van het tweede deel te weinig over, dan vervalt het later als
+      // ongeldig en neemt het de woorden erachter mee: dan worden ze één shot.
+      if (b.end - woord.e < instelling('POORT_MIN_SEGMENT')) {
+        verzetGrens(a, { end: b.end });
+        uit.splice(i + 1, 1);
+        continue;
+      }
+      verzetGrens(a, { end: woord.e });
+      verzetGrens(b, { start: woord.e });
+    }
     for (const [i, seg] of uit.entries()) {
       // Een naad waar het vorige shot precies ophoudt waar dit begint (een
       // camerawissel in de bron, een kaderwissel) is geen knip in het geluid:
