@@ -388,6 +388,37 @@ def grijs_uitsnede(frame, vak, maat=(32, 16)):
     return klein - float(np.mean(klein))
 
 
+def gezichtsuitsnede(beeld, vak):
+    """Het gezicht in grijs op vaste maat, met een rand eromheen."""
+    x, y, w, h = [int(v) for v in vak]
+    m = int(0.15 * w)
+    r = beeld[max(0, y - m):y + h + m, max(0, x - m):x + w + m]
+    if r.size == 0:
+        return None
+    return cv2.resize(cv2.cvtColor(r, cv2.COLOR_BGR2GRAY), (64, 64)).astype("float32")
+
+
+def gezichtskleur(beeld, vak):
+    """Hoeveel kleur zit er in het gezicht (Lab-afstand tot grijs, mediaan)?"""
+    x, y, w, h = [int(v) for v in vak]
+    r = beeld[max(0, y):y + h, max(0, x):x + w]
+    if r.size == 0:
+        return 0.0
+    lab = cv2.cvtColor(r, cv2.COLOR_BGR2LAB).astype("float32")
+    return float(np.median(np.hypot(lab[:, :, 1] - 128, lab[:, :, 2] - 128)))
+
+
+def starheid(crops):
+    """Hoe gelijk blijft de binnenkant van dit gezicht over de tijd? Mediaan
+    van de beste overeenkomst (NCC, mag een paar pixels schuiven) tussen
+    uitsnedes minstens 0,8 s uit elkaar. None bij te weinig monsters."""
+    paren = [(a, b) for i, a in enumerate(crops) for b in crops[i + 1:] if b[0] - a[0] >= 0.8 and a[1] is not None and b[1] is not None]
+    if len(paren) < 2:
+        return None
+    w = sorted(float(cv2.matchTemplate(b[1], a[1][8:56, 8:56], cv2.TM_CCOEFF_NORMED).max()) for a, b in paren[:40])
+    return w[len(w) // 2]
+
+
 def sprekermeting(van, tot, stap):
     """Alle gezichten in [van, tot], elke `stap` seconde, met per gezicht de
     mondbeweging t.o.v. het vorige monster. De mondzone min de oogzone van
@@ -465,21 +496,29 @@ def sprekermeting(van, tot, stap):
         beeld = cv2.resize(frame, None, fx=schaal, fy=schaal) if schaal < 1 else frame
         kb = beeld.shape[1]
         kh = beeld.shape[0]
+        # Toewijzen op afstand, dichtste paar eerst. Eén voor één op
+        # detectievolgorde pakte het eerste gezicht het spoor van zijn buurman:
+        # een man vlak voor een portret (MUKBANG, 0,11 uit elkaar) wisselde
+        # steeds van spoor met dat portret, en beide sporen werden een mengsel.
+        detecties = [d for d in detecteer(beeld) if d[0][2] / kb >= 0.025]
+        mids = [(d[4] if d[4] is not None else d[0][0] + d[0][2] / 2) / kb for d in detecties]
+        paren = sorted((abs(sp["mid"] - m), di, si) for di, m in enumerate(mids) for si, sp in enumerate(sporen) if abs(sp["mid"] - m) < SAMEN)
+        toewijzing = {}
         gebruikt = set()
-        for (vak, mond, kijkt, ooghoogte, visueel) in detecteer(beeld):
+        for _, di, si in paren:
+            if di not in toewijzing and si not in gebruikt:
+                toewijzing[di] = si
+                gebruikt.add(si)
+        for di, (vak, mond, kijkt, ooghoogte, visueel) in enumerate(detecties):
             x, y, w, h = vak
-            if w / kb < 0.025:
-                continue
-            mid = (visueel if visueel is not None else x + w / 2) / kb
+            mid = mids[di]
             mondvak = mond or (x, y + int(h * 0.55), w, max(1, int(h * 0.45)))
             oogvak = (x, y + int(h * 0.2), w, max(1, int(h * 0.3)))
-            kandidaten = [i for i, sp in enumerate(sporen) if i not in gebruikt and abs(sp["mid"] - mid) < SAMEN]
-            if kandidaten:
-                i = min(kandidaten, key=lambda k: abs(sporen[k]["mid"] - mid))
+            if di in toewijzing:
+                i = toewijzing[di]
             else:
                 sporen.append({"scene": scene, "mid": mid, "xs": [], "ws": [], "ogen": [], "tops": [], "hs": [], "monsters": [], "vm": None, "vo": None, "vt": None})
                 i = len(sporen) - 1
-            gebruikt.add(i)
             sp = sporen[i]
             # De vakken gladgestreken over het spoor: de landmarks trillen een
             # paar pixels per frame, en op een klein gezicht is dat al
@@ -501,12 +540,16 @@ def sprekermeting(van, tot, stap):
             sp["ogen"].append((ooghoogte if ooghoogte is not None else y + h * 0.38) / kh)
             sp["tops"].append(y / kh)
             sp["hs"].append(h / kh)
+            if not sp.get("crops") or t - sp["crops"][-1][0] >= 0.5:
+                sp.setdefault("crops", []).append((t, gezichtsuitsnede(beeld, (x, y, w, h))))
+                sp.setdefault("kleur", []).append(gezichtskleur(beeld, (x, y, w, h)))
             # Scherpte van dit gezicht (4e veld): bij twee even waarschijnlijke
             # sprekers wint het gezicht dat in focus is.
             sp["monsters"].append([round(t, 3), round(mid, 4), energie, round(scherpte(beeld, (x, y, w, h)), 1)])
     afgesloten.extend(sporen)
     med = lambda xs: sorted(xs)[len(xs) // 2]
     personen = []
+    kleur = lambda sp: med(sp["kleur"]) if sp.get("kleur") else 0.0
     for sp in afgesloten:
         # Alleen wie een flink deel van zijn camerastandpunt in beeld is en
         # niet piepklein op de achtergrond staat.
@@ -520,6 +563,18 @@ def sprekermeting(van, tot, stap):
         # echte luisteraar had 0,006 en 2,9.
         mond = sorted(m[2] for m in sp["monsters"] if m[2] is not None)
         if max(sp["xs"]) - min(sp["xs"]) < 0.006 and (not mond or mond[len(mond) // 2] < 0.2):
+            continue
+        # Beweegt de camera, dan beweegt een portret mee en schiet de regel
+        # hierboven niet aan. De binnenkant van het gezicht verandert dan nog
+        # steeds niet. Gemeten op MUKBANG: portret 0,982-0,990, echte mensen
+        # hoogstens 0,934 (ook wie stilzit en luistert).
+        star = starheid(sp.get("crops", []))
+        if star is not None and star >= 0.96:
+            continue
+        # Zwart-witportret waar de man deels voor staat: de starheid zakt, maar
+        # kleur heeft het niet (portret 2-5, mensen 6-18). Alleen naast een
+        # gezicht mét kleur, anders valt een zwart-witvideo helemaal leeg.
+        if kleur(sp) < 4 and any(a["scene"] == sp["scene"] and kleur(a) >= 8 for a in afgesloten):
             continue
         personen.append({
             "id": 0,
@@ -577,28 +632,43 @@ for t in tijden:
     beeldhoogte = frames[0].shape[0]
     groepen = []
     for frame in frames:
-        for (vak, mond, kijkt, ooghoogte, visueel) in detecteer(frame):
+        detecties = detecteer(frame)
+        mids = [(d[4] if d[4] is not None else d[0][0] + d[0][2] / 2) / beeldbreedte for d in detecties]
+        # Dichtste paar eerst, en per frame één gezicht per groep: een man vlak
+        # voor een portret werd anders samen één "persoon" op een plek ertussen.
+        paren = sorted((abs(g["mid"] - m), di, gi) for di, m in enumerate(mids) for gi, g in enumerate(groepen) if abs(g["mid"] - m) < SAMEN)
+        toewijzing = {}
+        bezet = set()
+        for _, di, gi in paren:
+            if di not in toewijzing and gi not in bezet:
+                toewijzing[di] = gi
+                bezet.add(gi)
+        for di, (vak, mond, kijkt, ooghoogte, visueel) in enumerate(detecties):
             x, y, w, h = vak
-            # Het visuele middelpunt als de landmarks er zijn, anders het vak.
-            mid = (visueel if visueel is not None else x + w / 2) / beeldbreedte
+            mid = mids[di]
             oog = (ooghoogte if ooghoogte is not None else y + h * 0.38) / beeldhoogte
-            for g in groepen:
-                if abs(g["mid"] - mid) < SAMEN:
-                    g["xs"].append(mid)
-                    g["ws"].append(w / beeldbreedte)
-                    g["ogen"].append(oog)
-                    g["kijkt"].append(kijkt)
-                    g["tops"].append(y / beeldhoogte)
-                    g["hs"].append(h / beeldhoogte)
-                    g["mid"] = sum(g["xs"]) / len(g["xs"])
-                    break
+            if di in toewijzing:
+                g = groepen[toewijzing[di]]
+                g["xs"].append(mid)
+                g["ws"].append(w / beeldbreedte)
+                g["ogen"].append(oog)
+                g["kijkt"].append(kijkt)
+                g["tops"].append(y / beeldhoogte)
+                g["hs"].append(h / beeldhoogte)
+                g["kleur"].append(gezichtskleur(frame, vak))
+                g["mid"] = sum(g["xs"]) / len(g["xs"])
             else:
                 groepen.append({
                     "xs": [mid], "ws": [w / beeldbreedte], "mid": mid,
                     "tops": [y / beeldhoogte], "hs": [h / beeldhoogte],
-                    "ogen": [oog], "kijkt": [kijkt],
+                    "ogen": [oog], "kijkt": [kijkt], "kleur": [gezichtskleur(frame, vak)],
                     "mond": mond or (x, y + int(h * 0.55), w, max(1, int(h * 0.45))),
                 })
+
+    # Zwart-witportret naast mensen in kleur: geen persoon (zie sprekermeting).
+    kleurig = [g for g in groepen if sorted(g["kleur"])[len(g["kleur"]) // 2] >= 8]
+    if kleurig:
+        groepen = [g for g in groepen if sorted(g["kleur"])[len(g["kleur"]) // 2] >= 4]
 
     # Een persoon die op één van de vijf frames opduikt is meestal ruis, en een
     # gezichtje van een paar procent breed is iemand op de achtergrond of een
