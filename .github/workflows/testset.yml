@@ -1,0 +1,45 @@
+# De testset: vijf fragmenten van verschillende soorten video plannen en
+# keuren, zonder te renderen en zonder iets weg te schrijven (scripts/testset.ts).
+name: testset
+
+on:
+  workflow_dispatch:
+    inputs:
+      namen:
+        description: 'Alleen deze fragmenten (komma-gescheiden; leeg = alle)'
+        required: false
+        default: ''
+
+jobs:
+  testset:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      CLAUDE_BACKEND: claude-code
+      CLAUDE_MODEL: claude-opus-5
+      CLAUDE_LICHT_MODEL: claude-sonnet-5
+      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      R2_BUCKET: ${{ secrets.R2_BUCKET }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Installeer Claude Code CLI
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Dependencies
+        run: npm ci
+
+      - name: Testset
+        env:
+          NAMEN: ${{ inputs.namen }}
+        run: npx tsx scripts/testset.ts "$NAMEN"

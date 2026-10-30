@@ -1,4 +1,5 @@
 import { db } from '../supabase';
+import { formaatVoorThema } from './clipregels';
 import { loadVault } from '../vault';
 import { TranscriptSegment, transcriptDuration } from '../ingest/transcript';
 import { generateCharacterMap, generateClipPlan, PROMPT_VERSION } from './index';
@@ -42,6 +43,8 @@ export async function runPlannerForVideo(
      * van elke keer een heel nieuw plan met andere clips.
      */
     bereik?: { van: number; tot: number };
+    /** false: alleen plannen en teruggeven, niets wegschrijven (testset). */
+    opslaan?: boolean;
   },
 ) {
   const supabase = db();
@@ -72,7 +75,8 @@ export async function runPlannerForVideo(
       ? (video.energie_momenten as Energiemoment[])
       : await mijnEnergie(energieBron(videoId, video.source_url ?? null), volledig).catch(() => []);
 
-  if (energie !== video.energie_momenten) {
+  // Zonder bron levert de meting een lege lijst; die niet als cache bewaren.
+  if (energie !== video.energie_momenten && (options?.opslaan !== false || energie.length > 0)) {
     await supabase.from('videos').update({ energie_momenten: energie }).eq('id', videoId);
   }
 
@@ -118,6 +122,11 @@ export async function runPlannerForVideo(
     bronPad,
   });
 
+  if (options?.opslaan === false) {
+    const formaat = formaatVoorThema(vault.theme, `${campaign?.name ?? ''} ${video.title}`);
+    return { planId: null, plan, characterMap, clipCount: plan.clips.length, formaat, transcript, titel: video.title as string };
+  }
+
   const { data: planRow, error: planError } = await supabase
     .from('clip_plans')
     .insert({
@@ -144,5 +153,5 @@ export async function runPlannerForVideo(
   const { error: clipsError } = await supabase.from('clips').insert(clipRows);
   if (clipsError) throw clipsError;
 
-  return { planId: planRow.id, plan, characterMap, clipCount: plan.clips.length };
+  return { planId: planRow.id, plan, characterMap, clipCount: plan.clips.length, formaat: null, transcript, titel: video.title as string };
 }

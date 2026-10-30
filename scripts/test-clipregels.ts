@@ -14,6 +14,7 @@ import {
   maxSprongen,
   spanning,
   zelfstandigeOpening,
+  overlayIsOpdracht,
   zonderVerbinder,
   knipSlot,
   lengteBereik,
@@ -357,6 +358,24 @@ async function main() {
     toets('de payoff blijft het laatste shot', r.clip.shots[r.clip.shots.length - 1].functie === 'payoff');
     const verhaal = pasClipRegelsToe(maak(), 'interview');
     toets('bij een verhaal (interview/comedy) blijft de volgorde staan', /^Platina combineert/.test(verhaal.clip.shots[0].transcript_fragment ?? ''));
+  }
+
+  console.log('scripteisen uit MUKBANG: sprongafstand en overlay');
+  {
+    const c = clip(
+      [
+        shot(1, 68, 80, 'hook', 'Deze is peper. Echt peper? Dat is niets man.'),
+        shot(2, 227, 235, 'barst', 'Jij bent gewoon aan het bikkelen hier.'),
+        shot(3, 235, 245, 'payoff', 'Ik weet al wat er gaat gebeuren. Het is zo peper.'),
+      ],
+      { hook: { type: 'x', tekst_overlay: "Onthoud deze zin: 'overleven op dit'", gesproken_start: 'Deze is peper.' } },
+    );
+    const r = pasClipRegelsToe(c, 'comedy');
+    toets('sprong van 147 s in comedy is een harde fout', r.oordeel.fouten.some((f) => /sprong van 147 s/.test(f)), JSON.stringify(r.oordeel.fouten));
+    toets('overlay-opdracht is een harde fout', r.oordeel.fouten.some((f) => /geeft de kijker een opdracht/.test(f)));
+    toets('een echte vraag is geen opdracht', !overlayIsOpdracht('Wie bluft hier?') && !overlayIsOpdracht('Kijkers dachten dat het nep was'));
+    const pl = pasClipRegelsToe(clip([shot(1, 284, 293, 'hook', 'Vier jaar op rij meer vraag.'), shot(2, 293, 300, 'barst', 'Maar het is geen goud.'), shot(3, 300, 340, 'payoff', 'De echte vraag is de prijs.')], { hook: { type: 'x', tekst_overlay: 'Tekort, en tóch goedkoop?', gesproken_start: 'Vier jaar op rij meer vraag.' } }), 'uitleg');
+    toets('doorlopende uitleg: geen sprongfout', !pl.oordeel.fouten.some((f) => /sprong van/.test(f)), JSON.stringify(pl.oordeel.fouten));
   }
 
   console.log('één maatstaf voor de opening (trainingsronde 10)');

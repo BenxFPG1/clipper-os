@@ -202,6 +202,20 @@ export function sprongen(clip: Pick<Clip, 'shots'>): { volgorde: number; seconde
   return uit;
 }
 
+/** De grootste toegestane sprong door de bron voor dit formaat (s). */
+export function maxSprongAfstand(f: Formaat): number {
+  const sleutel = f.toUpperCase() as 'COMEDY' | 'INTERVIEW' | 'UITLEG';
+  return instelling(`CLIP_SPRONG_MAX_${sleutel}`);
+}
+
+// Een overlay die de kijker een opdracht geeft in plaats van nieuwsgierig te
+// maken ("Onthoud deze zin: 'overleven op dit'").
+const OVERLAY_OPDRACHT = /^(onthoud|let op|kijk|luister|wacht|blijf|hou vol|houd vol|kijk tot|wacht tot)\b/i;
+/** Is deze overlay een instructie aan de kijker in plaats van spanning? */
+export function overlayIsOpdracht(tekst: string | null | undefined): boolean {
+  return OVERLAY_OPDRACHT.test((tekst ?? '').trim());
+}
+
 // Verwijswoorden die altijd naar iets eerders wijzen, waar ze ook in de eerste
 // zes woorden staan ("En platina beweegt ook daarop").
 const TERUGWIJZERS = /^(daarop|daarvan|daardoor|daarmee|daarover|daarom|daarin|daarna|daarbij|daaruit|erop|ervan|erdoor|ermee|erover|daardoor|hetzelfde|zelfde|ditzelfde|datzelfde|ook)$/;
@@ -615,6 +629,10 @@ export function pasClipRegelsToe(
     if (sp.length > max) {
       fouten.push(`${sp.length} sprongen door de bron (shot ${sp.map((x) => `${x.volgorde}: ${x.seconden > 0 ? '+' : ''}${x.seconden} s`).join(', ')}), meer dan ${max} voor ${formaat} — losse zinnen aan elkaar in plaats van één doorlopend verhaal`);
     }
+    const verst = maxSprongAfstand(formaat);
+    for (const x of sp.filter((y) => Math.abs(y.seconden) > verst)) {
+      fouten.push(`sprong van ${Math.abs(x.seconden)} s door de bron bij shot ${x.volgorde}, meer dan ${verst} s voor ${formaat} — dit zijn twee losse scènes, geen doorlopend verhaal`);
+    }
   }
   for (const h of herhaaldeZinnen({ shots })) {
     signalen.push(`"${h.zin.slice(0, 50)}" klinkt twee keer (shot ${h.shots.join(' en ')}) — alleen houden als de herhaling de grap of de spanning is`);
@@ -623,6 +641,10 @@ export function pasClipRegelsToe(
     if (s.functie === 'payoff' || s.functie === 'hook') continue;
     const f = shotFunctie({ shots, verhaallijn: invoer.verhaallijn }, s);
     if (f.waarde < 0.15) signalen.push(`shot ${s.volgorde} (${s.functie}): ${f.redenen.join(', ') || 'weinig functie'} — zou de clip zonder dit shot slechter zijn?`);
+  }
+
+  if (overlayIsOpdracht(hook?.tekst_overlay)) {
+    fouten.push(`de overlay "${(hook?.tekst_overlay ?? '').slice(0, 50)}" geeft de kijker een opdracht in plaats van nieuwsgierig te maken — schrijf de spanning of de vraag zelf op`);
   }
 
   const clip: Clip = { ...invoer, hook, hooks, context_kaart: contextKaart, shots: shots.map((s, i) => ({ ...s, volgorde: i + 1 })) };

@@ -173,6 +173,17 @@ export function woordenOpTijdlijn(segmenten: Shot[], bronWoorden: BronWoord[]): 
 }
 
 /**
+ * De clip eindigt hier, ook als de spreker in de bron doorpraat: dan staat er
+ * geen komma achter het laatste woord ("Het is zo peper," in MUKBANG) maar een
+ * punt. Vraag- en uitroeptekens blijven.
+ */
+export function sluitLaatsteZin<T extends { w: string }>(woorden: T[]): T[] {
+  const laatste = woorden[woorden.length - 1];
+  if (!laatste || /[.!?…]["'”)]*$/.test(laatste.w)) return woorden;
+  return [...woorden.slice(0, -1), { ...laatste, w: `${laatste.w.replace(/[,;:\-–—]+$/, '')}.` }];
+}
+
+/**
  * Vaste spelling voor fouten die de spraakherkenning steeds maakt en die de
  * correctiepas niet altijd ziet: bijvoeglijke naamwoorden op "-iele" krijgen
  * een trema ("industriele" → "industriële", "financiele" → "financiële"),
@@ -839,7 +850,7 @@ export async function maakOndertitels(
   stijl?: Huisstijl | null,
   opties: { kader?: Kader } = {},
 ): Promise<Ondertitels> {
-  const regels = groepeerRegels(woordenOpTijdlijn(segmenten, bronWoorden));
+  const regels = groepeerRegels(sluitLaatsteZin(woordenOpTijdlijn(segmenten, bronWoorden)));
   const srt = bouwSrtUitRegels(regels);
   const font = ondertitelFont(stijl);
   const maat = ondertitelMaat(stijl);

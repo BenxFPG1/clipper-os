@@ -107,10 +107,15 @@ export async function generateCharacterMap(input: {
  * puur verfijning op een al volledig plan; faalt die, dan houden we wat er is.
  */
 export async function generateClipPlan(
-  input: PlannerInput & { characterMap: CharacterMap },
+  input: PlannerInput & { characterMap: CharacterMap; herkansing?: string[] },
 ): Promise<ClipPlan> {
-  // De zelflerende laag komt achter de vaste kaders aan.
-  const bijgeleerd = await geleerdeKennis('planner');
+  // De zelflerende laag komt achter de vaste kaders aan. Bij een herkansing
+  // staat erachter wat er aan de vorige poging hard fout was.
+  const bijgeleerd =
+    (await geleerdeKennis('planner')) +
+    (input.herkansing?.length
+      ? `\n\n=== VORIGE POGING AFGEKEURD (HARD; maak een andere keuze, niet dezelfde clip opnieuw) ===\n${input.herkansing.map((f) => `- ${f}`).join('\n')}`
+      : '');
   // Het format (comedy / interview / uitleg) bepaalt de lengte en het tempo.
   const formaat = formaatVoorThema(input.vault.theme, `${input.campaignName ?? ''} ${input.title}`);
   const bereik = lengteBereik(formaat);
@@ -277,7 +282,15 @@ ${JSON.stringify(perClip, null, 1)}${signalenRapport}${regelsVoorPrompt(voorDokt
 
   // Nog één keer de regels: wat de dokter schrapte of liet staan, moet er
   // ook daarna aan voldoen. Daarna vallen clips onder de 6 af.
-  doctored = pasPlanRegelsToe(doctored, formaat, regelOpties).plan;
+  const eind = pasPlanRegelsToe(doctored, formaat, regelOpties);
+  doctored = eind.plan;
+  // Geen enkele clip haalt de harde regels: één keer opnieuw plannen met de
+  // fouten erbij, in plaats van de minst slechte clip te renderen.
+  const harde = eind.oordelen.flatMap((o) => o.oordeel.fouten.map((f) => `"${o.titel}": ${f}`));
+  if (harde.length && doctored.clips.every((c) => (c.score ?? 10) <= 5) && !input.herkansing) {
+    console.log(`[planner] herkansing: geen clip haalt de harde regels (${harde.join(' | ').slice(0, 300)})`);
+    return generateClipPlan({ ...input, herkansing: harde });
+  }
   doctored = { clips: doctored.clips.filter((c) => (c.score ?? 10) >= 6).length ? doctored.clips.filter((c) => (c.score ?? 10) >= 6) : doctored.clips.slice(0, 1) };
   for (const [i, c] of doctored.clips.entries()) {
     const zs = c.shots.flatMap((s) => zinnen(s.transcript_fragment ?? ''));

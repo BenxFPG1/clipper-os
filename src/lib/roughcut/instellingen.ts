@@ -125,6 +125,14 @@ const STANDAARD = {
   CLIP_MAX_SPRONGEN_UITLEG: 2,
   /** Vanaf hoeveel overgeslagen seconden het een sprong is; korter is aanscherpen (een pauze, een zijpad eruit). */
   CLIP_SPRONG_MIN: 15,
+  /**
+   * Hoe ver één sprong door de bron hoogstens mag zijn (s). Het aantal
+   * sprongen klopte bij MUKBANG, maar stukken van 2,5 minuut uit elkaar zijn
+   * twee scènes: een grap heeft één doorlopende scène nodig.
+   */
+  CLIP_SPRONG_MAX_COMEDY: 40,
+  CLIP_SPRONG_MAX_INTERVIEW: 120,
+  CLIP_SPRONG_MAX_UITLEG: 90,
   /** Hoeveel seconden een shot mag groeien om een verwijzing of onthulling uit de bron mee te nemen. */
   CLIP_CONTEXT_MAX: 7,
   RETENTIE_COMEDY_FACTOR: 0.75,
