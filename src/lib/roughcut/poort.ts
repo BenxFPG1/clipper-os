@@ -196,7 +196,9 @@ export function poort(
   if (bronWoorden && bronWoorden.length > 0) {
     // Valt een weggeknipte pauze binnen één woord, dan beslissen de twee kanten
     // apart dat het woord bij de ander hoort en verdwijnt het helemaal
-    // ("Mag zij worden ... door": "geholpen" weg). Het woord blijft dus heel.
+    // ("Mag zij worden ... door": "geholpen" weg). Dan knippen we hier niet in
+    // het geluid: de naad blijft staan, want daar wisselt vaak de camera, en
+    // het tweede deel sluit erop aan.
     for (let i = 0; i + 1 < uit.length; i++) {
       const [a, b] = [uit[i], uit[i + 1]];
       if (b.start <= a.end) continue;
@@ -205,17 +207,9 @@ export function poort(
       ingrepen.push({
         volgorde: a.volgorde,
         regel: 'woordgrens',
-        wat: `knip ${a.end.toFixed(2)}-${b.start.toFixed(2)} viel binnen "${woord.w}"; woord blijft heel`,
+        wat: `knip ${a.end.toFixed(2)}-${b.start.toFixed(2)} viel binnen "${woord.w}"; het geluid loopt door`,
       });
-      // Blijft er van het tweede deel te weinig over, dan vervalt het later als
-      // ongeldig en neemt het de woorden erachter mee: dan worden ze één shot.
-      if (b.end - woord.e < instelling('POORT_MIN_SEGMENT')) {
-        verzetGrens(a, { end: b.end });
-        uit.splice(i + 1, 1);
-        continue;
-      }
-      verzetGrens(a, { end: woord.e });
-      verzetGrens(b, { start: woord.e });
+      verzetGrens(b, { start: a.end });
     }
     for (const [i, seg] of uit.entries()) {
       // Een naad waar het vorige shot precies ophoudt waar dit begint (een

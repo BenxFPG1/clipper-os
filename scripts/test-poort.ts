@@ -324,9 +324,7 @@ console.log('knip binnen één woord — het woord blijft heel');
   const p = poort([x, y], lang);
   const dek = p.segmenten.reduce((t, g) => t + Math.max(0, Math.min(g.end, 12) - Math.max(g.start, 10.5)), 0);
   toets('het hele woord zit in de montage', dek >= 1.49, JSON.stringify(p.segmenten.map((g) => [g.start, g.end])));
-  toets('en maar één keer, zonder de woorden erachter te verliezen', p.segmenten.length === 1 && p.segmenten[0].end >= 12.4, JSON.stringify(p.segmenten.map((g) => [g.start, g.end])));
-  const q = poort([{ ...shot(1, 10, 11) }, { ...shot(1.1, 11.5, 14) }] as Shot[], lang);
-  toets('lang tweede deel: knip schuift naar het eind van het woord', q.segmenten.length === 2 && q.segmenten[0].end === 12 && q.segmenten[1].start === 12, JSON.stringify(q.segmenten.map((g) => [g.start, g.end])));
+  toets('de naad blijft staan en het geluid loopt door', p.segmenten.length === 2 && p.segmenten[0].end === 11 && p.segmenten[1].start === 11, JSON.stringify(p.segmenten.map((g) => [g.start, g.end])));
 }
 
 console.log('reactie — de zin na de punchline blijft erbij');
