@@ -63,7 +63,7 @@ import {
   zoekStilstePunt,
 } from '../src/lib/roughcut/knipcontrole';
 import { controleerScript, kopInBron } from '../src/lib/roughcut/scriptcontrole';
-import { haalBronWoorden, vindFragment } from '../src/lib/roughcut/woorden';
+import { eindNaReactie, haalBronWoorden, vindFragment } from '../src/lib/roughcut/woorden';
 import { poort, verzetGrens } from '../src/lib/roughcut/poort';
 import { herhaaldInBron, keurGezichtDetail, keurGraphicsDetail, keurMontage, keurScriptCompleet, type Keuringsrapport } from '../src/lib/roughcut/keuring';
 import { zelfherstelStap } from '../src/lib/roughcut/herstel';
@@ -516,7 +516,15 @@ async function verwerk(job: Job) {
             anker.start !== null
               ? Math.max(0, anker.start - Math.min(0.3, Math.max(0.04, anker.gapVoor / 2)))
               : shot.start,
-          end: anker.end !== null ? anker.end + Math.min(0.45, Math.max(0.08, anker.gapNa / 2)) : shot.end,
+          // Het fragment eindigt op de punchline; de reactie die de clipregels
+          // erbij haalden staat niet in het script en viel hier anders weg.
+          end: anker.end !== null
+            ? (() => {
+                const eind = anker.end + Math.min(0.45, Math.max(0.08, anker.gapNa / 2));
+                const tot = (shot as { reactie_tot?: number }).reactie_tot;
+                return tot ? eindNaReactie(bronWoorden, eind, tot) : eind;
+              })()
+            : shot.end,
           exact: beideZeker,
           ankerStart: anker.start ?? undefined,
           ankerEind: anker.end ?? undefined,

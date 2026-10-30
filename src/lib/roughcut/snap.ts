@@ -196,15 +196,31 @@ export function verwijderDodeLucht<T extends SnapShot & { volgorde?: number }>(
       continue;
     }
 
+    // De ankers horen bij het hele fragment: alleen het eerste deel houdt het
+    // begin en alleen het laatste het eind. Kreeg elk deel beide mee, dan rekte
+    // de poort ieder deel weer op tot de hele zin, vielen ze als duplicaat weg
+    // en stond de pauze er alsnog in, met één kader over alle camerawissels.
+    const volgorde = shot.volgorde ?? 0;
+    const deel = (start: number, end: number, i: number, laatste: boolean) => ({
+      ...shot,
+      start,
+      end,
+      subKnip: i > 0,
+      volgorde: Math.round((volgorde + i * 0.1) * 1e6) / 1e6,
+      ankerStart: i === 0 ? (shot as { ankerStart?: number }).ankerStart : undefined,
+      ankerEind: laatste ? (shot as { ankerEind?: number }).ankerEind : undefined,
+    });
     let cursor = shot.start;
-    for (const st of binnen) {
+    for (const [i, st] of binnen.entries()) {
       // Stukje vóór de stilte, plus een klein restje stilte als ademruimte.
-      uit.push({ ...shot, start: cursor, end: st.start + laat / 2, subKnip: cursor !== shot.start });
+      uit.push(deel(cursor, st.start + laat / 2, i, false));
       cursor = st.end - laat / 2;
     }
-    uit.push({ ...shot, start: cursor, end: shot.end, subKnip: true });
+    uit.push(deel(cursor, shot.end, binnen.length, true));
   }
 
-  // Volgorde opnieuw doornummeren zodat de rest van de keten er niets van merkt.
-  return uit.map((s, i) => ({ ...s, volgorde: i + 1 }));
+  // Het plannummer blijft staan (delen krijgen 1.1, 1.2): de keuring herkent
+  // shots daaraan. Doornummeren liet een plan van 3 shots op 5 uitkomen, zodat
+  // "script compleet" shots miste die er gewoon waren.
+  return uit;
 }

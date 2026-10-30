@@ -592,7 +592,7 @@ export function pasClipRegelsToe(
     const lach = opties.transcript?.find((t) => t.start_seconds > laatste.end - 0.2 && t.start_seconds <= laatste.end + 2.5 && lachmarkers(t.text).length > 0);
     const eind = Math.max(piek ? piek.end + 0.3 : 0, lach ? lach.end_seconds : 0);
     if (eind > laatste.end) {
-      shots[shots.length - 1] = { ...laatste, end: Math.round(eind * 100) / 100 };
+      shots[shots.length - 1] = { ...laatste, end: Math.round(eind * 100) / 100, reactie_tot: Math.round(eind * 100) / 100 };
       ingrepen.push(`slot verlengd tot ${eind.toFixed(1)} s: de lach/reactie na de punchline hoort erbij`);
     }
   }

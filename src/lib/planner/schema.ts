@@ -84,6 +84,8 @@ export const shotSchema = z.object({
   end: z.number(),
   functie: z.enum(['hook', 'setup', 'escalatie', 'barst', 'payoff', 'button']),
   transcript_fragment: z.string(),
+  /** Tot hier loopt de reactie op de punchline door (gezet door de clipregels). */
+  reactie_tot: z.number().optional(),
   edit_notitie: z.string(),
   // Optioneel: oudere plannen hebben deze velden niet en moeten blijven werken.
   sfx: z.string().optional(),

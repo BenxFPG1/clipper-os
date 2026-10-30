@@ -14,7 +14,8 @@ import { poort, verzetGrens, woordOnder } from '../src/lib/roughcut/poort';
 import { keurKnippen, keurOverlap, keurScriptCompleet, keuringStatus } from '../src/lib/roughcut/keuring';
 import { corrigeerKadrering, uitsnedeVan } from '../src/lib/roughcut/kadercontrole';
 import { basisZoom, type Shot } from '../src/lib/roughcut';
-import type { BronWoord } from '../src/lib/roughcut/woorden';
+import { eindNaReactie, vindFragment, type BronWoord } from '../src/lib/roughcut/woorden';
+import { verwijderDodeLucht } from '../src/lib/roughcut/snap';
 
 let gefaald = 0;
 let gedaan = 0;
@@ -303,6 +304,29 @@ console.log('zoom maakt centreren mogelijk');
   const u = uitsnedeVan(0.9, z, 0.5);
   toets('kader kan centreren op een spreker aan de rand',
     Math.abs((u.x0 + u.x1) / 2 - 0.9) < 0.02, `zoom=${z.toFixed(2)} midden=${((u.x0+u.x1)/2).toFixed(3)}`);
+}
+
+console.log('dode lucht — delen van één shot rekt de poort niet terug');
+{
+  const hele: Shot = { ...shot(1, 10, 22), functie: 'hook', ankerStart: 10, ankerEind: 22 } as Shot;
+  const delen = verwijderDodeLucht([hele, { ...shot(2, 30, 34), functie: 'payoff' } as Shot], [{ start: 14, end: 16 }, { start: 18, end: 20 }]);
+  toets('plannummers blijven staan', delen.map((d) => Math.floor(d.volgorde as number)).join() === '1,1,1,2', delen.map((d) => d.volgorde).join());
+  toets('alleen de buitenkant houdt een anker', delen[0].ankerEind === undefined && delen[1].ankerStart === undefined && delen[1].ankerEind === undefined && delen[2].ankerStart === undefined && delen[2].ankerEind === 22);
+  const p = poort(delen as Shot[], null);
+  toets('poort laat de delen staan', p.segmenten.length === 4 && !p.ingrepen.some((g) => g.regel === 'halfFragment' || g.regel === 'overlap'), JSON.stringify(p.ingrepen));
+  toets('script compleet ziet shot 1 en 2', keurScriptCompleet([1, 2], p.segmenten).goed === true);
+}
+
+console.log('reactie — de zin na de punchline blijft erbij');
+{
+  const r = (w: string, s: number): BronWoord => ({ w, s, e: s + 0.3 });
+  const na = [r('Je', 51), r('bent', 51.4), r('dom', 51.8), r('man.', 52.2), r('Hey', 53), r('die', 53.4)];
+  toets('eerste hele zin', Math.abs(eindNaReactie(na, 50.5, 59) - 52.8) < 0.01);
+  toets('alleen gelach loopt door', eindNaReactie([], 50, 59) === 52.5);
+  toets('geen zinseinde: niets erbij', eindNaReactie(na.slice(0, 3), 50.5, 59) === 50.5);
+  const bron = 'mag ze dat ze is geen dief vind ik heel mooi gezegd broeder stel die nog een keer geen'.split(' ').map((w, i) => r(w, i));
+  const a = vindFragment(bron, 'mag ze dat ze is toch geen dief zeker', 0);
+  toets('staart springt niet naar een woord uit een latere zin', a?.end != null && a.end < 7, JSON.stringify(a));
 }
 
 console.log('kadercontrole — een gevolgd shot past over het hele spoor');

@@ -256,6 +256,20 @@ export type FragmentAnker = {
  * met dezelfde score wint de plek het dichtst bij de plantijd — een spreker
  * kan dezelfde zin vaker zeggen.
  */
+/**
+ * Tot waar loopt de reactie op een punchline door? De eerste hele zin na het
+ * fragment, of bij alleen gelach het hele stuk. Loopt er tekst door zonder
+ * zinseinde, dan blijft het eind staan: een halve zin is erger dan geen reactie.
+ */
+export function eindNaReactie(woorden: BronWoord[], eind: number, tot: number): number {
+  if (tot <= eind) return eind;
+  const erna = woorden.filter((w) => w.s >= eind - 0.05 && w.e <= tot + 0.1);
+  if (erna.length === 0) return Math.min(tot, eind + 2.5);
+  const zinseinde = erna.find((w) => /[.?!…]$/.test(w.w));
+  if (!zinseinde || zinseinde.e > eind + 6) return eind;
+  return zinseinde.e + 0.3;
+}
+
 export function vindFragment(
   woorden: BronWoord[],
   fragment: string,
@@ -321,12 +335,16 @@ export function vindFragment(
     let laatsteMatch = -1;
     let eersteDoel = -1;
     let laatsteDoel = -1;
+    let eenNaLaatsteMatch = -1;
+    let eenNaLaatsteDoel = -1;
     while (k < n && d < m) {
       if (lijkt(venster[k].n, doel[d]) && dp[k][d] === 1 + dp[k + 1][d + 1]) {
         if (eersteMatch < 0) {
           eersteMatch = k;
           eersteDoel = d;
         }
+        eenNaLaatsteMatch = laatsteMatch;
+        eenNaLaatsteDoel = laatsteDoel;
         laatsteMatch = k;
         laatsteDoel = d;
         k++;
@@ -338,6 +356,17 @@ export function vindFragment(
       }
     }
     if (eersteMatch < 0) continue;
+
+    // Een eindje staart dat pas na vier of meer vreemde woorden "raakt" is een
+    // toevalstreffer op een woord uit de volgende zin. Het verschil tussen het
+    // script en de clip was anders een hele zin extra.
+    if (
+      eenNaLaatsteMatch >= 0 &&
+      laatsteMatch - eenNaLaatsteMatch > 4 &&
+      laatsteDoel - eenNaLaatsteDoel <= 2
+    ) {
+      laatsteMatch = eenNaLaatsteMatch;
+    }
 
     // Getallen worden als losse tokens gehoord ("4" + ".000"); het anker moet
     // dan tot het láátste stuk van het getal doorlopen, anders eindigt de clip
