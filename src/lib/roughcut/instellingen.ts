@@ -145,7 +145,9 @@ const STANDAARD = {
    */
   SPREKER_STAP: 0.1,
   /** Zelfherstel op de spreker: vanaf welk aandeel hoofd buiten beeld / afwijking van het midden het kader verplaatst wordt. */
-  ZELFHERSTEL_SPREKER_BUITEN: 0.25,
+  // Net onder KEURING_BUITEN_MAX (0,15): 21% buiten beeld keurde de keuring
+  // af terwijl het zelfherstel pas bij 25% iets deed.
+  ZELFHERSTEL_SPREKER_BUITEN: 0.14,
   // Net onder KEURING_UIT_MIDDEN_MAX (0,14): wat de keuring afkeurt, moet het
   // zelfherstel ook oppakken. Met 0,2 bleef "15% uit het midden" (PLATINA
   // plan-7.1 clip 1) liggen zonder dat er iets gebeurde.

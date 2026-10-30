@@ -522,7 +522,7 @@ async function verwerk(job: Job) {
             ? (() => {
                 const eind = anker.end + Math.min(0.45, Math.max(0.08, anker.gapNa / 2));
                 const tot = (shot as { reactie_tot?: number }).reactie_tot;
-                return tot ? eindNaReactie(bronWoorden, eind, tot) : eind;
+                return tot && shot.functie === 'payoff' ? eindNaReactie(bronWoorden, eind, tot) : eind;
               })()
             : shot.end,
           exact: beideZeker,
@@ -907,11 +907,21 @@ async function verwerk(job: Job) {
     // gezet worden: op de genoemde seconde, als de fix als regel te lezen is.
     // Eén functie voor de overlays én voor de retentiemeting, zodat die
     // dezelfde kaarten ziet als de render.
+    // Niet vanaf de payoff: een kaart over de grap heen legt hem uit
+    // ("Hij denkt er echt over na." terwijl hij zit te lachen).
+    const payoffOpTijdlijn = () => {
+      let t = 0;
+      for (const sg of segmenten) {
+        if (sg.functie === 'payoff' && !sg.tease) return t;
+        t += sg.end - sg.start;
+      }
+      return Infinity;
+    };
     const uitvalKaarten = (totaal: number) =>
       (clip.uitval_risicos ?? [])
         .map((risico, i) => ({ i, tekst: kaartRegelUit(risico.fix), seconde: risico.seconde }))
         .filter((k): k is { i: number; tekst: string; seconde: number } =>
-          Boolean(k.tekst) && k.seconde >= hookTot + 1 && k.seconde <= totaal - 1.5,
+          Boolean(k.tekst) && k.seconde >= hookTot + 1 && k.seconde <= totaal - 1.5 && k.seconde < payoffOpTijdlijn() - 0.5,
         );
     // Plankaarten: aan het begin van hun shot (het eerste segment met dat
     // volgnummer — retentiedelen en sprekerswissels hebben een fractie erachter),

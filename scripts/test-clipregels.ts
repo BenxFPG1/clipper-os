@@ -210,6 +210,10 @@ async function main() {
       transcript: [{ start_seconds: 115.2, end_seconds: 116.8, text: '(gelach) hahaha' }],
     });
     toets('slot verlengd tot na de lach', r.clip.shots[1].end >= 116.8 - 1e-9, String(r.clip.shots[1].end));
+    toets('payoff bewaart de reactie', (r.clip.shots[1] as { reactie_tot?: number }).reactie_tot !== undefined);
+    const metButton = clip([shot(1, 100, 104, 'hook', 'Archi speelt Scar beter dan de film.'), shot(2, 104, 112, 'payoff', 'Long live the king, zegt hij tegen de ober.'), shot(3, 112, 115, 'button', 'Je bent echt dom man.')]);
+    const rb = pasClipRegelsToe(metButton, 'comedy', { energie: [{ soort: 'volumepiek', start: 115.4, end: 116.6, sterkte: 0.9 }] });
+    toets('een button haalt geen extra zin erbij', (rb.clip.shots[2] as { reactie_tot?: number }).reactie_tot === undefined);
     toets('niet bij uitleg', pasClipRegelsToe(c, 'uitleg', { energie: [{ soort: 'volumepiek', start: 115.4, end: 116.6, sterkte: 0.9 }] }).clip.shots[1].end === 115);
   }
 
