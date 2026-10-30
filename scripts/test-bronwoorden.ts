@@ -13,7 +13,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { resolveBinary } from '../src/lib/ingest/binaries';
 import { groveWoorden, haalBronWoorden, type BronWoord, type BronWoordCache } from '../src/lib/roughcut/woorden';
-import { corrigeerWoorden, naamSpelling, pasCorrectiesToe, tweedeLezing } from '../src/lib/roughcut/ondertitelwoorden';
+import { corrigeerWoorden, naamSpelling, pasCorrectiesToe, tweedeLezing, volgCaptions } from '../src/lib/roughcut/ondertitelwoorden';
 import { bouwAss, groepeerRegels, keurOndertitelOverlap, REGEL_GAT, sluitLaatsteZin, vasteSpelling, woordenOpTijdlijn } from '../src/lib/roughcut/ondertitels';
 import { editorTekst } from '../src/lib/roughcut/editortekst';
 import { kaartSchema } from '../src/lib/planner/schema';
@@ -239,6 +239,21 @@ async function main() {
       toets('naam uit de character map vast gespeld', nm.woorden[1].w === 'Archi.' && nm.woorden[2].w === 'Marktdag', JSON.stringify(nm));
       const zinBegin = naamSpelling([{ w: 'Goud', s: 0, e: 1 }], ['Goudtje', 'Gouda']);
       toets('eerste woord van een zin blijft staan (hoofdletter zegt dan niets)', zinBegin.woorden[0].w === 'Goud');
+      {
+        const mk = (t: string) => t.split(' ').map((w, i) => ({ w, s: i * 0.3, e: i * 0.3 + 0.25 }));
+        const cap = 'Amen. Is dat het? Laat mij met Gado praten hoor. Bro, ik was gewoon aan het kijken of jij zou bidden. [gelach]';
+        const invoer = mk('Amen. Dat is dat het. Hé, laat mij met Gado praten hoor. Bro, ik was gewoon aan een kijken of jij zou bidden.');
+        const r = volgCaptions(invoer, cap);
+        const tekst = r.woorden.map((w) => w.w).filter(Boolean).join(' ');
+        toets('captions leidend: extra woorden weg, verkeerd woord vervangen, leestekens over', tekst === 'Amen. Is dat het? Laat mij met Gado praten hoor. Bro, ik was gewoon aan het kijken of jij zou bidden.', tekst);
+        toets('lengte en tijden blijven gelijk', r.woorden.length === invoer.length && r.woorden.every((w, i) => w.s === invoer[i].s));
+        const ander = volgCaptions(mk('Goud staat op een record vandaag'), 'Heel iets anders dat hier niet bij hoort');
+        toets('captions die er niet bij horen: niets veranderd', ander.gewijzigd.length === 0);
+        const geen = volgCaptions(mk('Een twee'), null);
+        toets('zonder captions: niets veranderd', geen.gewijzigd.length === 0);
+        const rand = volgCaptions(mk('En toen zei hij nee'), 'iets ervoor En toen zei hij nee iets erna');
+        toets('captions buiten de knip komen er niet bij', rand.woorden.map((w) => w.w).join(' ') === 'En toen zei hij nee', JSON.stringify(rand.woorden.map((w) => w.w)));
+      }
       const aanHet = [{ w: 'gewoon', s: 0, e: 0.3 }, { w: 'aan', s: 0.3, e: 0.5 }, { w: 'het', s: 0.5, e: 0.6 }, { w: 'kijken', s: 0.6, e: 1 }];
       let keuzeNodig = false;
       const ah = await corrigeerWoorden(aanHet, { tweede: ['gewoon', 'aan', 'een', 'kijken'] }, async () => ({ correcties: [{ index: 2, woord: 'een' }] }), async () => {

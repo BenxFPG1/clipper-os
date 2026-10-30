@@ -343,6 +343,73 @@ export function naamSpelling(woorden: BronWoord[], namen: string[]): { woorden: 
   return { woorden: uit, toegepast };
 }
 
+const toetsWoord = (w: string) => w.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+
+/**
+ * De captions van de video zijn leidend voor de tekst; de spraakherkenning
+ * levert alleen de tijden. MUKBANG: de captions zeggen "Is dat het?" en "aan
+ * het kijken", de herkenning "Dat is dat het." en "aan een kijken", en de
+ * captions waren tot nu toe alleen een hint voor de correctiepas.
+ *
+ * Beide woordreeksen worden uitgelijnd (langste gemeenschappelijke reeks).
+ * Gelijke woorden krijgen de leestekens van de captions; een afwijkend stuk
+ * neemt de woorden van de captions over op dezelfde tijd; een los extra woord
+ * (hoogstens twee) van de herkenning valt weg. De lengte blijft gelijk: een
+ * vervallen woord wordt leeg, zodat de tijden en indexen kloppen. Lijken de
+ * reeksen te weinig op elkaar, dan blijft alles staan (verkeerde captions).
+ */
+export function volgCaptions(woorden: BronWoord[], captions: string | null | undefined): { woorden: BronWoord[]; gewijzigd: { van: string; naar: string }[] } {
+  const gewijzigd: { van: string; naar: string }[] = [];
+  if (!captions || woorden.length === 0) return { woorden, gewijzigd };
+  const cap = captions.replace(/\[[^\]]*\]/g, ' ').split(/\s+/).filter((c) => toetsWoord(c));
+  const a = woorden.map((w) => toetsWoord(w.w));
+  const b = cap.map(toetsWoord);
+  const L = Array.from({ length: a.length + 1 }, () => new Int32Array(b.length + 1));
+  for (let i = a.length - 1; i >= 0; i--) {
+    for (let j = b.length - 1; j >= 0; j--) {
+      L[i][j] = a[i] === b[j] && a[i] ? L[i + 1][j + 1] + 1 : Math.max(L[i + 1][j], L[i][j + 1]);
+    }
+  }
+  if (L[0][0] / Math.max(1, a.filter(Boolean).length) < 0.55) return { woorden, gewijzigd };
+  const uit = woorden.map((w) => ({ ...w }));
+  // Een blok tussen twee overeenkomsten vervangen.
+  const blok = (i0: number, i1: number, j0: number, j1: number) => {
+    const van = woorden.slice(i0, i1).map((w) => w.w).join(' ');
+    if (i1 > i0 && j1 > j0) {
+      const nieuw = cap.slice(j0, j1);
+      for (let k = i0; k < i1; k++) uit[k].w = '';
+      if (nieuw.length >= i1 - i0) {
+        // Meer of evenveel: de eerste krijgt zo nodig meerdere woorden (tijd wordt later verdeeld).
+        for (let k = 0; k < i1 - i0; k++) uit[i0 + k].w = k < i1 - i0 - 1 ? nieuw[k] : nieuw.slice(k).join(' ');
+      } else {
+        nieuw.forEach((n, k) => (uit[i0 + k].w = n));
+      }
+      gewijzigd.push({ van, naar: nieuw.join(' ') });
+    } else if (i1 > i0 && i1 - i0 <= 2 && i0 > 0 && i1 < woorden.length) {
+      for (let k = i0; k < i1; k++) uit[k].w = '';
+      gewijzigd.push({ van, naar: '' });
+    }
+  };
+  let i = 0;
+  let j = 0;
+  let i0 = 0;
+  let j0 = 0;
+  while (i < a.length && j < b.length) {
+    if (a[i] && a[i] === b[j] && L[i][j] === L[i + 1][j + 1] + 1) {
+      // Alleen een blok met een rand aan beide kanten: wat vóór de eerste
+      // overeenkomst staat, zijn captions van buiten de knip.
+      if (i0 > 0 || i > 0) blok(i0, i, i0 === 0 ? j : j0, j);
+      if (/[.,!?…:;]["'”)]*$/.test(cap[j]) || /^\p{Lu}/u.test(cap[j])) uit[i].w = cap[j];
+      i++;
+      j++;
+      i0 = i;
+      j0 = j;
+    } else if (L[i + 1][j] >= L[i][j + 1]) i++;
+    else j++;
+  }
+  return { woorden: uit, gewijzigd };
+}
+
 export type CorrectieCall = (system: string, user: string) => Promise<{ correcties: Correctie[] }>;
 
 const standaardCall: CorrectieCall = (system, user) =>

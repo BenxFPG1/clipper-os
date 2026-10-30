@@ -67,7 +67,7 @@ import { haalBronWoorden, vindFragment } from '../src/lib/roughcut/woorden';
 import { poort, verzetGrens } from '../src/lib/roughcut/poort';
 import { herhaaldInBron, keurGezichtDetail, keurGraphicsDetail, keurMontage, keurScriptCompleet, type Keuringsrapport } from '../src/lib/roughcut/keuring';
 import { zelfherstelStap } from '../src/lib/roughcut/herstel';
-import { corrigeerWoorden, tweedeLezing, verfijnWoorden } from '../src/lib/roughcut/ondertitelwoorden';
+import { corrigeerWoorden, tweedeLezing, verfijnWoorden, volgCaptions } from '../src/lib/roughcut/ondertitelwoorden';
 import { ruimBronCacheOp } from '../src/lib/roughcut/broncache';
 import {
   herstelWissels,
@@ -1234,8 +1234,10 @@ async function verwerk(job: Job) {
           .map((w, i) => ({ w, i }))
           .filter(({ w }) => segmenten.some((sg) => (w.s + w.e) / 2 >= sg.start - 0.05 && (w.s + w.e) / 2 <= sg.end + 0.05));
         const namen = (((videoRij?.character_map as { personen?: { naam?: string }[] } | null)?.personen ?? []).map((p) => p.naam).filter(Boolean)) as string[];
+        const naarCaptions = volgCaptions(inClip.map((x) => x.w), captionsVoor(segmenten));
+        if (naarCaptions.gewijzigd.length) console.log(`     ondertitels: ${naarCaptions.gewijzigd.length} plek(ken) naar de captions (${naarCaptions.gewijzigd.slice(0, 12).map((g) => `${g.van}→${g.naar || '∅'}`).join(', ')})`);
         const c = await corrigeerWoorden(
-          inClip.map((x) => x.w),
+          naarCaptions.woorden,
           {
             titel: video.title,
             campagne: await campagneNaam(supabase, job.video_id),
@@ -1243,7 +1245,8 @@ async function verwerk(job: Job) {
             verhaallijn: [clip.verhaallijn?.belofte, clip.verhaallijn?.payoff].filter(Boolean).join(' — ') || null,
             fragmenten: clip.shots.map((sh) => (sh as { transcript_fragment?: string }).transcript_fragment ?? '').filter(Boolean),
             captions: captionsVoor(segmenten),
-            tweede: tweedeLezing(inClip.map((x) => x.w), bronWoorden),
+            // Wat de captions al beslisten, is geen twijfelplek meer.
+            tweede: captionsVoor(segmenten) ? undefined : tweedeLezing(inClip.map((x) => x.w), bronWoorden),
           },
         );
         const samen = [...v.woorden];
