@@ -99,6 +99,11 @@ async function main() {
   } finally {
     rmSync(map, { recursive: true, force: true });
   }
+  {
+    const zin: BronWoord[] = ['jou', 'vrouw', 'wordt'].map((w, i) => ({ w, s: i, e: i + 0.5 }));
+    const c = pasCorrectiesToe(zin, [{ index: 1, woord: 'Jou' }, { index: 2, woord: 'wordt aangereden' }], { captions: 'jou vrouw wordt aangereden' });
+    toets('captions-woord blijft staan, een woord erbij mag', c.woorden[1].w === 'vrouw' && c.woorden[2].w === 'wordt aangereden', JSON.stringify(c.woorden));
+  }
   console.log(`\n${gedaan - gefaald}/${gedaan} geslaagd`);
   if (gefaald > 0) process.exit(1);
 }

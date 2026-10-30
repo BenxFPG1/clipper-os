@@ -326,6 +326,9 @@ console.log('reactie — de zin na de punchline blijft erbij');
   toets('geen zinseinde: niets erbij', eindNaReactie(na.slice(0, 3), 50.5, 59) === 50.5);
   const bron = 'mag ze dat ze is geen dief vind ik heel mooi gezegd broeder stel die nog een keer geen'.split(' ').map((w, i) => r(w, i));
   const a = vindFragment(bron, 'mag ze dat ze is toch geen dief zeker', 0);
+  const dubbel = 'ha je bent echt dom man je bent echt dom man hey'.split(' ').map((w, i) => r(w, i));
+  const d = vindFragment(dubbel, 'je bent echt dom man', 0);
+  toets('herhaalde slotzin: einde na de eerste keer', d?.end != null && d.end < 6, JSON.stringify(d));
   toets('staart springt niet naar een woord uit een latere zin', a?.end != null && a.end < 7, JSON.stringify(a));
 }
 

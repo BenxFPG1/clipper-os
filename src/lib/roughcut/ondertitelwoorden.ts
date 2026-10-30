@@ -314,6 +314,14 @@ export function pasCorrectiesToe(
       weg('spellingsgok zonder bron');
       continue;
     }
+    // Wat de captions bevestigen, staat vast: "vrouw" → "Jou" maakte van "jou
+    // vrouw wordt aangereden" de zin "Jou wordt aangereden". Een woord erbij
+    // ("worden" → "worden geholpen") mag wel.
+    const inCaptions = new Set((context.captions ?? '').split(/\s+/).map(toetsWoord).filter(Boolean));
+    if (inCaptions.has(toetsWoord(oudKaal)) && !nieuwKlein.split(' ').includes(oudKlein)) {
+      weg('staat in de captions');
+      continue;
+    }
     const voor = oud.match(/^["'“„(]+/)?.[0] ?? '';
     const na = oud.match(/[.,!?;:"'“”„()]+$/)?.[0] ?? '';
     uit[c.index].w = `${voor}${nieuwKaal}${na}`;

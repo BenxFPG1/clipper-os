@@ -368,6 +368,18 @@ export function vindFragment(
       laatsteMatch = eenNaLaatsteMatch;
     }
 
+    // Zegt de spreker de slotzin nog eens ("Je bent echt dom man. Je bent echt
+    // dom man."), dan eindigt het fragment na de eerste keer.
+    const staart = doel.slice(-3);
+    const staartOp = (q: number) => staart.length === 3 && staart.every((w, x) => q + x < n && lijkt(venster[q + x].n, w));
+    for (let q = eersteMatch; q + 3 <= laatsteMatch; q++) {
+      if (!staartOp(q)) continue;
+      let herhaald = false;
+      for (let r = q + 3; r + 2 <= laatsteMatch; r++) if (staartOp(r)) herhaald = true;
+      if (herhaald) laatsteMatch = q + 2;
+      break;
+    }
+
     // Getallen worden als losse tokens gehoord ("4" + ".000"); het anker moet
     // dan tot het láátste stuk van het getal doorlopen, anders eindigt de clip
     // middenin "4.000".
