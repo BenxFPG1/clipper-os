@@ -106,29 +106,6 @@ export function focusPunten(items: GraphicItem[], woorden: BronWoord[], van: num
 }
 
 /**
- * Terugval als de spreker de blokken niet noemt: de blokken in leesvolgorde
- * (boven naar beneden, links naar rechts), gelijk verdeeld over de tijd dat
- * de pagina in beeld staat. In trainingsronde 9 stond een graphic met drie
- * blokken zeven seconden vrijwel stil omdat de spreker het over iets anders
- * had; zo leidt de zoom het oog toch langs wat er staat.
- */
-export function leesvolgordePunten(items: GraphicItem[], van: number, tot: number): FocusPunt[] {
-  const regel = (b: GraphicItem['box']) => Math.round(((b.y0 + b.y1) / 2) / 0.12);
-  const blokken = items
-    .filter((x) => !x.titel)
-    .sort((a, b) => regel(a.box) - regel(b.box) || a.box.x0 - b.box.x0)
-    .slice(0, instelling('GRAPHIC_LEESVOLGORDE_MAX'));
-  if (blokken.length < 2) return [];
-  const begin = van + 0.6;
-  const stap = (tot - begin) / blokken.length;
-  if (stap < 1.2) return [];
-  return blokken.map((it, k) => {
-    const b = it.box;
-    return { t: begin + k * stap, cx: (b.x0 + b.x1) / 2, cy: (b.y0 + b.y1) / 2, b: b.x1 - b.x0, h: b.y1 - b.y0 };
-  });
-}
-
-/**
  * Leest de graphics die lang genoeg in beeld staan en zet hun zoompunten op
  * de scènes (scene.focus). Aaneengesloten graphic-stukken — gesplitst op een
  * opbouwstap of over een kaderwissel heen in twee shots — zijn één pagina:
@@ -173,7 +150,11 @@ export async function richtGraphics(
     const items = await lezer(bronPad, moment);
     const genoemd = focusPunten(items, woorden, van, tot);
     const titel = items.find((x) => x.titel)?.box;
-    const basis = genoemd.length >= 2 ? genoemd : leesvolgordePunten(items, van, tot);
+    // Noemt de spreker de blokken niet, dan is er geen reden om naar een blok
+    // te gaan: de rustige push-in op de hele graphic blijft staan. Blokken
+    // aflopen in leesvolgorde (rondes 9-13) sneed de buurblokken af terwijl de
+    // spreker het over iets anders had.
+    const basis = genoemd;
     let punten = basis;
     // Na het laatste blok terug naar het hele beeld als de pagina daarna nog
     // blijft staan: in trainingsronde 10 bleef de zoom op blok 3 hangen terwijl
@@ -187,10 +168,9 @@ export async function richtGraphics(
       log(`graphic ${van.toFixed(1)}–${tot.toFixed(1)} s: ${items.length} blok(ken) gelezen, ${genoemd.length} genoemd — geen gerichte zoom`);
       continue;
     }
-    if (genoemd.length < 2) log(`graphic ${van.toFixed(1)}–${tot.toFixed(1)} s: ${genoemd.length} genoemd → zoom in leesvolgorde langs ${basis.length} blokken`);
     for (const st of pagina) st.sc.focus = punten;
     gericht++;
-    log(`graphic ${van.toFixed(1)}–${tot.toFixed(1)} s: ${genoemd.length >= 2 ? `${genoemd.length} punten gericht` : 'leesvolgorde'}${titel ? ', titel blijft in beeld' : ''}${punten.length > basis.length ? ', daarna terug naar het geheel' : ''} (${items.filter((i) => !i.titel).map((i) => i.tekst).join(' / ')})`);
+    log(`graphic ${van.toFixed(1)}–${tot.toFixed(1)} s: ${genoemd.length} punten gericht${titel ? ', titel blijft in beeld' : ''}${punten.length > basis.length ? ', daarna terug naar het geheel' : ''} (${items.filter((i) => !i.titel).map((i) => i.tekst).join(' / ')})`);
   }
   return gericht;
 }
