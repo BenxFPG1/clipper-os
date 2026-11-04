@@ -1624,6 +1624,11 @@ async function verwerk(job: Job) {
           for (const ps of zoek) {
             const seg = segmenten.find((sg) => sg.volgorde === ps.volgorde);
             if (!seg || seg.planStart === undefined) continue;
+            // Alleen het eerste deel van een plan-shot begint met de kop van het
+            // fragment. Een vervolgdeel (1.1 na een weggeknipte pauze) erft het
+            // fragment, en zette zijn begin anders terug naar de hele zin: één
+            // stuk over vijf camerawissels (ambulanceclip, ronde 7).
+            if (segmenten.some((sg) => Math.floor(sg.volgorde) === Math.floor(seg.volgorde) && sg.volgorde < seg.volgorde)) continue;
             // Staat de kop in de bron op de knip, dan zit hij in de montage en
             // verstond het controlemodel hem gewoon niet: niets verschuiven.
             const fragment = (seg as { transcript_fragment?: string }).transcript_fragment;

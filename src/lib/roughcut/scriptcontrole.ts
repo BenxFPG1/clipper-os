@@ -203,8 +203,11 @@ export async function controleerScript(
     }
 
     // Per segment: vind de kop van zijn fragment terug in wat er klinkt.
+    // Alleen het eerste deel van een plan-shot hoort met de kop te beginnen;
+    // vervolgdelen (1.1, 1.01) erven het fragment.
     const perShot = segmenten
       .filter((sg) => sg.transcript_fragment && sg.transcript_fragment.length > 10)
+      .filter((sg) => !segmenten.some((x) => Math.floor(x.volgorde) === Math.floor(sg.volgorde) && x.volgorde < sg.volgorde))
       .map((sg) => {
         const idx = vindKopIndex(sg.transcript_fragment as string, woorden);
         return {
