@@ -928,6 +928,10 @@ async function verwerk(job: Job) {
     // op de huidige segmenten uitgerekend zodat ze elke tijdlijnverschuiving
     // volgen.
     const planKaarten = () => planKaartenOpTijdlijn(segmenten, clip.kaarten ?? [], hookTot, bronWoorden);
+    // De contextkaart alleen als er niet vlak daarna al een plankaart komt:
+    // hook, context en plankaart in de eerste zeven seconden is een rij
+    // bordjes in plaats van een clip (ambulanceclip, ronde 5).
+    const metContext = () => Boolean(clip.context_kaart) && !planKaarten().some((k) => k.start < hookTot + 0.3 + 2.2 + 3);
     // Gevuld door de retentie-editor verderop; de re-hookkaart gaat mee in de overlays.
     let retentie: RetentieResultaat | null = null;
     let retentieKaarten: Kaart[] = [];
@@ -953,7 +957,7 @@ async function verwerk(job: Job) {
 
       // De contextkaart (één regel situering, uit het plan) komt direct na de
       // hook — kort, want de hook heeft de belofte al gedaan.
-      if (clip.context_kaart) {
+      if (clip.context_kaart && metContext()) {
         const pad = join(kaartMap, `c${nummer}-context.png`);
         await tekenKaart(clip.context_kaart, pad, stijl);
         overlays.push({ pad, start: hookTot + 0.3, end: Math.min(totaal, hookTot + 0.3 + 2.2) });
@@ -1012,7 +1016,7 @@ async function verwerk(job: Job) {
       const totaal = segmenten.reduce((t, sg) => t + (sg.end - sg.start), 0);
       const vast: Kaart[] = [
         ...(hookTot > 0 ? [{ start: 0, end: hookTot }] : []),
-        ...(clip.context_kaart ? [{ start: hookTot + 0.3, end: Math.min(totaal, hookTot + 2.5), tekst: clip.context_kaart }] : []),
+        ...(clip.context_kaart && metContext() ? [{ start: hookTot + 0.3, end: Math.min(totaal, hookTot + 2.5), tekst: clip.context_kaart }] : []),
         ...uitvalKaarten(totaal).map((k) => ({ start: k.seconde, end: Math.min(totaal, k.seconde + 2), tekst: k.tekst })),
         ...planKaarten(),
       ];
@@ -1319,7 +1323,7 @@ async function verwerk(job: Job) {
     const sfxKaarten = () => {
       const totaal = segmenten.reduce((t, sg) => t + (sg.end - sg.start), 0);
       return [
-        ...(clip.context_kaart ? [{ start: hookTot + 0.3, end: hookTot + 2.5, tekst: clip.context_kaart }] : []),
+        ...(clip.context_kaart && metContext() ? [{ start: hookTot + 0.3, end: hookTot + 2.5, tekst: clip.context_kaart }] : []),
         ...uitvalKaarten(totaal).map((k) => ({ start: k.seconde, end: k.seconde + 2, tekst: k.tekst })),
         ...planKaarten(),
       ];

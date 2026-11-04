@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Maakt rechtenvrije hiphopbeats voor assets/muziek/luchtig/ (comedy).
+Maakt een rechtenvrije hiphopbeat voor assets/muziek/luchtig/ (comedy).
 
 Alles wordt hier gesynthetiseerd, er komt geen sample van buiten aan te pas.
 De middentonen blijven bewust leeg: daar zit de stem. Vaste seed, dus dezelfde
@@ -131,8 +131,3 @@ def bewaar(x, naam):
 bewaar(beat(84, 0.32, [
     [57, 67, 72, 76], [53, 64, 69, 72], [50, 65, 69, 72], [52, 62, 68, 71],
 ], [(0, 2.2), (7, 1.2)], [0, 7, 10], 7), 'droog-84.mp3')
-
-# Iets opener en sneller: voor de wat vrolijkere clips.
-bewaar(beat(92, 0.26, [
-    [48, 64, 67, 71], [57, 64, 67, 72], [53, 64, 69, 72], [55, 65, 67, 71],
-], [(0, 1.4), (6, 1.0), (11, 1.0)], [0, 3, 8, 10], 11), 'bounce-92.mp3')
