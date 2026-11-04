@@ -14,7 +14,7 @@ import { join } from 'node:path';
 import { resolveBinary } from '../src/lib/ingest/binaries';
 import { pythonMetOpenCV } from '../src/lib/python';
 import type { Shot } from '../src/lib/roughcut';
-import { actieveSprekers, herstelSprekerKader, meetSprekers, pasSprekersToe, tweeshotPast, voegDubbeleSamen, type SprekerMeting, type SprekerPersoon } from '../src/lib/roughcut/sprekers';
+import { actieveSprekers, herstelSprekerKader, meetSprekers, pasSprekersToe, profielCorrectie, tweeshotPast, voegDubbeleSamen, type SprekerMeting, type SprekerPersoon } from '../src/lib/roughcut/sprekers';
 import { keurGezichtDetail, type GezichtPuntMeting } from '../src/lib/roughcut/keuring';
 import { besluitScherpBegin, pasScherpBeginToe, scherpteMeterVia, type ScherpteMeting } from '../src/lib/roughcut/scherpbegin';
 import { instelling } from '../src/lib/roughcut/instellingen';
@@ -147,6 +147,15 @@ async function main() {
     toets('kader half richting het achterhoofd', Math.abs((d.focusX ?? 0) - 0.5375) < 0.002, String(d.focusX));
     toets('achterhoofd (~0,40) en gezicht in de uitsnede', u.x0 <= 0.405 && u.x1 >= 0.6, JSON.stringify({ zoom, x0: u.x0, x1: u.x1 }));
     toets('kijkruimte: meer ruimte vóór het gezicht dan erachter', u.x1 - 0.558 > 0.517 - u.x0 - 0.05, JSON.stringify(u));
+    // Per moment: over het hele standpunt frontaal (vakmidden = x), alleen in
+    // dit deel en profil. De mediaan over alles zag het profiel niet.
+    const M = persoon(0, 0, 0.558, 0, 8, praat);
+    M.breedte = 0.097;
+    M.xVak = 0.556;
+    M.monsters = M.monsters.map((m) => [m[0], m[1], m[2], 50, m[0] >= 5 ? 0.517 : 0.556] as SprekerPersoon['monsters'][number]);
+    const vroeg = profielCorrectie(M, 0, 4);
+    const laat = profielCorrectie(M, 5, 8);
+    toets('profiel per moment: alleen in het deel waar hij en profil zit', vroeg.schuif === 0 && Math.abs(laat.schuif + 0.0205) < 1e-6 && (laat.zoomPlafond ?? 9) < 1.3, JSON.stringify({ vroeg, laat }));
     // Frontaal (verschil < kwart vak): niets verandert.
     const F = persoon(0, 0, 0.361, 0, 4, praat);
     F.xVak = 0.352;

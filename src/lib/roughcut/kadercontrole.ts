@@ -217,7 +217,10 @@ export function corrigeerKadrering(
   // mag de zoom en de hoogte bepalen; de horizontale plek is geen kwestie van
   // smaak maar van meten.
   for (const shot of shots) {
-    if (shot.gezicht) shot.focusX = Math.min(1, Math.max(0, shot.gezicht.x));
+    // Bij een hoofd en profil hoort daar de verschuiving richting het
+    // achterhoofd bij (sprekers.ts, profielCorrectie); zonder die liep het
+    // achterhoofd weer de rand uit.
+    if (shot.gezicht) shot.focusX = Math.min(1, Math.max(0, shot.gezicht.x + (shot.profielSchuif ?? 0)));
   }
 
   return correcties;
@@ -322,7 +325,7 @@ export function pasVisueleCorrectieToe(
       shot.zoom = Math.max(1, (shot.zoom ?? 1) - stap * 1.5);
       return `zoom naar ${(shot.zoom ?? 1).toFixed(2)}`;
     case 'inzoomen':
-      shot.zoom = Math.min(1.7, (shot.zoom ?? 1) + stap * 1.5);
+      shot.zoom = Math.min(1.7, shot.zoomPlafond ?? 1.7, (shot.zoom ?? 1) + stap * 1.5);
       return `zoom naar ${(shot.zoom ?? 1).toFixed(2)}`;
     case 'hoger':
       shot.focusY = Math.max(0.15, (shot.focusY ?? 0.5) - stap);

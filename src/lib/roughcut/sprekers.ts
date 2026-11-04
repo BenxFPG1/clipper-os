@@ -33,7 +33,7 @@ import type { BronWoord } from './woorden';
  */
 
 /** Per monster: tijd, positie, mondbeweging en (optioneel) de scherpte van het gezicht. */
-export type SprekerMonster = [t: number, x: number, mond: number | null, scherpte?: number];
+export type SprekerMonster = [t: number, x: number, mond: number | null, scherpte?: number, vakX?: number];
 export type SprekerPersoon = {
   id: number;
   scene: number;
@@ -263,9 +263,18 @@ export function tweeshotPast(p: { x: number; breedte: number }, q: { x: number; 
  * ~0,40. Frontaal ligt het verschil onder een kwart vakbreedte (0,01 op 0,06)
  * en verandert er niets.
  */
-export function profielCorrectie(p: SprekerPersoon): { schuif: number; zoomPlafond?: number } {
-  if (p.xVak === undefined || p.breedte <= 0) return { schuif: 0 };
-  const d = p.xVak - p.x;
+export function profielCorrectie(p: SprekerPersoon, van = -Infinity, tot = Infinity): { schuif: number; zoomPlafond?: number } {
+  if (p.breedte <= 0) return { schuif: 0 };
+  // Per moment binnen het deel: over het hele standpunt is iemand meestal
+  // frontaal, en dan verdween het profiel in de mediaan (kassa: 0,570 bleef
+  // staan, terwijl hij op dat moment en profil zat).
+  const verschillen = p.monsters
+    .filter((m) => m[0] >= van && m[0] <= tot && typeof m[4] === 'number')
+    .map((m) => m[4]! - m[1])
+    .sort((a, b) => a - b);
+  const d = verschillen.length
+    ? verschillen[Math.floor(verschillen.length / 2)]
+    : p.xVak !== undefined ? p.xVak - p.x : 0;
   if (Math.abs(d) < 0.25 * p.breedte) return { schuif: 0 };
   // Nodige halve uitsnedebreedte rond het nieuwe midden: het achterhoofd
   // (anderhalf keer het verschil voorbij het vakmidden) plus het gezicht.
@@ -385,6 +394,7 @@ export function pasSprekersToe(
     sh.spoorY = undefined;
     sh.maxStap = undefined;
     sh.zoomPlafond = undefined;
+    sh.profielSchuif = undefined;
     if (!st.persoon) return;
     const pannen = d.pannen ?? [];
     sh.sprekerBepaald = true;
@@ -407,9 +417,10 @@ export function pasSprekersToe(
     // Daarom: half richting het vakmidden schuiven (de kijkruimte blijft aan
     // de kant waar hij heen kijkt) en niet verder inzoomen dan dat hoofd plus
     // achterhoofd in de uitsnede past.
-    const profiel = profielCorrectie(st.persoon);
+    const profiel = profielCorrectie(st.persoon, d.van, d.tot);
     sh.focusX = st.persoon.x + profiel.schuif;
     sh.zoomPlafond = profiel.zoomPlafond;
+    sh.profielSchuif = profiel.schuif || undefined;
     sh.focusW = st.persoon.breedte;
     sh.focusWmin = st.persoon.breedte;
     sh.personen = Math.max(1, gezichten);
@@ -420,16 +431,16 @@ export function pasSprekersToe(
     // pannen naar een volgende spreker. Nooit tussen personen door glijden.
     const punten: { t: number; x: number }[] = [];
     const volg = (p: SprekerPersoon, van: number, tot: number) => {
-      const schuif = profielCorrectie(p).schuif;
+      const schuif = profielCorrectie(p, van, tot).schuif;
       for (const m of p.monsters) if (m[0] >= van && m[0] <= tot) punten.push({ t: m[0], x: m[1] + schuif });
     };
     let cursor = d.van;
     let wie = st.persoon;
     for (const pan of pannen) {
       volg(wie, cursor, pan.t - PAN / 2);
-      punten.push({ t: pan.t - PAN / 2, x: persoonX(wie, pan.t - PAN / 2) + profielCorrectie(wie).schuif });
+      punten.push({ t: pan.t - PAN / 2, x: persoonX(wie, pan.t - PAN / 2) + profielCorrectie(wie, d.van, d.tot).schuif });
       wie = pan.naar.persoon ?? wie;
-      punten.push({ t: pan.t + PAN / 2, x: persoonX(wie, pan.t + PAN / 2) + profielCorrectie(wie).schuif });
+      punten.push({ t: pan.t + PAN / 2, x: persoonX(wie, pan.t + PAN / 2) + profielCorrectie(wie, d.van, d.tot).schuif });
       cursor = pan.t + PAN / 2;
     }
     volg(wie, cursor, d.tot);

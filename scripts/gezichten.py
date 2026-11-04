@@ -564,7 +564,8 @@ def sprekermeting(van, tot, stap):
                 sp.setdefault("kleur", []).append(gezichtskleur(beeld, (x, y, w, h)))
             # Scherpte van dit gezicht (4e veld): bij twee even waarschijnlijke
             # sprekers wint het gezicht dat in focus is.
-            sp["monsters"].append([round(t, 3), round(mid, 4), energie, round(scherpte(beeld, (x, y, w, h)), 1)])
+            # 5e veld: midden van het detectievak (profiel per moment, zie xVak).
+            sp["monsters"].append([round(t, 3), round(mid, 4), energie, round(scherpte(beeld, (x, y, w, h)), 1), round((x + w / 2) / kb, 4)])
     afgesloten.extend(sporen)
     med = lambda xs: sorted(xs)[len(xs) // 2]
     personen = []

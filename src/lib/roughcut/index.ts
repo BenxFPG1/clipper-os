@@ -47,6 +47,8 @@ export type Shot = {
   maxStap?: number;
   /** Hoogste zoom waarbij het hele hoofd (ook het achterhoofd bij een profiel) in beeld blijft. */
   zoomPlafond?: number;
+  /** Hoofd en profil: zoveel schuift het kader van het gezicht richting het achterhoofd. */
+  profielSchuif?: number;
   /**
    * De bron is hier zelf een split screen; dit is het deel [van, tot] waar de
    * spreker in staat. Daarbuiten kadreren levert een halve persoon plus een
