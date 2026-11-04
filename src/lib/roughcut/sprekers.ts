@@ -339,8 +339,20 @@ export function pasSprekersToe(
       vorige.tot = grens;
       wissels.push({ t: grens, soort: 'knip' });
       delen.push({ van: grens, tot: s.tot, stuk: s });
+    } else if (
+      vorige.stuk.persoon && s.persoon &&
+      Math.abs(persoonX(vorige.stuk.persoon, s.van) - persoonX(s.persoon, s.van)) >= instelling('SPREKER_PAN_MAX_SPRONG') &&
+      s.van - vorige.van >= minDeel && s.tot - s.van >= minDeel
+    ) {
+      // Geen woordgrens, maar ver uit elkaar: toch een beeldknip (het geluid
+      // loopt door). Een pan zwiepte over lege muur, en het hele deel erfde de
+      // zoom van de eerste spreker: stond die op de rand (pet-man op 0,91 →
+      // zoom 1,78), dan viel bij de tweede het achterhoofd buiten beeld.
+      vorige.tot = s.van;
+      wissels.push({ t: s.van, soort: 'knip' });
+      delen.push({ van: s.van, tot: s.tot, stuk: s });
     } else {
-      // Geen woordgrens: in hetzelfde deel blijven en snel pannen.
+      // Geen woordgrens en dichtbij: in hetzelfde deel blijven en snel pannen.
       wissels.push({ t: s.van, soort: 'pan' });
       vorige.tot = s.tot;
       vorige.pannen = [...(vorige.pannen ?? []), { t: s.van, naar: s }];

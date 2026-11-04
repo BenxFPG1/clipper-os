@@ -169,6 +169,8 @@ const STANDAARD = {
   SPREKER_MIN_STANDPUNT: 0.25,
   SPREKER_WOORDGRENS_MARGE: 0.4,
   SPREKER_PAN_DUUR: 0.3,
+  /** Liggen twee sprekers verder uit elkaar dan dit (beeldbreedte), dan een beeldknip in plaats van een pan. */
+  SPREKER_PAN_MAX_SPRONG: 0.22,
   SPREKER_TWEESHOT_MAX: 0.3,
   BRON_TRANSCRIPTIE_TIJDFACTOR: 3,
   ONDERTITEL_RAND: 7,

@@ -220,12 +220,22 @@ async function main() {
     const grens = metWoorden.delen[1]?.start ?? -1;
     toets('harde knip', metWoorden.delen.length === 2 && metWoorden.wissels[0]?.soort === 'knip', JSON.stringify(metWoorden.wissels));
     toets('knip valt in een woordgat', woorden.every((w) => !(grens > w.s + 0.01 && grens < w.e - 0.01)) && Math.abs(grens - wissel) <= instelling('SPREKER_WOORDGRENS_MARGE') + 1e-6, String(grens));
-    const zonder = pasSprekersToe(shot(0, 10), st, null);
-    toets('zonder woordgrens: één deel met een snelle pan', zonder.delen.length === 1 && zonder.wissels[0]?.soort === 'pan');
+    // Ver uit elkaar zonder woordgrens: toch een beeldknip, elk deel zijn
+    // eigen kader en zoom (een pan zwiepte over lege muur en erfde de zoom).
+    const ver = pasSprekersToe(shot(0, 10), st, null);
+    toets('ver uit elkaar zonder woordgrens: beeldknip op het wisselmoment', ver.delen.length === 2 && ver.wissels[0]?.soort === 'knip' && Math.abs((ver.delen[1]?.start ?? -1) - wissel) < 1e-6, JSON.stringify(ver.wissels));
+    toets('beeldknip: elk deel op zijn eigen spreker, zonder pan', Math.abs((ver.delen[0].focusX ?? 0) - 0.3) < 0.02 && Math.abs((ver.delen[1].focusX ?? 0) - 0.7) < 0.02 && !ver.delen.some((d) => (d.spoor ?? []).some((p) => p.x > 0.32 && p.x < 0.68)), JSON.stringify(ver.delen.map((d) => d.focusX)));
+    // Dichtbij zonder woordgrens: een snelle pan.
+    const A2 = persoon(0, 0, 0.4, 0, 10, (t) => (t < 5 ? praat(t) : rustig(t)));
+    const B2 = persoon(1, 0, 0.55, 0, 10, (t) => (t >= 5 ? praat(t) : rustig(t)));
+    const st2 = actieveSprekers({ van: 0, tot: 10, stap: STAP, personen: [A2, B2], knippen: [] }, spraak).filter((x) => !x.tweeshot);
+    const wissel2 = st2[1]?.van ?? 5;
+    const zonder = pasSprekersToe(shot(0, 10), st2, null);
+    toets('dichtbij zonder woordgrens: één deel met een snelle pan', st2.length === 2 && zonder.delen.length === 1 && zonder.wissels[0]?.soort === 'pan', JSON.stringify(st2.map((x) => [x.van, x.tot, x.persoon?.id])) + JSON.stringify(zonder.wissels));
     const sp = zonder.delen[0].spoor ?? [];
-    const voor = sp.filter((p) => p.t < wissel - 0.2).every((p) => Math.abs(p.x - 0.3) < 0.02);
-    const na = sp.filter((p) => p.t > wissel + 0.2).every((p) => Math.abs(p.x - 0.7) < 0.02);
-    const tussen = sp.filter((p) => p.x > 0.32 && p.x < 0.68);
+    const voor = sp.filter((p) => p.t < wissel2 - 0.2).every((p) => Math.abs(p.x - 0.4) < 0.02);
+    const na = sp.filter((p) => p.t > wissel2 + 0.2).every((p) => Math.abs(p.x - 0.55) < 0.02);
+    const tussen = sp.filter((p) => p.x > 0.41 && p.x < 0.54);
     const panDuur = tussen.length ? Math.max(...tussen.map((p) => p.t)) - Math.min(...tussen.map((p) => p.t)) : 0;
     toets('pan: vóór op A, na op B, en snel (≤ 0,35 s tussen de twee)', voor && na && panDuur <= 0.35, `duur ${panDuur.toFixed(2)}`);
   }
