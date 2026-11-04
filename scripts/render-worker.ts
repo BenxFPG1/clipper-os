@@ -1386,6 +1386,22 @@ async function verwerk(job: Job) {
         console.log(`     retentie: ${w.hersteld} kaderwissel(s) teruggezet na kadercorrectie${w.niet ? `, ${w.niet} niet mogelijk binnen het kader` : ''}`);
       }
     }
+    // Flits: begint een stuk een fractie vóór een camerawissel in de bron (de
+    // poort laat het geluid daar doorlopen), dan staat het oude standpunt een
+    // paar frames in beeld met het kader van het nieuwe. Die frames bevriezen
+    // op het eerste beeld na de wissel; het geluid loopt door.
+    {
+      const opTijdlijn = [...segmenten].sort((a, b) => a.volgorde - b.volgorde);
+      for (const sg of opTijdlijn.slice(1)) {
+        const knip = bronknippen.find((t) => t > sg.start + 0.005 && t < sg.start + 0.3 && t < sg.end - 0.5);
+        if (knip === undefined) continue;
+        const nieuw = { tot: Math.round((knip - sg.start + 0.04) * 1000) / 1000, bron: Math.round((knip + 0.04) * 1000) / 1000 };
+        if (sg.bevriesBegin?.bron === nieuw.bron) continue;
+        sg.bevriesBegin = nieuw;
+        console.log(`     flits: shot ${sg.volgorde} begint ${(knip - sg.start).toFixed(2)} s vóór een camerawissel; die frames bevroren op het nieuwe beeld`);
+      }
+    }
+
     // Zelfherstel op de spreker (sprekers.ts): de keuring "actieve spreker in
     // beeld" is meetkundig — gezicht in de bron, uitsnede uit de montage — en
     // kan dus vóór de render al. Staat het hoofd ergens ver buiten beeld of
@@ -1425,22 +1441,6 @@ async function verwerk(job: Job) {
         } catch (e) {
           console.log(`     scherp begin overgeslagen (${(e as Error).message.slice(0, 80)})`);
         }
-      }
-    }
-
-    // Flits: begint een stuk een fractie vóór een camerawissel in de bron (de
-    // poort laat het geluid daar doorlopen), dan staat het oude standpunt een
-    // paar frames in beeld met het kader van het nieuwe. Die frames bevriezen
-    // op het eerste beeld na de wissel; het geluid loopt door.
-    {
-      const opTijdlijn = [...segmenten].sort((a, b) => a.volgorde - b.volgorde);
-      for (const sg of opTijdlijn.slice(1)) {
-        const knip = bronknippen.find((t) => t > sg.start + 0.005 && t < sg.start + 0.3 && t < sg.end - 0.5);
-        if (knip === undefined) continue;
-        const nieuw = { tot: Math.round((knip - sg.start + 0.04) * 1000) / 1000, bron: Math.round((knip + 0.04) * 1000) / 1000 };
-        if (sg.bevriesBegin?.bron === nieuw.bron) continue;
-        sg.bevriesBegin = nieuw;
-        console.log(`     flits: shot ${sg.volgorde} begint ${(knip - sg.start).toFixed(2)} s vóór een camerawissel; die frames bevroren op het nieuwe beeld`);
       }
     }
 

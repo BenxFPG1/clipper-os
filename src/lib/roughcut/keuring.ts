@@ -257,7 +257,10 @@ export async function keurGezichtDetail(
   // en daarna elke anderhalve seconde.
   const punten: { seg: Shot; t: number }[] = [];
   for (const seg of segmenten) {
-    for (let t = seg.start + 0.15; t < seg.end - 0.1; t += 1.5) punten.push({ seg, t: Math.round(t * 100) / 100 });
+    // Een bevroren begin (flits, scherp begin) toont die frames niet: daar
+    // meten zette het kader op een gezicht dat nooit in beeld komt.
+    const vanaf = seg.start + (seg.bevriesBegin?.tot ?? 0);
+    for (let t = vanaf + 0.15; t < seg.end - 0.1; t += 1.5) punten.push({ seg, t: Math.round(t * 100) / 100 });
   }
   if (punten.length === 0) {
     return metFout({ naam: 'actieve spreker in beeld', goed: null, detail: 'te kort om te toetsen' });
