@@ -437,6 +437,28 @@ async function main() {
       }
     }
 
+    console.log('flits: bevroren begin op een later stuk');
+    {
+      const uitPad = join(map, 'flits.mp4');
+      const flitsShots: Shot[] = [
+        { volgorde: 1, start: 1.0, end: 4.0, functie: 'hook' },
+        { volgorde: 2, start: 5.0, end: 7.0, functie: 'setup', bevriesBegin: { tot: 0.3, bron: 5.3 } },
+      ];
+      const log: string[] = [];
+      try {
+        await maakRuweMontage({ sourceUrl: 'lokaal://test', shots: flitsShots, alGesegmenteerd: true, outputPad: uitPad, werkmap, kader: 'vullend', ruisvloerDb: -60, maxBytes: 50 * 1024 * 1024, onVoortgang: (m) => log.push(m) });
+        const p = probe(uitPad);
+        toets('lengte ongewijzigd (5,0 s)', Math.abs(p.duur - 5.0) < 0.15, `${p.duur}s`);
+        toets('logregel "flits: shot 2 eerste 0.30 s bevroren"', log.some((m) => /flits: shot 2 eerste 0\.30 s bevroren op bron 5\.30 s/.test(m)), log.join(' | '));
+        const grijsN = (n: number) => spawnSync(resolveBinary('ffmpeg'), ['-v', 'error', '-i', uitPad, '-vf', `select=eq(n\\,${n}),scale=64:36`, '-frames:v', '1', '-f', 'rawvideo', '-pix_fmt', 'gray', '-'], { maxBuffer: 1e7 }).stdout as Buffer;
+        const dd = (a: Buffer, b: Buffer) => (a.length && a.length === b.length ? a.reduce((t, x, i) => t + Math.abs(x - b[i]), 0) / a.length : 255);
+        toets('begin van shot 2 stilstaand (frame 75 = frame 81)', dd(grijsN(75), grijsN(81)) < 1, dd(grijsN(75), grijsN(81)).toFixed(2));
+        toets('daarna beweegt shot 2 weer (frame 100 ≠ frame 75)', dd(grijsN(75), grijsN(100)) > 1, dd(grijsN(75), grijsN(100)).toFixed(2));
+      } catch (e) {
+        toets('render met flits-bevriezing slaagt', false, (e as Error).message.slice(-500));
+      }
+    }
+
     // 5. Encode: het eindbestand op crf 17 / medium, het tussenbestand bijna
     //    verliesvrij. x264 schrijft zijn instellingen als tekst in de stroom.
     console.log('encode-instellingen');

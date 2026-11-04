@@ -105,7 +105,8 @@ export type Shot = {
   /**
    * Scherp begin (scherpbegin.ts): de eerste `tot` seconden van dit shot
    * tonen het (verwerkte) frame op brontijd `bron` bevroren; het geluid loopt
-   * gewoon door. Alleen op het eerste shot van de clip.
+   * gewoon door. Op het eerste shot (scherp begin) of op een stuk dat een
+   * fractie vóór een camerawissel begint (flits).
    */
   bevriesBegin?: { tot: number; bron: number };
   beeld_effect?: string;
@@ -581,21 +582,26 @@ export async function maakRuweMontage(opties: {
   // eerste scherpe frame (bevroren). Uit de al verwerkte keten [v0] gepakt,
   // dus met hetzelfde kader en dezelfde kleur; daarna loopt het beeld door
   // vanaf precies dat frame — geen sprong.
-  const bevries = gesorteerd[0]?.bevriesBegin;
-  if (bevries && bevries.tot > 0 && bevries.tot < gesorteerd[0].end - gesorteerd[0].start - 0.2) {
-    const rel = Math.max(0, bevries.bron - gesorteerd[0].start);
-    const frameDuur = 1 / (Number(fpsUit) || 25);
-    const laatste = delenVideo[0].lastIndexOf('[v0]');
-    if (laatste >= 0) {
-      delenVideo[0] =
-        `${delenVideo[0].slice(0, laatste)}[v0x]${delenVideo[0].slice(laatste + 4)}` +
-        `;[v0x]split=2[v0p][v0q]` +
-        `;[v0p]trim=start=${rel.toFixed(3)}:duration=${frameDuur.toFixed(4)},setpts=PTS-STARTPTS,tpad=stop_mode=clone:stop_duration=${Math.max(0, bevries.tot - frameDuur).toFixed(3)}[v0f]` +
-        `;[v0q]trim=start=${bevries.tot.toFixed(3)},setpts=PTS-STARTPTS[v0r]` +
-        `;[v0f][v0r]concat=n=2:v=1:a=0,setsar=1[v0]`;
-      log(`scherp begin: eerste ${bevries.tot.toFixed(2)} s bevroren op bron ${bevries.bron.toFixed(2)} s`);
-    }
-  }
+  // Ook elders in de clip: een stuk dat een fractie vóór een camerawissel
+  // begint, bevriest die frames op het eerste beeld na de wissel.
+  const frameDuur = 1 / (Number(fpsUit) || 25);
+  gesorteerd.forEach((seg, i) => {
+    const bevries = seg.bevriesBegin;
+    if (!bevries || bevries.tot <= 0 || bevries.tot >= seg.end - seg.start - 0.2) return;
+    const rel = Math.max(0, bevries.bron - seg.start);
+    const label = `[v${i}]`;
+    const laatste = delenVideo[i].lastIndexOf(label);
+    if (laatste < 0) return;
+    delenVideo[i] =
+      `${delenVideo[i].slice(0, laatste)}[v${i}x]${delenVideo[i].slice(laatste + label.length)}` +
+      `;[v${i}x]split=2[v${i}p][v${i}q]` +
+      `;[v${i}p]trim=start=${rel.toFixed(3)}:duration=${frameDuur.toFixed(4)},setpts=PTS-STARTPTS,tpad=stop_mode=clone:stop_duration=${Math.max(0, bevries.tot - frameDuur).toFixed(3)}[v${i}f]` +
+      `;[v${i}q]trim=start=${bevries.tot.toFixed(3)},setpts=PTS-STARTPTS[v${i}r]` +
+      `;[v${i}f][v${i}r]concat=n=2:v=1:a=0,setsar=1[v${i}]`;
+    log(i === 0
+      ? `scherp begin: eerste ${bevries.tot.toFixed(2)} s bevroren op bron ${bevries.bron.toFixed(2)} s`
+      : `flits: shot ${seg.volgorde} eerste ${bevries.tot.toFixed(2)} s bevroren op bron ${bevries.bron.toFixed(2)} s`);
+  });
   const beeldKoppel = gesorteerd.map((_, i) => `[v${i}]`).join('');
   let videoFilter = `${delenVideo.join(';')};${beeldKoppel}concat=n=${gesorteerd.length}:v=1:a=0[vuit]`;
   let filter = delenAudio.join(';');

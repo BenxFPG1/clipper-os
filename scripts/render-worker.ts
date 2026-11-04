@@ -707,7 +707,7 @@ async function verwerk(job: Job) {
     // Actieve spreker (sprekers.ts): bij meerdere mensen in beeld of een bron
     // die zelf tussen camera's knipt, volgt het kader wie er praat — per
     // camerastandpunt, met een knip op de bronknip of op een woordgrens.
-    await pasActieveSprekerToe(bronPad, segmenten, bronWoorden);
+    const bronknippen = await pasActieveSprekerToe(bronPad, segmenten, bronWoorden);
 
     // Beweegt de spreker binnen een shot, of neemt de ander halverwege het
     // woord over? Dan de uitsnede laten meelopen in plaats van uitzoomen.
@@ -1425,6 +1425,22 @@ async function verwerk(job: Job) {
         } catch (e) {
           console.log(`     scherp begin overgeslagen (${(e as Error).message.slice(0, 80)})`);
         }
+      }
+    }
+
+    // Flits: begint een stuk een fractie vóór een camerawissel in de bron (de
+    // poort laat het geluid daar doorlopen), dan staat het oude standpunt een
+    // paar frames in beeld met het kader van het nieuwe. Die frames bevriezen
+    // op het eerste beeld na de wissel; het geluid loopt door.
+    {
+      const opTijdlijn = [...segmenten].sort((a, b) => a.volgorde - b.volgorde);
+      for (const sg of opTijdlijn.slice(1)) {
+        const knip = bronknippen.find((t) => t > sg.start + 0.005 && t < sg.start + 0.3 && t < sg.end - 0.5);
+        if (knip === undefined) continue;
+        const nieuw = { tot: Math.round((knip - sg.start + 0.04) * 1000) / 1000, bron: Math.round((knip + 0.04) * 1000) / 1000 };
+        if (sg.bevriesBegin?.bron === nieuw.bron) continue;
+        sg.bevriesBegin = nieuw;
+        console.log(`     flits: shot ${sg.volgorde} begint ${(knip - sg.start).toFixed(2)} s vóór een camerawissel; die frames bevroren op het nieuwe beeld`);
       }
     }
 
@@ -2651,20 +2667,21 @@ async function meetSpoor(bronPad: string, segmenten: Shot[]): Promise<number> {
  * een solo talking head blijft bij de bestaande, uitgebreid getoetste
  * meting. Splitst shots (in `segmenten`) op camera- en sprekerwissels.
  */
-async function pasActieveSprekerToe(bronPad: string, segmenten: Shot[], woorden: import('../src/lib/roughcut/woorden').BronWoord[] | null): Promise<void> {
-  if (process.env.SPREKERDETECTIE === '0') return;
+async function pasActieveSprekerToe(bronPad: string, segmenten: Shot[], woorden: import('../src/lib/roughcut/woorden').BronWoord[] | null): Promise<number[]> {
+  const bronknippen: number[] = [];
+  if (process.env.SPREKERDETECTIE === '0') return bronknippen;
   const kandidaten = segmenten.filter((s) => s.end - s.start >= 1 && !s.focus && !s.sprekerBepaald);
-  if (kandidaten.length === 0) return;
+  if (kandidaten.length === 0) return bronknippen;
   let metingen: SprekerMeting[];
   try {
     metingen = await meetSprekers(bronPad, kandidaten.map((s) => ({ van: s.start, tot: s.end })), pythonMetOpenCV());
   } catch (e) {
     console.log(`     sprekers: meting mislukt (${(e as Error).message.slice(0, 120)}); oude gezichtsmeting`);
-    return;
+    return bronknippen;
   }
   if (metingen.length !== kandidaten.length) {
     console.log(`     sprekers: meting onvolledig (${metingen.length}/${kandidaten.length}); oude gezichtsmeting`);
-    return;
+    return bronknippen;
   }
   let gezichtenMax = 0;
   const wisselTijden: string[] = [];
@@ -2688,16 +2705,20 @@ async function pasActieveSprekerToe(bronPad: string, segmenten: Shot[], woorden:
     // kan herkennen in plaats van het kader van de spreker te erven.
     const zonderSpreker = r.delen.length > 1 ? r.delen.filter((d) => !d.sprekerBepaald) : [];
     if (zonderSpreker.length) await vulGezichtsFocus(bronPad, zonderSpreker);
-    for (const w of r.wissels) wisselTijden.push(`${w.t.toFixed(1)} s ${w.soort}`);
+    for (const w of r.wissels) {
+      wisselTijden.push(`${w.t.toFixed(1)} s ${w.soort}`);
+      if (w.soort === 'bronknip') bronknippen.push(w.t);
+    }
   }
   if (toegepast === 0) {
     if (gezichtenMax > 0) console.log(`     sprekers: ${gezichtenMax} gezicht(en) per standpunt, geen bronknippen — oude gezichtsmeting`);
-    return;
+    return bronknippen;
   }
   console.log(
     `     sprekers: ${gezichtenMax} gezichten (max per standpunt), actieve spreker wisselt ${wisselTijden.length}× ` +
       `${wisselTijden.length ? `(op ${wisselTijden.slice(0, 12).join(', ')}${wisselTijden.length > 12 ? ', …' : ''})` : ''}; ${toegepast} shot(s) op de actieve spreker gekadreerd`,
   );
+  return bronknippen;
 }
 
 /**
