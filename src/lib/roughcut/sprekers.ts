@@ -39,6 +39,8 @@ export type SprekerPersoon = {
   scene: number;
   x: number;
   breedte: number;
+  /** Midden van het detectievak; wijkt bij een profiel af van x (de voorkant van het gezicht). */
+  xVak?: number;
   oog: number;
   top: number;
   hoogte: number;
@@ -255,6 +257,22 @@ export function tweeshotPast(p: { x: number; breedte: number }, q: { x: number; 
 }
 
 /** Positie van een persoon op tijd t (lineair tussen zijn monsters). */
+/**
+ * Kadercorrectie voor een hoofd en profil. Gemeten bij de kassa: x 0,558
+ * (landmarks), vakmidden 0,517, vakbreedte 0,097 — het achterhoofd liep tot
+ * ~0,40. Frontaal ligt het verschil onder een kwart vakbreedte (0,01 op 0,06)
+ * en verandert er niets.
+ */
+export function profielCorrectie(p: SprekerPersoon): { schuif: number; zoomPlafond?: number } {
+  if (p.xVak === undefined || p.breedte <= 0) return { schuif: 0 };
+  const d = p.xVak - p.x;
+  if (Math.abs(d) < 0.25 * p.breedte) return { schuif: 0 };
+  // Nodige halve uitsnedebreedte rond het nieuwe midden: het achterhoofd
+  // (anderhalf keer het verschil voorbij het vakmidden) plus het gezicht.
+  const half = 1.5 * Math.abs(d) + 0.75 * p.breedte;
+  return { schuif: d / 2, zoomPlafond: Math.max(1, (1080 / (1920 * (16 / 9))) / (2 * half)) };
+}
+
 export function persoonX(p: SprekerPersoon, t: number): number {
   const ms = p.monsters;
   if (ms.length === 0) return p.x;
@@ -366,6 +384,7 @@ export function pasSprekersToe(
     sh.spoor = undefined;
     sh.spoorY = undefined;
     sh.maxStap = undefined;
+    sh.zoomPlafond = undefined;
     if (!st.persoon) return;
     const pannen = d.pannen ?? [];
     sh.sprekerBepaald = true;
@@ -382,7 +401,15 @@ export function pasSprekersToe(
       sh.gezicht = { x: (links + rechts) / 2, breedte: rechts - links, top: Math.min(p.top, q.top), hoogte: Math.max(p.top + p.hoogte, q.top + q.hoogte) - Math.min(p.top, q.top) };
       return;
     }
-    sh.focusX = st.persoon.x;
+    // Hoofd en profil: x staat op de voorkant van het gezicht, het achterhoofd
+    // zit verder richting het vakmidden en daarachter. Op x centreren met een
+    // strakke zoom sneed het achterhoofd weg (vragensteller bij de kassa).
+    // Daarom: half richting het vakmidden schuiven (de kijkruimte blijft aan
+    // de kant waar hij heen kijkt) en niet verder inzoomen dan dat hoofd plus
+    // achterhoofd in de uitsnede past.
+    const profiel = profielCorrectie(st.persoon);
+    sh.focusX = st.persoon.x + profiel.schuif;
+    sh.zoomPlafond = profiel.zoomPlafond;
     sh.focusW = st.persoon.breedte;
     sh.focusWmin = st.persoon.breedte;
     sh.personen = Math.max(1, gezichten);
@@ -393,15 +420,16 @@ export function pasSprekersToe(
     // pannen naar een volgende spreker. Nooit tussen personen door glijden.
     const punten: { t: number; x: number }[] = [];
     const volg = (p: SprekerPersoon, van: number, tot: number) => {
-      for (const m of p.monsters) if (m[0] >= van && m[0] <= tot) punten.push({ t: m[0], x: m[1] });
+      const schuif = profielCorrectie(p).schuif;
+      for (const m of p.monsters) if (m[0] >= van && m[0] <= tot) punten.push({ t: m[0], x: m[1] + schuif });
     };
     let cursor = d.van;
     let wie = st.persoon;
     for (const pan of pannen) {
       volg(wie, cursor, pan.t - PAN / 2);
-      punten.push({ t: pan.t - PAN / 2, x: persoonX(wie, pan.t - PAN / 2) });
+      punten.push({ t: pan.t - PAN / 2, x: persoonX(wie, pan.t - PAN / 2) + profielCorrectie(wie).schuif });
       wie = pan.naar.persoon ?? wie;
-      punten.push({ t: pan.t + PAN / 2, x: persoonX(wie, pan.t + PAN / 2) });
+      punten.push({ t: pan.t + PAN / 2, x: persoonX(wie, pan.t + PAN / 2) + profielCorrectie(wie).schuif });
       cursor = pan.t + PAN / 2;
     }
     volg(wie, cursor, d.tot);
@@ -527,12 +555,27 @@ export function herstelSprekerKader(segmenten: Shot[], fouten: SprekerFout[]): {
     if (seg.spoor?.length) {
       // Alleen het stuk spoor rond de foute momenten naar het gezicht; de
       // rest volgde al goed.
+      // Spoormeting en keuring (andere detector) verschillen soms een paar
+      // procent; strak ingezoomd viel de spreker dan net naast de herstelde
+      // punten uit beeld (slotshot: 0,38 tegen 0,33). Ruimte voor dat
+      // verschil plus de beweging in het spoor.
+      const oud = (t: number) => {
+        const sp = seg.spoor!;
+        const na = sp.findIndex((p) => p.t >= t);
+        if (na <= 0) return (na === 0 ? sp[0] : sp[sp.length - 1]).x;
+        const [a, b] = [sp[na - 1], sp[na]];
+        return a.x + ((b.x - a.x) * (t - a.t)) / Math.max(1e-6, b.t - a.t);
+      };
+      const verschil = Math.max(...eigen.map((f) => Math.abs(f.gezicht.x - oud(f.t))));
       seg.spoor = seg.spoor.map((p) => {
-        const f = eigen.find((g) => Math.abs(g.t - p.t) <= 0.8);
+        const f = eigen.find((g) => Math.abs(g.t - p.t) <= 0.4);
         return f ? { t: p.t, x: f.gezicht.x } : p;
       });
       for (const f of eigen) if (!seg.spoor.some((p) => Math.abs(p.t - f.t) < 0.05)) seg.spoor.push({ t: f.t, x: f.gezicht.x });
       seg.spoor.sort((a, b) => a.t - b.t);
+      const xs = seg.spoor.map((p) => p.x);
+      const nodig = Math.max(...xs) - Math.min(...xs) + 1.4 * breedte + 2 * verschil;
+      seg.zoomPlafond = Math.min(seg.zoomPlafond ?? Infinity, Math.max(1, (1080 / (1920 * (16 / 9))) / nodig));
     } else if (eigen.every((f) => f.soort === 'uit_midden') && typeof seg.focusX === 'number' && !seg.paneel) {
       // Alleen wat uit het midden: zo weinig mogelijk verschuiven (het gezicht
       // naar 10% van het midden), niet helemaal centreren op dat ene moment —
@@ -552,7 +595,7 @@ export function herstelSprekerKader(segmenten: Shot[], fouten: SprekerFout[]): {
     // Het hele hoofd in beeld: hoogstens ~60% van de uitsnedebreedte.
     const huidig = seg.zoom ?? basisZoom(seg);
     const maxZoom = (0.6 * (1080 / (1920 * (16 / 9)))) / Math.max(0.01, breedte);
-    seg.zoom = Math.max(1, Math.min(huidig, maxZoom, instelling('ZOOM_MAX')));
+    seg.zoom = Math.max(1, Math.min(huidig, maxZoom, seg.zoomPlafond ?? Infinity, instelling('ZOOM_MAX')));
     seg.sprekerBepaald = true;
     shots.push(seg);
     log.push(`zelfherstel spreker: shot ${volgorde} → kader naar gezicht op ${x.toFixed(2)} (${eigen.length} moment(en): ${eigen.map((f) => `${f.t.toFixed(1)} s ${f.soort}`).join(', ')}; zoom ${seg.zoom.toFixed(2)})`);

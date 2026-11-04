@@ -45,6 +45,8 @@ export type Shot = {
   /** Grootste sprong tussen twee opeenvolgende ruwe metingen: onderscheidt een
    * sprekerswissel (sprong) van een wegleunende spreker (glijer). */
   maxStap?: number;
+  /** Hoogste zoom waarbij het hele hoofd (ook het achterhoofd bij een profiel) in beeld blijft. */
+  zoomPlafond?: number;
   /**
    * De bron is hier zelf een split screen; dit is het deel [van, tot] waar de
    * spreker in staat. Daarbuiten kadreren levert een halve persoon plus een
@@ -1225,7 +1227,9 @@ export function pasNaadZoomToe(segmenten: Shot[]): { volgorde: number; zoom: num
       // Altijd eerst omhóóg: een naadknip hoort een punch-in te zijn. Omlaag
       // gaf precies de klacht "de zoom gebeurt niet" — het vervolgshot werd
       // wijder en de tweeshot kwam terug in beeld.
-      zoom = vorigeZoom + bump <= max ? vorigeZoom + bump : Math.max(1, vorigeZoom - bump);
+      // Behalve waar het hoofd dan niet meer past (profielplafond).
+      const plafond = Math.min(max, shot.zoomPlafond ?? max);
+      zoom = vorigeZoom + bump <= plafond ? vorigeZoom + bump : Math.max(1, vorigeZoom - bump);
       shot.zoom = Math.round(zoom * 1000) / 1000;
       gedaan.push({ volgorde: shot.volgorde, zoom: shot.zoom });
     }
@@ -1511,6 +1515,7 @@ export function basisZoom(shot: Shot): number {
         ? (shot.focusX - shot.paneel[0]) / (shot.paneel[1] - shot.paneel[0])
         : (shot.focusX ?? 0.5)];
   const nodig = Math.max(...standen.map(centreerbaarVanaf));
+  if (shot.zoomPlafond) zoom = Math.min(zoom, shot.zoomPlafond);
   zoom = Math.max(zoom, nodig);
 
   if (!shot.spoor?.length) {

@@ -535,7 +535,7 @@ def sprekermeting(van, tot, stap):
             if di in toewijzing:
                 i = toewijzing[di]
             else:
-                sporen.append({"scene": scene, "mid": mid, "xs": [], "ws": [], "ogen": [], "tops": [], "hs": [], "monsters": [], "vm": None, "vo": None, "vt": None})
+                sporen.append({"scene": scene, "mid": mid, "xs": [], "vxs": [], "ws": [], "ogen": [], "tops": [], "hs": [], "monsters": [], "vm": None, "vo": None, "vt": None})
                 i = len(sporen) - 1
             sp = sporen[i]
             # De vakken gladgestreken over het spoor: de landmarks trillen een
@@ -554,6 +554,7 @@ def sprekermeting(van, tot, stap):
             sp["vm"], sp["vo"], sp["vt"] = m_now, o_now, t
             sp["mid"] = 0.8 * sp["mid"] + 0.2 * mid
             sp["xs"].append(mid)
+            sp["vxs"].append((x + w / 2) / kb)
             sp["ws"].append(w / kb)
             sp["ogen"].append((ooghoogte if ooghoogte is not None else y + h * 0.38) / kh)
             sp["tops"].append(y / kh)
@@ -599,6 +600,11 @@ def sprekermeting(van, tot, stap):
             "scene": sp["scene"],
             "x": round(med(sp["xs"]), 4),
             "breedte": round(med(sp["ws"]), 4),
+            # Midden van het detectievak: bij een hoofd en profil loopt dat
+            # door tot achter de schedel, terwijl x (landmarks) op de voorkant
+            # van het gezicht staat. Het verschil zegt hoeveel achterhoofd er
+            # naast x nog in beeld moet.
+            "xVak": round(med(sp["vxs"]), 4),
             "oog": round(med(sp["ogen"]), 4),
             "top": round(med(sp["tops"]), 4),
             "hoogte": round(med(sp["hs"]), 4),

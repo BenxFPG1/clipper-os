@@ -134,6 +134,35 @@ async function main() {
     toets('spoor: alleen rond het foute moment naar het gezicht', metSpoor.spoor!.find((p) => p.t === 0)!.x === 0.4 && metSpoor.spoor!.find((p) => p.t === 4)!.x === 0.62, JSON.stringify(metSpoor.spoor));
   }
 
+  console.log('hoofd en profil: het achterhoofd blijft in beeld');
+  {
+    // Gemeten bij de kassa: landmarks 0,558, vakmidden 0,517, vak 0,097.
+    const A = persoon(0, 0, 0.558, 0, 4, praat);
+    A.xVak = 0.517;
+    A.breedte = 0.097;
+    const st = actieveSprekers({ van: 0, tot: 4, stap: STAP, personen: [A], knippen: [] }, spraakVan(0, 4, () => true));
+    const [d] = pasSprekersToe(shot(0, 4), st, null).delen;
+    const zoom = basisZoom(d);
+    const u = uitsnedeVan(d.focusX ?? 0.5, zoom, d.focusY ?? 0.5);
+    toets('kader half richting het achterhoofd', Math.abs((d.focusX ?? 0) - 0.5375) < 0.002, String(d.focusX));
+    toets('achterhoofd (~0,40) en gezicht in de uitsnede', u.x0 <= 0.405 && u.x1 >= 0.6, JSON.stringify({ zoom, x0: u.x0, x1: u.x1 }));
+    toets('kijkruimte: meer ruimte vóór het gezicht dan erachter', u.x1 - 0.558 > 0.517 - u.x0 - 0.05, JSON.stringify(u));
+    // Frontaal (verschil < kwart vak): niets verandert.
+    const F = persoon(0, 0, 0.361, 0, 4, praat);
+    F.xVak = 0.352;
+    F.breedte = 0.062;
+    const stF = actieveSprekers({ van: 0, tot: 4, stap: STAP, personen: [F], knippen: [] }, spraakVan(0, 4, () => true));
+    const [dF] = pasSprekersToe(shot(0, 4), stF, null).delen;
+    toets('frontaal: kader op het gezicht, geen plafond', dF.focusX === 0.361 && dF.zoomPlafond === undefined, JSON.stringify([dF.focusX, dF.zoomPlafond]));
+    // Zelfherstel op een spoor waar keuring en spoor 0,05 verschillen: niet
+    // meer strak inzoomen dan dat verschil plus de beweging toelaat.
+    const sp: Shot = { ...shot(0, 3), focusW: 0.06, focusWmin: 0.06, spoor: [0, 0.5, 1, 1.5, 2, 2.5, 3].map((t) => ({ t, x: 0.3 + 0.01 * t })) };
+    herstelSprekerKader([sp], [{ volgorde: 1, t: 0.2, soort: 'uit_midden', waarde: 0.2, gezicht: { x: 0.36, breedte: 0.06, top: 0.3, hoogte: 0.15 } }]);
+    const breed = (1080 / (1920 * (16 / 9))) / (sp.zoom ?? basisZoom(sp));
+    toets('zelfherstel op spoor: uitsnede ruim genoeg voor beweging + meetverschil', breed >= 0.36 - 0.31 + 1.4 * 0.06 + 2 * 0.058 - 0.005, JSON.stringify({ zoom: sp.zoom, breed }));
+    toets('zelfherstel op spoor: verre punten blijven op het spoor', sp.spoor!.find((p) => p.t === 2)!.x === 0.32, JSON.stringify(sp.spoor));
+  }
+
   console.log('tweeshot alleen als het werkt in 9:16');
   {
     toets('dicht bij elkaar, grote gezichten: tweeshot', tweeshotPast({ x: 0.45, breedte: 0.07 }, { x: 0.58, breedte: 0.07 }));
