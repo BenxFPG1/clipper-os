@@ -49,6 +49,30 @@ const STANDAARD = {
   KEURING_ANDERE_PERSOON: 0.28,
   /** Keuring: boven dit aandeel genegeerde metingen is de regel niet goed. */
   KEURING_MAX_GENEGEERD: 0.3,
+  /**
+   * Eindkeuring (eindkeuring.ts): gemeten op het gerenderde bestand zelf.
+   * Geluid: het doel van de mix is -14 LUFS; daarbuiten is de mix mislukt.
+   */
+  EINDKEURING_LUFS_MIN: -16,
+  EINDKEURING_LUFS_MAX: -12,
+  EINDKEURING_PIEK_MAX: -0.3,
+  /** Beeld per seconde bemonsterd op het eindbestand. */
+  EINDKEURING_FPS: 4,
+  /**
+   * Zo lang mag er (buiten graphics) geen mens in beeld zijn voordat het een
+   * fout is. Geijkt op twee renders van dezelfde clip: het lege kader met de
+   * speakerkast duurde 0,9 s; in de goede render is het langste gat 0,25 s
+   * (lachen met de hand voor de mond).
+   */
+  EINDKEURING_LEEG_MAX_S: 0.7,
+  /** Hoogstens dit aandeel van de momenten zonder mens (detectie mist weleens een profiel). */
+  EINDKEURING_LEEG_MAX_AANDEEL: 0.15,
+  /** Zwart beeld vanaf deze duur is een fout. */
+  EINDKEURING_ZWART_MIN_S: 0.25,
+  /** De eerste gesproken lettergreep hoort binnen deze tijd te klinken. */
+  EINDKEURING_HOOK_MAX_S: 0.6,
+  /** Zoveel seconden zonder woorden aan het einde is na-ijlen (een reactie na de punchline mag ~2,5 s duren). */
+  EINDKEURING_STAART_MAX_S: 3,
 
   /** Snap: kortere dipjes zijn medeklinkers, geen pauzes. */
   SNAP_MIN_PAUZE: 0.25,

@@ -58,6 +58,12 @@ export type KeuringRegel = {
    */
   goed: boolean | null;
   detail: string;
+  /**
+   * Een verplichte regel die niet te meten was (null) maakt de clip "review
+   * nodig". Zonder dit kreeg een clip waarop de gezichtsmeting faalde, of
+   * waarvan de transcriptie mislukte, het oordeel GOED.
+   */
+  verplicht?: boolean;
 };
 
 export type KeuringStatus = 'goed' | 'review_nodig' | 'niet_getoetst';
@@ -70,17 +76,22 @@ export type Keuringsrapport = {
   regels: KeuringRegel[];
 };
 
-/** De status uit de regels: één echte fout is "review nodig", geen enkele meting is "niet getoetst". */
+/**
+ * De status uit de regels: één echte fout is "review nodig", geen enkele
+ * meting is "niet getoetst", en een verplichte regel zonder meting is ook
+ * "review nodig" — niet kunnen meten is geen goedkeuring.
+ */
 export function keuringStatus(regels: KeuringRegel[]): KeuringStatus {
   if (regels.some((r) => r.goed === false)) return 'review_nodig';
   if (regels.every((r) => r.goed === null)) return 'niet_getoetst';
+  if (regels.some((r) => r.goed === null && r.verplicht)) return 'review_nodig';
   return 'goed';
 }
 
 /** Regel 1: geen enkele knip mag binnen een woord vallen. */
 export function keurKnippen(segmenten: Shot[], bronWoorden: BronWoord[] | null): KeuringRegel {
   if (!bronWoorden || bronWoorden.length === 0) {
-    return { naam: 'knippen op woordgrenzen', goed: null, detail: 'geen brontranscriptie; niet te toetsen' };
+    return { naam: 'knippen op woordgrenzen', goed: null, verplicht: true, detail: 'geen brontranscriptie; niet te toetsen' };
   }
 
   const fouten: string[] = [];
@@ -270,13 +281,14 @@ export async function keurGezichtDetail(
   type Vak = GezichtVak;
   const gemetenPunten = await meter(punten.map((p) => p.t));
   if (!gemetenPunten) {
-    return metFout({ naam: 'actieve spreker in beeld', goed: null, detail: 'meting mislukt; niet te toetsen' });
+    return metFout({ naam: 'actieve spreker in beeld', goed: null, verplicht: true, detail: 'meting mislukt; niet te toetsen' });
   }
   const metingen: GezichtPuntMeting[] = gemetenPunten;
   if (metingen.length !== punten.length) {
     return metFout({
       naam: 'actieve spreker in beeld',
       goed: null,
+      verplicht: true,
       detail: `meting onvolledig (${metingen.length}/${punten.length}); niet te toetsen — draait OpenCV op deze machine?`,
     });
   }
@@ -558,7 +570,7 @@ export async function keurScript(
 ): Promise<KeuringRegel[]> {
   const script = await controleerScript(montagePad, segmenten as never);
   if (!script) {
-    return [{ naam: 'script gevolgd', goed: null, detail: 'niet te transcriberen; niet te toetsen' }];
+    return [{ naam: 'script gevolgd', goed: null, verplicht: true, detail: 'niet te transcriberen; niet te toetsen' }];
   }
 
   // Niet teruggehoord maar wél in de bron op de knip: meetfout van de

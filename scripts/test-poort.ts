@@ -211,8 +211,12 @@ console.log('keuring — niet te toetsen is geen goedkeuring');
   toets('status van alleen null-regels is niet_getoetst', keuringStatus([zonder]) === 'niet_getoetst');
   toets('één echte fout is review nodig',
     keuringStatus([zonder, { naam: 'x', goed: false, detail: '' }]) === 'review_nodig');
-  toets('null naast een echte goed is goed',
-    keuringStatus([zonder, { naam: 'x', goed: true, detail: '' }]) === 'goed');
+  // Knippen is een verplichte regel: zonder transcriptie is de clip niet
+  // gekeurd, ook niet als een andere regel wel groen is.
+  toets('verplichte regel zonder meting naast een echte goed is review nodig',
+    keuringStatus([zonder, { naam: 'x', goed: true, detail: '' }]) === 'review_nodig');
+  toets('niet-verplichte regel zonder meting naast een echte goed is goed',
+    keuringStatus([{ naam: 'y', goed: null, detail: '' }, { naam: 'x', goed: true, detail: '' }]) === 'goed');
 }
 
 console.log('poort — regel 2: de tease (cold open) blijft staan');

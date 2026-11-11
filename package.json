@@ -39,7 +39,8 @@
     "afwerkpakket": "tsx scripts/afwerkpakket.ts",
     "test:afwerkpakket": "tsx scripts/test-afwerkpakket.ts",
     "test:bronnen": "tsx scripts/test-bronnen.ts",
-    "test:toegang": "tsx scripts/test-toegang.ts"
+    "test:toegang": "tsx scripts/test-toegang.ts",
+    "test:eindkeuring": "tsx scripts/test-eindkeuring.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.115.0",

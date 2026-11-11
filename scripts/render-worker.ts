@@ -65,7 +65,8 @@ import {
 import { controleerScript, kopInBron } from '../src/lib/roughcut/scriptcontrole';
 import { eindNaReactie, haalBronWoorden, vindFragment } from '../src/lib/roughcut/woorden';
 import { poort, verzetGrens } from '../src/lib/roughcut/poort';
-import { herhaaldInBron, keurGezichtDetail, keurGraphicsDetail, keurMontage, keurScriptCompleet, type Keuringsrapport } from '../src/lib/roughcut/keuring';
+import { herhaaldInBron, keurGezichtDetail, keurGraphicsDetail, keurMontage, keurScriptCompleet, keuringStatus, type Keuringsrapport } from '../src/lib/roughcut/keuring';
+import { keurEindbestand } from '../src/lib/roughcut/eindkeuring';
 import { zelfherstelStap } from '../src/lib/roughcut/herstel';
 import { corrigeerWoorden, tweedeLezing, verfijnWoorden, volgCaptions } from '../src/lib/roughcut/ondertitelwoorden';
 import { ruimBronCacheOp } from '../src/lib/roughcut/broncache';
@@ -2004,10 +2005,19 @@ async function verwerk(job: Job) {
       });
       const compleet = keurScriptCompleet(clip.shots.map((sh) => sh.volgorde), segmenten);
       rapport.regels.push(compleet);
-      if (compleet.goed === false) {
-        rapport.goed = false;
-        if (rapport.status === 'goed') rapport.status = 'review_nodig';
-      }
+      // De eindkeuring: wat een kijker ziet en hoort, gemeten op het bestand
+      // zelf (mens in beeld, zwart, geluid) plus hook, einde en ondertitels.
+      rapport.regels.push(
+        ...(await keurEindbestand(montage.pad, segmenten, bronWoorden, {
+          duur: segmenten.reduce((t, sg) => t + (sg.end - sg.start), 0),
+          kader: kaderClip,
+          python: pythonMetOpenCV(),
+          ondertitelRegels: ondertitels ? ondertitels.regels.length : null,
+          ondertitelsVerwacht: stijl.ondertitels !== false,
+        })),
+      );
+      rapport.goed = rapport.regels.every((r) => r.goed === true);
+      rapport.status = keuringStatus(rapport.regels);
       tijd.keuring = (Date.now() - tKeuring) / 1000;
       if (retentieEind) await vulMontageplanAan(supabase, job.video_id, nummer, { retentie_eind: retentieEind });
       const s = (x: number) => `${x.toFixed(0)} s`;
@@ -2023,7 +2033,10 @@ async function verwerk(job: Job) {
       }
       keuringsuitslag = rapport;
     } catch (e) {
-      console.log(`     keuring overgeslagen (${(e as Error).message.slice(0, 70)})`);
+      // Een keuring die crasht is geen goedkeuring: de clip gaat naar review.
+      const detail = `keuring afgebroken: ${(e as Error).message.slice(0, 120)}`;
+      console.log(`     ── keuring: REVIEW NODIG (${detail})`);
+      keuringsuitslag = { goed: false, status: 'review_nodig', regels: [{ naam: 'keuring uitgevoerd', goed: false, detail }] };
     }
 
     // De ondertitels als SRT bij het montageplan: de download naast de mp4

@@ -17,6 +17,8 @@ on:
       - 'src/lib/roughcut/**'
       - 'scripts/render-worker.ts'
       - 'scripts/gezichten.py'
+      - 'scripts/eindbeeld.py'
+      - 'scripts/test-*.ts'
       - 'scripts/align.py'
       - 'src/lib/scriptwriter/**'
       - 'src/lib/planner/**'
@@ -67,6 +69,12 @@ jobs:
         run: npm run test:claude
       - name: Afwerken in Premiere (pakket)
         run: npm run test:afwerkpakket
+      - name: Clipregels van de planner
+        run: npm run test:clipregels
+      - name: Eindkeuring (regels op het eindbestand)
+        run: npx tsx scripts/test-eindkeuring.ts
+      - name: Toegang (wie komt er in)
+        run: npm run test:toegang
 
   keuring:
     runs-on: ubuntu-latest
@@ -101,6 +109,25 @@ jobs:
       # hij steeds terug en faalde hij sinds 30 september.
       - name: Ondertitelwoorden (beter model, correctiepas)
         run: npm run test:ondertitelwoorden
+
+      # Deze draaiden nergens automatisch; samen ruim zeshonderd toetsen op
+      # render, sprekerkader, graphics en retentie.
+      - name: Sprekerdetectie en sprekerkader
+        run: npm run test:sprekers
+      - name: Render (ffmpeg op een testbron)
+        run: npm run test:render
+      - name: Retentie
+        run: npm run test:retentie
+      - name: Graphics
+        run: npm run test:graphics
+      - name: Afwerking (muziek, sfx, kleur)
+        run: npm run test:afwerking
+      - name: Bronwoorden
+        run: npm run test:bronwoorden
+      - name: Renderbron
+        run: npm run test:renderbron
+      - name: Bronnen (Drive, WeTransfer, kanalen)
+        run: npm run test:bronnen
 
       - name: Keuring tegen de basislijn
         env:
