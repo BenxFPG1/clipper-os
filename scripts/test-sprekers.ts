@@ -168,7 +168,7 @@ async function main() {
     const sp: Shot = { ...shot(0, 3), focusW: 0.06, focusWmin: 0.06, spoor: [0, 0.5, 1, 1.5, 2, 2.5, 3].map((t) => ({ t, x: 0.3 + 0.01 * t })) };
     herstelSprekerKader([sp], [{ volgorde: 1, t: 0.2, soort: 'uit_midden', waarde: 0.2, gezicht: { x: 0.36, breedte: 0.06, top: 0.3, hoogte: 0.15 } }]);
     const breed = (1080 / (1920 * (16 / 9))) / (sp.zoom ?? basisZoom(sp));
-    toets('zelfherstel op spoor: uitsnede ruim genoeg voor beweging + meetverschil', breed >= 0.36 - 0.31 + 1.4 * 0.06 + 2 * 0.058 - 0.005, JSON.stringify({ zoom: sp.zoom, breed }));
+    toets('zelfherstel op spoor: uitsnede ruim genoeg voor het hoofd + meetverschil', breed >= 1.4 * 0.06 + 2 * 0.058 - 0.005, JSON.stringify({ zoom: sp.zoom, breed }));
     toets('zelfherstel op spoor: verre punten blijven op het spoor', sp.spoor!.find((p) => p.t === 2)!.x === 0.32, JSON.stringify(sp.spoor));
     // Spreker beweegt binnen een vast shot: ronde 1 corrigeert op het begin
     // (0,81), ronde 2 op het eind (0,71). Niet heen en weer, maar één kader

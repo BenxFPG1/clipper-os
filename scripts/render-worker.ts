@@ -1828,6 +1828,18 @@ async function verwerk(job: Job) {
             const seg = segmenten.find((sg) => sg.volgorde === o.volgorde);
             if (!seg || alGecorrigeerd.has(o.volgorde)) continue;
             alGecorrigeerd.add(o.volgorde);
+            // Een shot waarvan het kader op een gemeten spreker staat, blijft
+            // van het model af. Zijn oordeel over headroom is smaak en wisselt
+            // per run; elke correctie kostte een nieuwe render, waarna poort,
+            // flits en zelfherstel opnieuw draaiden en een eerder goede clip
+            // anders uitkwam (ambulance, testronde 3: "pet raakt de bovenrand"
+            // → drie rondes later een ondertitel over een gezicht). Wat hier
+            // echt mis kan zijn (niemand in beeld, hoofd buiten beeld) meet de
+            // keuring op het eindbestand.
+            if (seg.sprekerBepaald || seg.gezicht) {
+              console.log(`     eindbeeldcontrole shot ${o.volgorde}: ${o.probleem.slice(0, 80)} → alleen gemeld (kader staat op een gemeten gezicht)`);
+              continue;
+            }
             const wat = pasVisueleCorrectieToe(seg, o.correctie, o.sterkte);
             if (wat) aangepast++;
             console.log(

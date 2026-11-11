@@ -640,8 +640,10 @@ export function herstelSprekerKader(segmenten: Shot[], fouten: SprekerFout[]): {
       });
       for (const f of eigen) if (!seg.spoor.some((p) => Math.abs(p.t - f.t) < 0.05)) seg.spoor.push({ t: f.t, x: f.gezicht.x });
       seg.spoor.sort((a, b) => a.t - b.t);
-      const xs = seg.spoor.map((p) => p.x);
-      const nodig = Math.max(...xs) - Math.min(...xs) + 1.4 * breedte + 2 * verschil;
+      // Het kader loopt mee, dus de beweging over het hele spoor telt niet
+      // mee (dat gaf zoom 1,00 op een shot dat van 0,17 naar 0,41 meeliep);
+      // alleen het hoofd en het meetverschil moeten erin passen.
+      const nodig = 1.4 * breedte + 2 * Math.min(verschil, 0.08);
       seg.zoomPlafond = Math.min(seg.zoomPlafond ?? Infinity, Math.max(1, (1080 / (1920 * (16 / 9))) / nodig));
     } else if (eigen.every((f) => f.soort === 'uit_midden') && typeof seg.focusX === 'number' && !seg.paneel && (seg.herstelGezichten?.length ?? 0) <= eigen.length) {
       // Alleen wat uit het midden: zo weinig mogelijk verschuiven (het gezicht
