@@ -47,9 +47,17 @@ export function VastgelopenBlok({ items }: { items: VastgelopenItem[] }) {
                   </details>
                 )}
               </div>
-              <OpnieuwKnop
-                url={item.soort === 'opdracht' ? `/api/ai-jobs/${item.id}/opnieuw` : `/api/campaigns/${item.id}/kanaal`}
-              />
+              {item.soort === 'render' ? (
+                item.href && (
+                  <a href={item.href} className="rounded border border-neutral-700 px-3 py-1.5 text-sm text-neutral-200 hover:border-neutral-500">
+                    Naar de video
+                  </a>
+                )
+              ) : (
+                <OpnieuwKnop
+                  url={item.soort === 'opdracht' ? `/api/ai-jobs/${item.id}/opnieuw` : `/api/campaigns/${item.id}/kanaal`}
+                />
+              )}
             </div>
           </li>
         ))}

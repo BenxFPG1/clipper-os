@@ -12,6 +12,11 @@ concurrency:
   group: roughcut
   cancel-in-progress: false
 
+# Mag een melding (issue) openen als een run mislukt.
+permissions:
+  contents: read
+  issues: write
+
 jobs:
   render:
     runs-on: ubuntu-latest
@@ -26,14 +31,29 @@ jobs:
       CLAUDE_MODEL: claude-opus-5
       CLAUDE_LICHT_MODEL: claude-sonnet-5
     steps:
+      # Eerst kijken of er werk is. De uurcheck installeerde anders elke keer
+      # ffmpeg, Python en alle pakketten om daarna "geen wachtende opdrachten"
+      # te zeggen: tientallen minuten rekentijd per dag voor niets.
+      - name: Is er werk?
+        id: werk
+        env:
+          URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SLEUTEL: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          n=$(curl -sf "$URL/rest/v1/render_jobs?select=id&status=in.(wachtend,bezig)&limit=1" -H "apikey: $SLEUTEL" -H "authorization: Bearer $SLEUTEL" | grep -c '"id"' || true)
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] || [ "$n" != "0" ]; then echo "ja=1" >> "$GITHUB_OUTPUT"; else echo "Geen werk; klaar."; fi
+
       - uses: actions/checkout@v4
+        if: steps.werk.outputs.ja == '1'
 
       - uses: actions/setup-node@v4
+        if: steps.werk.outputs.ja == '1'
         with:
           node-version: 22
           cache: npm
 
       - name: Installeer ffmpeg
+        if: steps.werk.outputs.ja == '1'
         run: |
           if which ffmpeg; then ffmpeg -version | head -1
           else
@@ -65,6 +85,7 @@ jobs:
           fi
 
       - name: Installeer yt-dlp
+        if: steps.werk.outputs.ja == '1'
         run: |
           sudo curl -sSL --retry 3 --max-time 120 \
             https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux \
@@ -77,6 +98,7 @@ jobs:
       # yt-dlp heeft een JS-runtime nodig om YouTube's n-challenge op te
       # lossen; zonder krijg je "Only images are available for download".
       - name: Installeer deno (challenge-solver voor yt-dlp)
+        if: steps.werk.outputs.ja == '1'
         run: |
           curl -fsSL --retry 3 https://github.com/denoland/deno/releases/latest/download/deno-x86_64-unknown-linux-gnu.zip -o /tmp/deno.zip
           sudo unzip -oq /tmp/deno.zip -d /usr/local/bin
@@ -87,6 +109,7 @@ jobs:
       # Bij een cache-miss (eerste run, of een lege cache) valt dit gewoon
       # terug op een normale install — geen ander gedrag, alleen sneller.
       - uses: actions/cache@v4
+        if: steps.werk.outputs.ja == '1'
         with:
           path: ~/.cache/pip
           key: pip-roughcut-${{ runner.os }}
@@ -96,11 +119,13 @@ jobs:
       # ondertitelbereiken) tussen runs bewaren: large-v3-turbo is ~1,6 GB en
       # downloaden kost anders elke run een minuut.
       - uses: actions/cache@v4
+        if: steps.werk.outputs.ja == '1'
         with:
           path: ~/.cache/huggingface
           key: hf-whisper-${{ runner.os }}-v1
 
       - name: Installeer OpenCV en faster-whisper
+        if: steps.werk.outputs.ja == '1'
         # Versies vastgezet: de nieuwste faster-whisper + PyAV botsten ("open() got an
         # unexpected keyword argument 'metadata_errors'"), waardoor élke
         # woordtranscriptie in CI stil terugviel op grove tijden. Dit is de
@@ -110,19 +135,22 @@ jobs:
         run: pip3 install --quiet "opencv-python-headless<5" "numpy<2.3" "faster-whisper==1.2.1" "av==18.0.0" "gdown==6.4.2"
 
       - name: Installeer Claude Code CLI
+        if: steps.werk.outputs.ja == '1'
         run: npm install -g @anthropic-ai/claude-code
 
       - name: Dependencies
+        if: steps.werk.outputs.ja == '1'
         run: npm ci
 
       # Zonder cookies weigert YouTube het downloaden vanaf datacenter-IP's.
       - name: YouTube-cookies (optioneel)
-        if: ${{ env.YTDLP_COOKIES_B64 != '' }}
+        if: steps.werk.outputs.ja == '1' && env.YTDLP_COOKIES_B64 != ''
         run: |
           echo "$YTDLP_COOKIES_B64" | base64 -d > "$RUNNER_TEMP/cookies.txt"
           echo "YTDLP_COOKIES_FILE=$RUNNER_TEMP/cookies.txt" >> "$GITHUB_ENV"
 
       - name: Wachtende montages verwerken
+        if: steps.werk.outputs.ja == '1'
         env:
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
@@ -135,3 +163,17 @@ jobs:
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           R2_BUCKET: ${{ secrets.R2_BUCKET }}
         run: npx tsx scripts/render-worker.ts
+
+      # Melding bij een mislukte run: één open issue per workflow, met een
+      # reactie per nieuwe mislukking. GitHub mailt de eigenaar. Voorheen
+      # merkte niemand het als een geplande taak dagen achter elkaar faalde.
+      - name: Melding bij mislukking
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          titel="Clipper OS: ${{ github.workflow }} mislukt"
+          tekst="Run mislukt: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }} (${{ github.event_name }})"
+          nr=$(gh issue list --repo "${{ github.repository }}" --state open --search "in:title \"$titel\"" --json number -q '.[0].number')
+          if [ -n "$nr" ]; then gh issue comment "$nr" --repo "${{ github.repository }}" --body "$tekst"
+          else gh issue create --repo "${{ github.repository }}" --title "$titel" --body "$tekst — sluit deze melding zodra het weer werkt."; fi

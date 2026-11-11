@@ -37,6 +37,11 @@ concurrency:
   group: clipper-jobs-${{ github.event.schedule || inputs.job }}
   cancel-in-progress: false
 
+# Mag een melding (issue) openen als een run mislukt.
+permissions:
+  contents: read
+  issues: write
+
 jobs:
   run:
     runs-on: ubuntu-latest
@@ -179,3 +184,17 @@ jobs:
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           R2_BUCKET: ${{ secrets.R2_BUCKET }}
         run: npx tsx scripts/job.ts ${{ steps.kies.outputs.job }}
+
+      # Melding bij een mislukte run: één open issue per workflow, met een
+      # reactie per nieuwe mislukking. GitHub mailt de eigenaar. Voorheen
+      # merkte niemand het als een geplande taak dagen achter elkaar faalde.
+      - name: Melding bij mislukking
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          titel="Clipper OS: ${{ github.workflow }} mislukt"
+          tekst="Run mislukt: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }} (${{ github.event_name }})"
+          nr=$(gh issue list --repo "${{ github.repository }}" --state open --search "in:title \"$titel\"" --json number -q '.[0].number')
+          if [ -n "$nr" ]; then gh issue comment "$nr" --repo "${{ github.repository }}" --body "$tekst"
+          else gh issue create --repo "${{ github.repository }}" --title "$titel" --body "$tekst — sluit deze melding zodra het weer werkt."; fi

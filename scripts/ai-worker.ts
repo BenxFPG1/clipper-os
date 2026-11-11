@@ -40,7 +40,17 @@ async function main() {
   // Een run kan onderweg afgebroken worden (annulering, tijdslimiet). De
   // opdracht blijft dan op 'bezig' staan en zou nooit meer opgepakt worden.
   // Alles wat langer dan een uur 'bezig' is, mag opnieuw.
+  // Niet eindeloos: wat al zes uur geleden is aangemaakt en nog steeds
+  // vastloopt, gaat op mislukt in plaats van weer in de rij.
   const grens = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+  const { data: teOud } = await supabase
+    .from('ai_jobs')
+    .update({ status: 'mislukt', fout: 'Bleef vastlopen (langer dan zes uur onderweg); niet opnieuw geprobeerd.' })
+    .eq('status', 'bezig')
+    .lt('gestart_at', grens)
+    .lt('created_at', new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString())
+    .select('id');
+  if (teOud?.length) console.log(`${teOud.length} opdracht(en) bleven vastlopen; op mislukt gezet.`);
   const { data: vastgelopen } = await supabase
     .from('ai_jobs')
     .update({ status: 'wachtend', gestart_at: null })

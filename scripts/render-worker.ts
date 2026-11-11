@@ -105,7 +105,20 @@ async function main() {
   // Een afgebroken run (annulering, runner weg) laat de opdracht op 'bezig'
   // staan. De worker werkt per clip een hartslag bij; blijft die twintig
   // minuten uit, dan draait er niets meer en mag de opdracht opnieuw.
+  //
+  // Maar niet eindeloos: een opdracht die de runner telkens laat crashen werd
+  // elk uur opnieuw opgepakt en kostte elke keer tot twee uur rekentijd. Is
+  // hij al langer dan drie uur onderweg, dan is hij mislukt.
   const grens = new Date(Date.now() - 20 * 60 * 1000).toISOString();
+  const opgegeven = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
+  const { data: teOud } = await supabase
+    .from('render_jobs')
+    .update({ status: 'mislukt', fout: 'Bleef vastlopen (langer dan drie uur onderweg); niet opnieuw geprobeerd. Vraag hem opnieuw aan.', klaar_at: new Date().toISOString() })
+    .eq('status', 'bezig')
+    .lt('hartslag', grens)
+    .lt('created_at', opgegeven)
+    .select('id');
+  if (teOud?.length) console.log(`${teOud.length} montage(s) bleven vastlopen; op mislukt gezet.`);
   const { data: vastgelopen } = await supabase
     .from('render_jobs')
     .update({ status: 'wachtend', gestart_at: null })
@@ -144,10 +157,18 @@ async function main() {
   let mislukt = 0;
   for (const job of jobs) {
     console.log(`\nOpdracht ${job.id} — ${job.titel ?? 'zonder titel'}`);
-    await supabase
+    // Alleen oppakken als hij nog wacht: draait er ergens een tweede worker
+    // (lokaal naast de cloud), dan pakt die hem niet tegelijk.
+    const { data: geclaimd } = await supabase
       .from('render_jobs')
       .update({ status: 'bezig', gestart_at: new Date().toISOString(), hartslag: new Date().toISOString() })
-      .eq('id', job.id);
+      .eq('id', job.id)
+      .in('status', vast ? ['wachtend', 'bezig'] : ['wachtend'])
+      .select('id');
+    if (!geclaimd?.length) {
+      console.log('  al door een andere worker opgepakt; overgeslagen');
+      continue;
+    }
 
     try {
       const bestanden = await verwerk(job);

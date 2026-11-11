@@ -189,6 +189,13 @@ function ytdlpEenmaal(args: string[]): Promise<string> {
     const child = spawn(resolveBinary('yt-dlp'), args);
     let stdout = '';
     let stderr = '';
+    // Een hangende download hield de hele run vast tot de tijdslimiet van de
+    // workflow, zonder hartslag. Na veertig minuten stoppen.
+    const klok = setTimeout(() => {
+      child.kill('SIGKILL');
+      reject(new Error('yt-dlp reageerde na 40 minuten nog niet; afgebroken.'));
+    }, 40 * 60 * 1000);
+    child.on('close', () => clearTimeout(klok));
     child.stdout.on('data', (d) => (stdout += d));
     child.stderr.on('data', (d) => (stderr += d));
     child.on('error', () =>

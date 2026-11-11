@@ -367,7 +367,7 @@ export async function laadLeerlus(): Promise<LeerlusStatus> {
 // ---------------------------------------------------------------- vastgelopen
 
 export type VastgelopenItem = {
-  soort: 'opdracht' | 'bron';
+  soort: 'opdracht' | 'bron' | 'render';
   /** ai_jobs.id of campaigns.id — waar "opnieuw proberen" op werkt. */
   id: string;
   wat: string;
@@ -477,6 +477,32 @@ export async function laadVastgelopen(): Promise<VastgelopenItem[]> {
       detail: fouten.join('\n').slice(0, 1200),
       sinds: (c.laatste_kanaal_check as string | null) ?? (c.kanaal_check_gestart_at as string | null),
       href: `/campagnes/${c.id}`,
+      herkansingOm: null,
+    });
+  }
+
+  // Mislukte clips van de afgelopen week, tenzij er voor dezelfde video en
+  // clip daarna een gelukte render kwam. Stonden nergens: een mislukte
+  // montage zag je alleen als je zelf naar de videopagina ging.
+  const week = new Date(Date.now() - 7 * 86_400_000).toISOString();
+  const { data: renders } = await supabase
+    .from('render_jobs')
+    .select('id, video_id, clip_index, titel, status, fout, created_at, klaar_at')
+    .gte('created_at', week)
+    .order('created_at', { ascending: false });
+  const latereGoede = (r: { video_id: string; clip_index: number | null; created_at: string }) =>
+    (renders ?? []).some((x) => x.status === 'klaar' && x.video_id === r.video_id && x.clip_index === r.clip_index && (x.created_at as string) > r.created_at);
+  for (const r of renders ?? []) {
+    if (r.status !== 'mislukt' || !r.fout || /^gestopt:|^dubbel:/i.test(r.fout as string)) continue;
+    if (latereGoede(r as never)) continue;
+    items.push({
+      soort: 'render',
+      id: r.id as string,
+      wat: `Clip maken: ${(r.titel as string | null) ?? (r.clip_index ? `clip ${r.clip_index}` : 'alle clips')}`,
+      reden: inGewoneTaal(r.fout as string),
+      detail: (r.fout as string).slice(0, 600),
+      sinds: (r.klaar_at as string | null) ?? (r.created_at as string),
+      href: `/videos/${r.video_id}`,
       herkansingOm: null,
     });
   }
