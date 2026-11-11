@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { resolveBinary } from '../ingest/binaries';
 import { instelling } from './instellingen';
@@ -172,6 +172,25 @@ const cache = new Map<string, BeatAnalyse>();
 
 export async function analyseerBeats(pad: string): Promise<BeatAnalyse | null> {
   if (cache.has(pad)) return cache.get(pad)!;
+  // Eigen tracks hebben hun tempo ernaast (scripts/maak-muziek.py): dat is
+  // exact, de meting niet (droog-84 werd 167 bpm, "geen duidelijke puls").
+  const naast = pad.replace(/\.[^.]+$/, '.json');
+  if (existsSync(naast)) {
+    try {
+      const m = JSON.parse(readFileSync(naast, 'utf8')) as { bpm: number; beatOffsetS?: number; loopS?: number };
+      const duur = m.loopS ?? 0;
+      if (m.bpm > 0 && duur > 0) {
+        const tel = 60 / m.bpm;
+        const beats: number[] = [];
+        for (let t = m.beatOffsetS ?? 0; t < duur - 0.01; t += tel) beats.push(Math.round(t * 1000) / 1000);
+        const a: BeatAnalyse = { beats, bpm: m.bpm, duur, zekerheid: 10 };
+        cache.set(pad, a);
+        return a;
+      }
+    } catch {
+      // onleesbaar: dan toch meten
+    }
+  }
   try {
     const a = beatsUitSamples(await decodeerMono(pad));
     cache.set(pad, a);

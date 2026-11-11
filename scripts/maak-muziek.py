@@ -8,6 +8,7 @@ uitvoer bij elke run.
 
 Draaien: python3 scripts/maak-muziek.py
 """
+import json
 import subprocess
 from pathlib import Path
 
@@ -114,11 +115,22 @@ def beat(bpm, swing, akkoorden, stabs, kicks, seed):
         mix(kraak, rng.standard_normal(40) * 0.02, t)
     x = np.tanh(1.2 * (drums + laag + keys)) + kraak
     x = laagdoorlaat(x, 11000)
+    # Precies 16 maten lang, zodat de track naadloos herhaalt: de uitklank
+    # na de laatste maat (de extra seconde) gaat over het begin heen in
+    # plaats van erachter. Eerst was hij 46,7 s voor 45,7 s aan maten en
+    # haperde elke herhaling een seconde.
+    lus = int(maten * 4 * tel * SR)
+    staart = x[lus:]
+    x = x[:lus].copy()
+    x[: len(staart)] += staart
     return (x / np.max(np.abs(x)) * 0.89).astype(np.float32)
 
 
-def bewaar(x, naam):
+def bewaar(x, naam, bpm):
     MAP.mkdir(parents=True, exist_ok=True)
+    # Het tempo staat ernaast: de beatmeting las deze track als 167 bpm (de
+    # hihats op elke achtste) en zette knippen op de beat daardoor uit.
+    (MAP / naam).with_suffix('.json').write_text(json.dumps({'bpm': bpm, 'beatOffsetS': 0, 'loopS': round(len(x) / SR, 4)}))
     pcm = (x * 32767).astype(np.int16)
     subprocess.run(
         ['ffmpeg', '-v', 'error', '-y', '-f', 's16le', '-ar', str(SR), '-ac', '1', '-i', '-',
@@ -130,4 +142,4 @@ def bewaar(x, naam):
 # Mineur en rustig: droog en een beetje stoned, voor droge humor.
 bewaar(beat(84, 0.32, [
     [57, 67, 72, 76], [53, 64, 69, 72], [50, 65, 69, 72], [52, 62, 68, 71],
-], [(0, 2.2), (7, 1.2)], [0, 7, 10], 7), 'droog-84.mp3')
+], [(0, 2.2), (7, 1.2)], [0, 7, 10], 7), 'droog-84.mp3', 84)
