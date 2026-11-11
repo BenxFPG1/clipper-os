@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { structuredCall } from '../claude';
 import { AGENT_EFFORT } from '../env';
 import { db, one } from '../supabase';
-import { ALL, loadVault, loadWeights, renderVaultForPrompt, upsertWeight } from '../vault';
+import { ALL, loadVault, loadWeights, renderVaultForPrompt, UITGEFASEERDE_HOOKS, upsertWeight } from '../vault';
 import { median } from '../tracking/performance';
 import { clipNummerUitNaam, planInfo, planVoorRender, type RenderJobRij } from '../tracking/leerlus';
 
@@ -548,6 +548,9 @@ function enforceRules(proposal: RetroProposal, eligible: GroupStats[], toetsbaar
     .map((w) => {
       const stat = byKey.get(`${w.entity}:${w.slug}:${w.platform}:${w.theme}`);
       if (!stat) return null;
+      // Een hook die de clipregels verbieden krijgt geen gewicht meer: de
+      // planner biedt hem toch niet aan (vault/index.ts).
+      if (w.entity === 'hook' && UITGEFASEERDE_HOOKS.has(w.slug)) return null;
 
       const current = stat.huidig_gewicht;
       const clamped = Math.min(
