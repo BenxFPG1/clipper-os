@@ -177,8 +177,9 @@ async function main() {
     herstelSprekerKader([bw], [{ volgorde: 1, t: 0.15, soort: 'buiten', waarde: 0.35, gezicht: { x: 0.81, breedte: 0.08, top: 0.3, hoogte: 0.2 } }]);
     toets('ronde 1: kader naar het gezicht aan het begin', bw.focusX === 0.81, String(bw.focusX));
     herstelSprekerKader([bw], [{ volgorde: 1, t: 1.65, soort: 'buiten', waarde: 0.3, gezicht: { x: 0.71, breedte: 0.08, top: 0.3, hoogte: 0.2 } }]);
-    const ub = uitsnedeVan(bw.focusX ?? 0.5, bw.zoom ?? basisZoom(bw), bw.focusY ?? 0.5);
-    toets('ronde 2: kader tussen beide standen, beide hoofden erin', Math.abs((bw.focusX ?? 0) - 0.76) < 0.001 && ub.x0 <= 0.67 && ub.x1 >= 0.85, JSON.stringify({ focus: bw.focusX, zoom: bw.zoom, x0: ub.x0, x1: ub.x1 }));
+    const sp2 = bw.spoor ?? [];
+    const opT = (t: number) => sp2.reduce((a, b) => (Math.abs(b.t - t) < Math.abs(a.t - t) ? b : a)).x;
+    toets('ronde 2: het kader volgt de spreker (spoor van 0,81 naar 0,71)', sp2.length >= 2 && opT(0.15) === 0.81 && opT(1.65) === 0.71 && opT(0) === 0.81 && opT(2) === 0.71, JSON.stringify(sp2));
   }
 
   console.log('tweeshot alleen als het werkt in 9:16');

@@ -575,8 +575,20 @@ export function herstelSprekerKader(segmenten: Shot[], fouten: SprekerFout[]): {
       const xs = seg.herstelGezichten.map((g) => g.x);
       const spreiding = Math.max(...xs) - Math.min(...xs);
       if (eerder.length && spreiding > 0.03) {
+        // Eén vast kader op het midden hield beide standen in beeld, maar
+        // allebei 20% uit het midden (ronde 13 van de ambulanceclip). De
+        // spreker beweegt; het kader moet meebewegen. Van de gemeten standen
+        // een spoor maken, zodat de render rustig van de ene naar de andere
+        // glijdt.
+        const punten = [...seg.herstelGezichten].sort((a, b) => a.t - b.t);
+        seg.spoor = [
+          { t: seg.start, x: punten[0].x },
+          ...punten.map((g) => ({ t: g.t, x: g.x })),
+          { t: seg.end, x: punten[punten.length - 1].x },
+        ];
+        seg.spreiding = spreiding;
         x = (Math.max(...xs) + Math.min(...xs)) / 2;
-        const nodig = spreiding + 1.4 * Math.max(breedte, ...seg.herstelGezichten.map((g) => g.breedte));
+        const nodig = 1.4 * Math.max(breedte, ...seg.herstelGezichten.map((g) => g.breedte)) + 0.05;
         seg.zoomPlafond = Math.min(seg.zoomPlafond ?? Infinity, Math.max(1, (1080 / (1920 * (16 / 9))) / nodig));
       }
     }
