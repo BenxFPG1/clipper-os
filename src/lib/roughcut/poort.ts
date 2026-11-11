@@ -45,7 +45,7 @@ export const TEASE_MAX_DUUR = 4.5;
 
 export type PoortIngreep = {
   volgorde: number;
-  regel: 'halfFragment' | 'woordgrens' | 'overlap' | 'ongeldig' | 'tease';
+  regel: 'halfFragment' | 'woordgrens' | 'overlap' | 'ongeldig' | 'tease' | 'opening';
   wat: string;
 };
 
@@ -388,6 +388,27 @@ export function poort(
     return false;
   });
   uit = geldig;
+
+  // Regel 4: de clip opent met spraak. Valt het eerste woord meer dan een
+  // halve seconde na het begin, dan schuift het begin op tot vlak ervoor.
+  // Platina: 0,66 s stilte voor "Vier jaar op rij" — precies de seconde
+  // waarin een kijker beslist of hij blijft. Alleen binnen hetzelfde
+  // segment, en alleen als er tussen het oude begin en dat woord geen ander
+  // woord klinkt (dan zou je een woord wegknippen).
+  const eerste = uit[0];
+  if (eerste && bronWoorden?.length && !eerste.tease) {
+    const woord = bronWoorden.find((w) => w.e > eerste.start + 0.02 && w.s < eerste.end);
+    const ruimte = instelling('POORT_OPENING_MAX');
+    if (woord && woord.s - eerste.start > ruimte && woord.s - instelling('POORT_ADEM_VOOR') < eerste.end - minSegment) {
+      const nieuw = Math.round((woord.s - instelling('POORT_ADEM_VOOR')) * 1000) / 1000;
+      ingrepen.push({
+        volgorde: eerste.volgorde,
+        regel: 'opening',
+        wat: `begin ${eerste.start.toFixed(2)} → ${nieuw.toFixed(2)}: ${(woord.s - eerste.start).toFixed(2)} s stilte vóór "${woord.w}"`,
+      });
+      verzetGrens(eerste, { start: nieuw });
+    }
+  }
 
   return { segmenten: uit, ingrepen };
 }

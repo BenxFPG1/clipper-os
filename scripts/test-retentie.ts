@@ -190,6 +190,20 @@ console.log('grenzen');
 }
 
 // ---------------------------------------------------------------------------
+console.log('kaderwissel op het zoomplafond: dan iets wijder');
+{
+  // Koen: een hoofd en profil met plafond 1,15. Een punch-in kan niet, dus
+  // wisselt het kader om met een iets wijder kader.
+  const woorden = spraak(100, 40, {});
+  const eind = woorden[woorden.length - 1].e + 0.1;
+  const segs = [shot(1, 99.9, eind, { zoom: 1.15, zoomPlafond: 1.15, focusX: 0.58, transcript_fragment: 'woord0 woord1 woord2 woord3' } as Partial<Shot>)];
+  const uit = pasRetentieToe(segs, { bronWoorden: woorden, doelen, ondertitels: true });
+  const zooms = [...new Set(uit.segmenten.map((s) => s.zoom))];
+  toets('meerdere kaders, niets boven het plafond', zooms.length >= 2 && zooms.every((z) => (z ?? 0) <= 1.15 + 1e-9), JSON.stringify(zooms));
+  const m = meetRetentie(uit.segmenten, { bronWoorden: woorden, doelen, ondertitels: true });
+  toets('geen beeldgat boven het doel', (m.maxGatBeeld ?? 99) <= doelen.maxSecondenZonderVisueleVerandering + 0.5, String(m.maxGatBeeld));
+}
+
 console.log('volgnummers');
 {
   // Een lang shot met veel pauzes naast een sprekerswissel-helft (2,5): de

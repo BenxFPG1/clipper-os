@@ -433,17 +433,28 @@ type Snede = {
   soort: 'pauze' | 'wissel' | 'eerste_wissel';
 };
 
-/** Zoom van deel k: afwisselend het basiskader en een punch-in, nooit wijder dan de basis. */
-function wisselZoom(basis: number, k: number): number | undefined {
+/**
+ * Zoom van deel k: afwisselend het basiskader en een punch-in.
+ *
+ * Kan er niet verder ingezoomd worden (ZOOM_MAX, of het plafond waarbij het
+ * hele hoofd nog past), dan wisselt het om met een iets wijder kader —
+ * zolang de spreker daarin nog te centreren is. Eerst gaf dat "geen
+ * wissel": de Koen-clip stond 9,2 s op één kader, omdat de punch-ins van
+ * de retentie later op het plafond werden afgekapt en wegvielen.
+ */
+function wisselZoom(basis: number, k: number, seg?: Pick<Shot, 'zoomPlafond' | 'focusX'>): number | undefined {
   const bump = instelling('ZOOM_NAADBUMP');
-  const max = instelling('ZOOM_MAX');
+  const max = Math.min(instelling('ZOOM_MAX'), seg?.zoomPlafond ?? Infinity);
   const minVerschil = instelling('ZOOM_NAAD_MIN_VERSCHIL');
   const inZoom = Math.min(max, basis + bump);
-  // Wijder dan de basis gaat niet: de basiszoom is vaak juist nodig om de
-  // spreker te kúnnen centreren. Kan er niet ingezoomd worden, dan laten we
-  // het kader aan de naadbump (pasNaadZoomToe) over.
-  if (inZoom - basis < minVerschil) return undefined;
-  return rond(k % 2 === 0 ? basis : inZoom, 3);
+  if (inZoom - basis >= minVerschil) return rond(k % 2 === 0 ? basis : inZoom, 3);
+  // Uitzoomen: alleen als de spreker in het wijdere kader nog in het midden
+  // kan staan (aan de rand is de basiszoom juist nodig om te centreren).
+  const rand = Math.min(seg?.focusX ?? 0.5, 1 - (seg?.focusX ?? 0.5));
+  const centreerbaar = rand > 0.01 ? (1080 / (1920 * (16 / 9))) / (2 * rand) : Infinity;
+  const uitZoom = Math.max(1, basis - bump, centreerbaar);
+  if (basis - uitZoom < minVerschil) return undefined;
+  return rond(k % 2 === 0 ? basis : uitZoom, 3);
 }
 
 /**
@@ -496,7 +507,7 @@ function knipInDelen(seg: Shot, snedes: Snede[], ruimte = 0.5): Shot[] {
     };
     deel.spoor = knipSpoor(seg.spoor);
     deel.spoorY = knipSpoor(seg.spoorY);
-    const zoom = wisselZoom(basis, k);
+    const zoom = wisselZoom(basis, k, seg);
     if (zoom !== undefined) deel.zoom = zoom;
     delen.push(deel);
   }

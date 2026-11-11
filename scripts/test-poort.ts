@@ -346,6 +346,27 @@ console.log('reactie — de zin na de punchline blijft erbij');
   toets('staart springt niet naar een woord uit een latere zin', a?.end != null && a.end < 7, JSON.stringify(a));
 }
 
+console.log('woordanker — een los kort woord uit de vorige zin is geen begin');
+{
+  const zin = 'met je handen jaren wat moeten we nu gaan doen je hebt ook je hypotheek je wil misschien nog wat boodschappen doen';
+  const bron: BronWoord[] = zin.split(' ').map((w, i) => ({ w, s: 317.7 + i * 0.3, e: 317.7 + i * 0.3 + 0.25 }));
+  const a = vindFragment(bron, 'Je hebt ook je hypotheek. Je wil misschien nog wat boodschappen doen.', 318);
+  const verwacht = bron[10].s;
+  toets('anker begint bij "Je hebt", niet bij "je" in "met je handen"', a?.start === verwacht, JSON.stringify({ start: a?.start, verwacht }));
+}
+
+console.log('opening — de clip begint met spraak');
+{
+  const w: BronWoord[] = [{ w: 'kwetsbaar.', s: 282.86, e: 283.44 }, { w: 'Vier', s: 284.26, e: 284.56 }, { w: 'jaar', s: 284.56, e: 284.76 }, { w: 'op', s: 284.76, e: 284.94 }];
+  const p = poort([shot(1, 283.6, 290)], w);
+  const s1 = p.segmenten[0];
+  toets('0,66 s stilte vooraf: begin schuift naar vlak voor "Vier"', Math.abs(s1.start - (284.26 - 0.12)) < 0.001 && p.ingrepen.some((i) => i.regel === 'opening'), JSON.stringify({ start: s1.start, ingrepen: p.ingrepen }));
+  const kort = poort([shot(1, 284.0, 290)], w);
+  toets('korte stilte: geen ingreep, opening binnen de grens', !kort.ingrepen.some((i) => i.regel === 'opening') && 284.26 - kort.segmenten[0].start <= 0.45, JSON.stringify(kort.segmenten[0]));
+  const tweede = poort([shot(1, 283.6, 290), shot(2, 300, 305)], w);
+  toets('alleen het eerste shot', tweede.ingrepen.filter((i) => i.regel === 'opening').every((i) => i.volgorde === 1));
+}
+
 console.log('kadercontrole — een gevolgd shot past over het hele spoor');
 {
   // Spreker staat aan de rechterrand: het kader kan niet verder mee, dus moet

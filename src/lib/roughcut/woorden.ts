@@ -337,11 +337,16 @@ export function vindFragment(
     let laatsteDoel = -1;
     let eenNaLaatsteMatch = -1;
     let eenNaLaatsteDoel = -1;
+    let tweedeMatch = -1;
+    let tweedeDoel = -1;
     while (k < n && d < m) {
       if (lijkt(venster[k].n, doel[d]) && dp[k][d] === 1 + dp[k + 1][d + 1]) {
         if (eersteMatch < 0) {
           eersteMatch = k;
           eersteDoel = d;
+        } else if (tweedeMatch < 0) {
+          tweedeMatch = k;
+          tweedeDoel = d;
         }
         eenNaLaatsteMatch = laatsteMatch;
         eenNaLaatsteDoel = laatsteDoel;
@@ -366,6 +371,16 @@ export function vindFragment(
       laatsteDoel - eenNaLaatsteDoel <= 2
     ) {
       laatsteMatch = eenNaLaatsteMatch;
+    }
+
+    // Hetzelfde aan de kop: een los kort woord ("je") vier of meer woorden
+    // vóór de rest van de match is een toevalstreffer uit de vorige zin.
+    // Michelle: "…met JE handen jaren. Wat moeten we nu gaan doen? Je hebt
+    // ook je hypotheek" — de clip begon 2,8 s te vroeg, met een vreemde
+    // aanloop en een leeg beeld.
+    if (tweedeMatch >= 0 && tweedeMatch - eersteMatch > 4 && tweedeDoel - eersteDoel <= 2) {
+      eersteMatch = tweedeMatch;
+      eersteDoel = tweedeDoel;
     }
 
     // Zegt de spreker de slotzin nog eens ("Je bent echt dom man. Je bent echt

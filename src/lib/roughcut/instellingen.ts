@@ -83,6 +83,8 @@ const STANDAARD = {
 
   /** Poort: ademruimte vóór en ná een knip (s). */
   POORT_ADEM_VOOR: 0.12,
+  /** Zoveel stilte mag er hoogstens aan het begin van de clip zitten voor het eerste woord (de keuring eist ≤ 0,6 s). */
+  POORT_OPENING_MAX: 0.45,
   POORT_ADEM_NA: 0.2,
   /** Poort: onder deze lengte bestaat een segment niet. */
   POORT_MIN_SEGMENT: 0.6,
