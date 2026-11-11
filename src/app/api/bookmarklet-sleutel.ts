@@ -25,5 +25,9 @@ export function bookmarkletSleutelKlopt(sleutel: string | null): boolean {
   }
   // Zonder sleutel in de omgeving is de route dicht, niet open.
   if (!verwacht || !sleutel) return false;
-  return sleutel === verwacht;
+  // Constante tijd: de duur van de vergelijking verraadt niet hoeveel tekens klopten.
+  if (sleutel.length !== verwacht.length) return false;
+  let verschil = 0;
+  for (let i = 0; i < verwacht.length; i++) verschil |= sleutel.charCodeAt(i) ^ verwacht.charCodeAt(i);
+  return verschil === 0;
 }

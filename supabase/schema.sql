@@ -515,29 +515,26 @@ create table if not exists trend_rapporten (
 );
 
 
--- ============================================================ gebruikerssysteem (v2.0)
--- Eenvoudig gebruikerssysteem met wachtwoorden in platte tekst (voor interne tool)
+-- ============================================================ toegang (nov 2026)
+-- Inloggen gaat alleen via Google (Supabase Auth). Deze tabel is de ledenlijst:
+-- wie erin staat mag de app in, is_admin bepaalt de rol. Geen wachtwoorden.
+-- RLS staat aan zonder policies: alleen de service-role key (server) leest hem.
 
-create table if not exists users (
+create table if not exists app_users (
   id uuid primary key default gen_random_uuid(),
   email text unique not null,
   name text,
-  password text not null,  -- Platte tekst, zodat admin het kan terugzien
   is_admin boolean not null default false,
   created_at timestamptz not null default now(),
   last_login_at timestamptz
 );
+alter table app_users enable row level security;
 
--- Audit-log voor wachtwoord opvragingen door admin
-create table if not exists password_access_log (
-  id uuid primary key default gen_random_uuid(),
-  admin_user_id uuid references users(id) on delete cascade,
-  target_user_id uuid references users(id) on delete cascade,
-  ip_address text,
-  user_agent text,
-  accessed_at timestamptz not null default now()
-);
-create index if not exists password_access_log_admin_idx on password_access_log (admin_user_id, accessed_at desc);
+-- Opruimen van het oude wachtwoordslot (zie supabase/migraties/2026-11-11-login.sql).
+alter table app_users drop column if exists password;
+drop table if exists sessions;
+drop table if exists password_access_log;
+drop table if exists users;
 
 
 -- ============================================================ research-kwaliteit (sep 2026)

@@ -54,11 +54,7 @@ Interne tool voor de clipping-workflow: van lange bronvideo naar strategisch cli
 
 3. **Clip-plan** — op de videopagina op "Clip-plan genereren". Twee Claude-calls: eerst de character map over de hele video, dan het plan. Duurt enkele minuten.
 4. **Editen en posten** — Marlou werkt de kaarten in de plan-editor af, zet de status om en plakt de post-URL. Zodra de URL binnenkomt gaat de clip op `posted` met een `posted_at`; dat is het nulpunt voor alle tijdvensters.
-5. **Tracking** — draait vanzelf elke 6 uur (`vercel.json`). Handmatig:
-
-   ```bash
-   curl -H "Authorization: Bearer $CRON_SECRET" http://localhost:3000/api/cron/track
-   ```
+5. **Tracking** — draait vanzelf vier keer per dag (`.github/workflows/clipper-jobs.yml`). Handmatig: `npm run job -- tracking`.
 
 6. **Wekelijkse retro** — zondagochtend. Het voorstel komt in `/inbox`; Antonie keurt goed of af. Pas bij goedkeuring verandert de vault, met changelog-entry en version bump.
 

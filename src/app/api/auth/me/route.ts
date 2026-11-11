@@ -1,17 +1,13 @@
-import { NextResponse } from 'next/server';
-import { getUserFromRequest } from '@/lib/auth';
+import { NextRequest, NextResponse } from 'next/server';
 
-export async function GET(request: Request) {
-  const user = await getUserFromRequest(request);
-  
-  if (!user) {
-    return NextResponse.json({ error: 'Niet ingelogd' }, { status: 401 });
-  }
-
+/** Wie is er ingelogd? De middleware heeft dat al vastgesteld en op het verzoek gezet. */
+export async function GET(request: NextRequest) {
+  const email = request.headers.get('x-user-email');
+  if (!email) return NextResponse.json({ error: 'Niet ingelogd' }, { status: 401 });
   return NextResponse.json({
-    id: user.id,
-    email: user.email,
-    name: user.name,
-    is_admin: user.is_admin
+    id: request.headers.get('x-user-id'),
+    email,
+    name: request.headers.get('x-user-name'),
+    is_admin: request.headers.get('x-is-admin') === 'true',
   });
 }

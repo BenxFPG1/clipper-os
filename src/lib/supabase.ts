@@ -7,8 +7,8 @@ let cached: SupabaseClient | null = null;
 const SUPABASE_TIMEOUT_MS = Number(process.env.SUPABASE_TIMEOUT_MS ?? '90000');
 
 /**
- * Service-role client. Alleen server-side gebruiken: Clipper OS is een interne
- * tool zonder auth, dus er is geen browser-client met anon key.
+ * Service-role client. Alleen server-side gebruiken. De browser heeft alleen
+ * de anon key (voor de Google-login); RLS houdt die van alle tabellen weg.
  */
 export function db(): SupabaseClient {
   if (!cached) {

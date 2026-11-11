@@ -15,10 +15,8 @@ const FOUTTEKST: Record<string, string> = {
 };
 
 /**
- * Laag 1 van twee: de Google-poort.
- *
- * Deze pagina heeft bewust maar één knop. Wie hier doorheen komt, belandt op
- * /login voor laag 2 (e-mail + wachtwoord). Pas daarna is de app open.
+ * Inloggen: één knop, met Google. Wie op de toegangslijst staat is daarna
+ * meteen in de app.
  */
 export default function ToegangPage() {
   const [bezig, setBezig] = useState(false);
@@ -45,8 +43,7 @@ export default function ToegangPage() {
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
-        // Na Google komt de callback, en die stuurt door naar /login — het
-        // tweede slot. De volgorde staat hier vast, niet in de URL.
+        // Na Google komt de callback, en die stuurt door naar de app.
         redirectTo: `${window.location.origin}/auth/callback`,
         // Zonder dit hergebruikt Google stilzwijgend het account waarmee je
         // daar al ingelogd bent. Word je met dat account geweigerd, dan kom je
@@ -67,7 +64,7 @@ export default function ToegangPage() {
       <div className="w-full max-w-md space-y-8">
         <div className="text-center">
           <h1 className="text-3xl font-bold text-gray-900">Clipper OS</h1>
-          <p className="mt-2 text-sm text-gray-600">Log eerst in met Google om verder te gaan.</p>
+          <p className="mt-2 text-sm text-gray-600">Log in met je Google-account.</p>
         </div>
 
         <button

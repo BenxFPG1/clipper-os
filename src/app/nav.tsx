@@ -11,7 +11,7 @@ import { roepApiAan } from './api-aanroep';
  * structuur aan wie nog voor de deur staat (en levert links op die toch
  * allemaal terugsturen naar het inlogscherm).
  */
-const VERBORGEN_OP = ['/toegang', '/login', '/register', '/auth', '/privacy', '/voorwaarden'];
+const VERBORGEN_OP = ['/toegang', '/auth', '/privacy', '/voorwaarden'];
 
 const NAV = [
   { href: '/', label: 'Dashboard' },
@@ -70,7 +70,7 @@ function useTeBeoordelen(pathname: string | null): number | null {
 }
 
 /**
- * Beëindigt beide sloten tegelijk (app-sessie én Google-sessie) en zet je
+ * Logt uit bij Google en zet je
  * weer voor de deur. Zonder deze knop was de enige uitweg cookies wissen.
  */
 function UitlogKnop() {

@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { mailMagDoorDePoort, poortClient } from '@/lib/google-poort';
+import { poortClient } from '@/lib/google-poort';
+import { gebruikerVoor } from '@/lib/toegang';
 
 /**
  * Waar Google op terugkomt. Wisselt de eenmalige code in voor een sessie en
- * stuurt door naar /login — het tweede slot.
+ * stuurt door naar de app.
  *
  * Wie niet op de toegangslijst staat wordt hier meteen weer uitgelogd: anders
  * zou de sessie blijven staan en de poort bij elk verzoek opnieuw "nee" moeten
@@ -23,7 +24,7 @@ export async function GET(request: NextRequest) {
 
   // De response maken we vooraf: de Supabase-client schrijft zijn
   // sessiecookies erop, en precies díe response moeten we teruggeven.
-  const response = NextResponse.redirect(new URL('/login', url.origin));
+  const response = NextResponse.redirect(new URL('/', url.origin));
   const supabase = poortClient(request, response);
 
   const { data, error } = await supabase.auth.exchangeCodeForSession(code);
@@ -31,7 +32,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.redirect(new URL('/toegang?fout=inloggen-mislukt', url.origin));
   }
 
-  if (!mailMagDoorDePoort(data.user.email)) {
+  if (!(await gebruikerVoor(data.user.email))) {
     await supabase.auth.signOut();
     return NextResponse.redirect(new URL('/toegang?fout=geen-toegang', url.origin));
   }
