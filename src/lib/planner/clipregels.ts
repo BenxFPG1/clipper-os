@@ -630,7 +630,11 @@ export function pasClipRegelsToe(
   }
 
   // --- 1. Lengte per format -------------------------------------------------
-  const { min, max } = lengteBereik(formaat);
+  const verhaal = invoer.soort === 'verhaal';
+  const bereik = lengteBereik(formaat);
+  const min = bereik.min;
+  // Een verhaal uit meerdere stukken heeft meer ruimte nodig dan één moment.
+  const max = verhaal ? Math.max(bereik.max, instelling('CLIP_VERHAAL_MAX_DUUR')) : bereik.max;
   const vast = (s: ShotLike, i: number) => i === 0 || s.functie === 'payoff' || s.functie === 'hook';
   let duur = clipDuur({ shots });
   while (duur > max) {
@@ -654,13 +658,30 @@ export function pasClipRegelsToe(
   if (twee) signalen.push(twee);
   {
     const sp = sprongen({ shots });
-    const max = maxSprongen(formaat);
-    if (sp.length > max) {
-      fouten.push(`${sp.length} sprongen door de bron (shot ${sp.map((x) => `${x.volgorde}: ${x.seconden > 0 ? '+' : ''}${x.seconden} s`).join(', ')}), meer dan ${max} voor ${formaat} — losse zinnen aan elkaar in plaats van één doorlopend verhaal`);
-    }
-    const verst = maxSprongAfstand(formaat);
-    for (const x of sp.filter((y) => Math.abs(y.seconden) > verst)) {
-      fouten.push(`sprong van ${Math.abs(x.seconden)} s door de bron bij shot ${x.volgorde}, meer dan ${verst} s voor ${formaat} — dit zijn twee losse scènes, geen doorlopend verhaal`);
+    if (verhaal) {
+      // Verhaalclip: stukken uit verschillende delen van de video mogen, mits
+      // het een verhaal is en geen opsomming. Dat is hier mechanisch te
+      // toetsen op drie punten; of het verhaal ook goed is beoordeelt de
+      // verhaaldokter.
+      const maxV = instelling('CLIP_VERHAAL_MAX_SPRONGEN');
+      if (sp.length > maxV) fouten.push(`verhaalclip met ${sp.length} sprongen, meer dan ${maxV} — te veel losse stukken om nog één verhaal te zijn`);
+      const minStuk = instelling('CLIP_VERHAAL_MIN_STUK');
+      for (const x of sp) {
+        const s = shots.find((y) => y.volgorde === x.volgorde);
+        if (!s) continue;
+        if ((s.brug ?? '').trim().length < 15) fouten.push(`verhaalclip: shot ${s.volgorde} springt ${Math.abs(x.seconden)} s door de bron zonder brug — waarom volgt dit op wat de kijker net hoorde?`);
+        if (s.end - s.start < minStuk) fouten.push(`verhaalclip: shot ${s.volgorde} is ${(s.end - s.start).toFixed(1)} s na een sprong — te kort om te landen (minstens ${minStuk} s)`);
+      }
+      if (sp.some((x) => x.seconden < -1)) signalen.push('verhaalclip springt terug in de tijd — klopt de volgorde voor iemand die de video niet kent?');
+    } else {
+      const max = maxSprongen(formaat);
+      if (sp.length > max) {
+        fouten.push(`${sp.length} sprongen door de bron (shot ${sp.map((x) => `${x.volgorde}: ${x.seconden > 0 ? '+' : ''}${x.seconden} s`).join(', ')}), meer dan ${max} voor ${formaat} — losse zinnen aan elkaar in plaats van één doorlopend verhaal (of maak er een verhaalclip van, met een brug per stuk)`);
+      }
+      const verst = maxSprongAfstand(formaat);
+      for (const x of sp.filter((y) => Math.abs(y.seconden) > verst)) {
+        fouten.push(`sprong van ${Math.abs(x.seconden)} s door de bron bij shot ${x.volgorde}, meer dan ${verst} s voor ${formaat} — dit zijn twee losse scènes, geen doorlopend verhaal`);
+      }
     }
   }
   for (const h of herhaaldeZinnen({ shots })) {

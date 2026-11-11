@@ -152,6 +152,14 @@ const STANDAARD = {
   /** Vanaf hoeveel overgeslagen seconden het een sprong is; korter is aanscherpen (een pauze, een zijpad eruit). */
   CLIP_SPRONG_MIN: 15,
   /**
+   * Verhaalclips: een tweede soort clip, uit meerdere stukken van de video.
+   * Meer sprongen toegestaan, zonder afstandsgrens, maar elk stuk moet zijn
+   * plek verdienen (een brug naar het vorige) en lang genoeg zijn om te landen.
+   */
+  CLIP_VERHAAL_MAX_SPRONGEN: 4,
+  CLIP_VERHAAL_MIN_STUK: 3,
+  CLIP_VERHAAL_MAX_DUUR: 60,
+  /**
    * Hoe ver één sprong door de bron hoogstens mag zijn (s). Het aantal
    * sprongen klopte bij MUKBANG, maar stukken van 2,5 minuut uit elkaar zijn
    * twee scènes: een grap heeft één doorlopende scène nodig.

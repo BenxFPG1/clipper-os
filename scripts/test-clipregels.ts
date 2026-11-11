@@ -317,6 +317,24 @@ async function main() {
     toets('prompt noemt de collage- en sprongregel', /GEEN COLLAGE/.test(planExamenSystem(4, { naam: 'uitleg', min: 25, max: 50 })) && /GEEN GAT BIJ EEN SPRONG/.test(planExamenSystem(4, { naam: 'uitleg', min: 25, max: 50 })));
     toets('schets stuurt niet meer op fragmenten die ver uit elkaar liggen', !/fragmenten die ver uit elkaar liggen/.test(schetsSystem(4, { naam: 'uitleg', min: 25, max: 50 })));
 
+    // Verhaalclip: meer sprongen mag, mits elk stuk een brug heeft en lang genoeg is.
+    const stuk = (v: number, van: number, tot: number, f: Parameters<typeof shot>[3], tekst: string, brug?: string) => ({ ...shot(v, van, tot, f, tekst), ...(brug ? { brug } : {}) });
+    const verhaalShots = (brug: boolean) => [
+      stuk(1, 10, 18, 'hook', 'Hij zei dat hij nooit zou verkopen.'),
+      stuk(2, 200, 210, 'setup', 'Drie maanden later stond de koper voor de deur.', brug ? 'De belofte uit het begin wordt hier op de proef gesteld.' : undefined),
+      stuk(3, 500, 510, 'escalatie', 'Het bod was twee keer zo hoog als verwacht.', brug ? 'Dit maakt de verleiding concreet: het bedrag.' : undefined),
+      stuk(4, 900, 912, 'payoff', 'En toen heeft hij getekend, dezelfde middag nog.', brug ? 'De afloop: hij breekt zijn eigen belofte.' : undefined),
+    ];
+    const metBrug = pasClipRegelsToe({ ...clip(verhaalShots(true)), soort: 'verhaal' } as Clip, 'interview');
+    toets('verhaalclip met brug per stuk: sprongen zijn geen fout', !metBrug.oordeel.fouten.some((f) => /sprong|brug/.test(f)), metBrug.oordeel.fouten.join(' | '));
+    const zonderBrug = pasClipRegelsToe({ ...clip(verhaalShots(false)), soort: 'verhaal' } as Clip, 'interview');
+    toets('verhaalclip zonder brug: harde fout per sprong', zonderBrug.oordeel.fouten.filter((f) => /zonder brug/.test(f)).length === 3, zonderBrug.oordeel.fouten.join(' | '));
+    const alsMoment = pasClipRegelsToe(clip(verhaalShots(true)), 'interview');
+    toets('dezelfde shots als gewone clip: te veel sprongen', alsMoment.oordeel.fouten.some((f) => /sprongen door de bron/.test(f)));
+    const teKort = pasClipRegelsToe({ ...clip([verhaalShots(true)[0], stuk(2, 200, 201.5, 'setup', 'Drie maanden later.', 'De belofte wordt op de proef gesteld.'), verhaalShots(true)[3]]), soort: 'verhaal' } as Clip, 'interview');
+    toets('verhaalclip: stuk van 1,5 s na een sprong is te kort', teKort.oordeel.fouten.some((f) => /te kort om te landen/.test(f)), teKort.oordeel.fouten.join(' | '));
+    toets('prompt beschrijft de verhaalclip en de brug', /VERHAALCLIP/.test(planExamenSystem(4, { naam: 'interview', min: 25, max: 50 })) && /"brug"/.test(schetsSystem(4, { naam: 'interview', min: 25, max: 50 })));
+
     // Citaatcontrole: de shottekst moet op die tijd in de bron staan.
     const echt = pasClipRegelsToe(clip([shot(1, 95, 98, 'hook', 'Goud beweegt op vertrouwen en monetaire politiek.'), shot(2, 98, 103, 'payoff', 'En platina beweegt ook daarop, maar ook op autoverkopen.')]), 'uitleg', { transcript: bron });
     toets('citaat dat in de bron staat: geen fout', !echt.oordeel.fouten.some((f) => /staat niet in de bron/.test(f)), echt.oordeel.fouten.join(' | '));

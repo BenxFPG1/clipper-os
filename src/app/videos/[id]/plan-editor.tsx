@@ -72,6 +72,11 @@ function ClipCard({ clip, row, variants }: { clip: Clip; row?: ClipRow; variants
           <div className="font-medium">
             <span className="mr-2 text-neutral-500">#{clip.prioriteit}</span>
             {clip.titel_intern}
+            {clip.soort === 'verhaal' && (
+              <span className="ml-2 rounded bg-sky-900/60 px-2 py-0.5 text-xs text-sky-200" title="Uit meerdere delen van de video samengesteld tot één verhaal">
+                verhaal uit {clip.shots.length} stukken
+              </span>
+            )}
             {clip.score !== undefined && (
               <span className="ml-2 rounded bg-neutral-800 px-2 py-0.5 text-xs text-neutral-300">
                 score {clip.score}/10

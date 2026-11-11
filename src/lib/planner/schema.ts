@@ -3,7 +3,7 @@ import { editorTekst } from '../roughcut/editortekst';
 
 export const SCHEMA_VERSION = '1.0';
 export const PROMPT_VERSION_CHARACTER_MAP = 'charmap-3.2';
-export const PROMPT_VERSION_PLAN = 'plan-7.3';
+export const PROMPT_VERSION_PLAN = 'plan-7.4';
 
 // ------------------------------------------------------- stap 1: character map
 export const sleutelmomentSchema = z.object({
@@ -84,6 +84,8 @@ export const shotSchema = z.object({
   end: z.number(),
   functie: z.enum(['hook', 'setup', 'escalatie', 'barst', 'payoff', 'button']),
   transcript_fragment: z.string(),
+  /** Verhaalclip: waarom dit stuk volgt op het vorige (wat de kijker net hoorde en wat dit eraan toevoegt). */
+  brug: z.string().optional(),
   /** Tot hier loopt de reactie op de punchline door (gezet door de clipregels). */
   reactie_tot: z.number().optional(),
   edit_notitie: z.string(),
@@ -128,6 +130,12 @@ export type PlanKaart = z.infer<typeof kaartSchema>;
 
 export const clipSchema = z.object({
   titel_intern: z.string(),
+  /**
+   * 'moment' (standaard): één doorlopend stuk bron. 'verhaal': drie tot vijf
+   * stukken uit verschillende delen van de video die samen één verhaal
+   * vertellen; elk stuk bouwt voort op het vorige (shots[].brug).
+   */
+  soort: z.enum(['moment', 'verhaal']).optional(),
   structure_type: z.string(),
   prioriteit: z.number().int().min(1),
   verwachte_sterkte: z.enum(['hoog', 'midden', 'vulling']),
@@ -290,11 +298,13 @@ export const schetsShotSchema = z.object({
   end: z.number(),
   functie: z.enum(['hook', 'setup', 'escalatie', 'barst', 'payoff', 'button']),
   transcript_fragment: z.string(),
+  brug: z.string().optional(),
   edit_notitie: z.string(),
 });
 
 export const schetsClipSchema = z.object({
   titel_intern: z.string(),
+  soort: z.enum(['moment', 'verhaal']).optional(),
   structure_type: z.string(),
   verwachte_sterkte: z.enum(['hoog', 'midden', 'vulling']),
   score: z.number().min(1).max(10),
