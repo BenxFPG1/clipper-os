@@ -49,6 +49,8 @@ export type Shot = {
   zoomPlafond?: number;
   /** Hoofd en profil: zoveel schuift het kader van het gezicht richting het achterhoofd. */
   profielSchuif?: number;
+  /** Gezichtsposities waar het zelfherstel dit shot al op corrigeerde; voorkomt heen-en-weer tussen rondes. */
+  herstelGezichten?: { t: number; x: number; breedte: number }[];
   /**
    * De bron is hier zelf een split screen; dit is het deel [van, tot] waar de
    * spreker in staat. Daarbuiten kadreren levert een halve persoon plus een

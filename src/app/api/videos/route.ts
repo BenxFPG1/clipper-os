@@ -3,7 +3,7 @@ import { db } from '@/lib/supabase';
 import { fetchYoutubeCaptions } from '@/lib/ingest/youtube';
 import { MissingBinaryError, transcribeYoutube } from '@/lib/ingest/whisper';
 import { parseManualTranscript, transcriptDuration } from '@/lib/ingest/transcript';
-import { startCloudRun } from '@/lib/jobs';
+import { queueAiJob, startCloudRun } from '@/lib/jobs';
 import { herkenBron } from '@/lib/ingest/bron-url';
 
 export const maxDuration = 300;
@@ -120,7 +120,22 @@ export async function POST(req: NextRequest) {
     }
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
-  return NextResponse.json({ video: data, segments: segments.length });
+
+  // Meteen door naar het clip-plan, net als bij een video die via de
+  // wachtrij binnenkomt: toevoegen en daarna nog apart op een knop moeten
+  // drukken was een stap die niemand miste tot hij hem vergat. Per campagne
+  // uit te zetten (auto_plan).
+  let planGestart = false;
+  try {
+    const { data: campagne } = await db().from('campaigns').select('auto_plan').eq('id', body.campaign_id).maybeSingle();
+    if (campagne?.auto_plan !== false) {
+      await queueAiJob('clip_plan', data.id as string, {});
+      planGestart = true;
+    }
+  } catch {
+    // De video staat er; het plan kan op de videopagina alsnog gestart worden.
+  }
+  return NextResponse.json({ video: data, segments: segments.length, planGestart });
 }
 
 /**

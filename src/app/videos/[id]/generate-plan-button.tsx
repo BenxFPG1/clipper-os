@@ -44,13 +44,13 @@ export function GeneratePlanButton({
         disabled={busy}
         className="rounded bg-neutral-100 px-4 py-2 text-sm font-medium text-neutral-900 disabled:opacity-40"
       >
-        {busy ? 'Bezig (kan enkele minuten duren)…' : hasPlan ? 'Nieuwe planversie genereren' : 'Clip-plan genereren'}
+        {busy ? 'Bezig (kan enkele minuten duren)…' : hasPlan ? 'Nieuw plan maken' : 'Zoek de beste momenten'}
       </button>
 
       {hasCharacterMap && (
         <label className="flex items-center gap-2 text-sm text-neutral-400">
           <input type="checkbox" checked={reuse} onChange={(e) => setReuse(e.target.checked)} />
-          Bestaande character map hergebruiken (sneller, goedkoper)
+          De eerdere analyse van de video hergebruiken (sneller)
         </label>
       )}
 

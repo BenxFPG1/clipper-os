@@ -30,6 +30,16 @@ export default async function VideoDetailPage({ params }: { params: { id: string
 
   const characterMap = video.character_map as CharacterMap | null;
 
+  // Loopt er al een opdracht voor het plan (meteen gestart bij het toevoegen)?
+  const { data: planJob } = await supabase
+    .from('ai_jobs')
+    .select('status')
+    .eq('soort', 'clip_plan')
+    .eq('doel_id', params.id)
+    .in('status', ['wachtend', 'bezig'])
+    .limit(1)
+    .maybeSingle();
+
   return (
     <div className="space-y-8">
       <div className="flex items-start justify-between gap-3">
@@ -45,10 +55,59 @@ export default async function VideoDetailPage({ params }: { params: { id: string
         <ArchiveButton videoId={video.id} gearchiveerd={Boolean(video.archived_at)} naArchiveren="/videos" />
       </div>
 
-      <GeneratePlanButton videoId={video.id} hasPlan={Boolean(latest)} hasCharacterMap={Boolean(characterMap)} />
+      {planJob && (
+        <section className="rounded border border-sky-900/60 bg-sky-950/20 p-4">
+          <h2 className="text-lg font-medium">De tool zoekt nu de beste momenten</h2>
+          <p className="mt-1 text-sm text-neutral-400">
+            {planJob.status === 'bezig' ? 'Bezig.' : 'Staat in de wachtrij.'} Dit duurt een paar minuten. Ververs
+            de pagina; zodra het plan er is kies je hier welke clips je wilt laten maken.
+          </p>
+        </section>
+      )}
+
+      {!latest && !planJob && (
+        <section className="rounded border border-amber-900/60 bg-amber-950/10 p-4">
+          <h2 className="text-lg font-medium">Stap 1: laat de beste momenten zoeken</h2>
+          <p className="mt-1 text-sm text-neutral-400">
+            De tool leest de hele video, kiest de momenten die als losse clip werken en schrijft per clip een plan.
+            Dat duurt een paar minuten; daarna kies je hier welke clips je wilt laten maken.
+          </p>
+          <div className="mt-3">
+            <GeneratePlanButton videoId={video.id} hasPlan={false} hasCharacterMap={Boolean(characterMap)} />
+          </div>
+        </section>
+      )}
+
+      {latest && <RenderPanel videoId={params.id} aantalClips={(latest.plan as ClipPlan).clips.length} />}
 
       {latest && (
-        <div className="rounded border border-neutral-800 p-4">
+        <section className="space-y-3">
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <h2 className="text-lg font-medium">Het plan: {(latest.plan as ClipPlan).clips.length} clips</h2>
+            <span className="text-sm text-neutral-500">
+              gemaakt op {datumTijd(latest.created_at)}
+              {plans && plans.length > 1 ? ` · versie ${plans.length}` : ''}
+            </span>
+          </div>
+          <PlanEditor
+            plan={latest.plan as ClipPlan}
+            clips={(clips ?? []) as never[]}
+            promptVersion={latest.prompt_version}
+            planCount={plans?.length ?? 1}
+          />
+          <details className="rounded border border-neutral-800 p-4">
+            <summary className="cursor-pointer text-sm text-neutral-400">Niet tevreden over het plan? Laat een nieuw plan maken</summary>
+            <div className="mt-3">
+              <GeneratePlanButton videoId={video.id} hasPlan hasCharacterMap={Boolean(characterMap)} />
+            </div>
+          </details>
+        </section>
+      )}
+
+      {latest && (
+        <details className="rounded border border-neutral-800 p-4">
+          <summary className="cursor-pointer font-medium">Zelf afwerken in Premiere</summary>
+          <div className="mt-4">
           {video.fps ? (
             <>
               <div className="flex flex-wrap items-center gap-3">
@@ -115,11 +174,12 @@ export default async function VideoDetailPage({ params }: { params: { id: string
             />
           </div>
         </div>
+        </details>
       )}
 
       {characterMap && (
         <details className="rounded border border-neutral-800 p-4">
-          <summary className="cursor-pointer font-medium">Character map</summary>
+          <summary className="cursor-pointer font-medium">Wie is wie in deze video (analyse)</summary>
           <div className="mt-4 space-y-4">
             {characterMap.personen.map((p) => (
               <div key={p.naam} className="rounded border border-neutral-800 p-3">
@@ -152,37 +212,6 @@ export default async function VideoDetailPage({ params }: { params: { id: string
             )}
           </div>
         </details>
-      )}
-
-      {latest && (
-        <details className="rounded border border-neutral-800 p-4">
-          <summary className="cursor-pointer text-sm text-neutral-500">
-            Liever kant-en-klare mp4&apos;s? (trager: renderen in de cloud)
-          </summary>
-          <div className="mt-3">
-            <RenderPanel videoId={params.id} aantalClips={(latest.plan as ClipPlan).clips.length} />
-          </div>
-        </details>
-      )}
-
-      {latest && (
-        <p className="text-sm text-neutral-500">
-          Nieuwste plan gegenereerd op {datumTijd(latest.created_at)} ({latest.prompt_version})
-          {plans && plans.length > 1 ? ` · ${plans.length} versies` : ''}
-        </p>
-      )}
-
-      {latest ? (
-        <PlanEditor
-          plan={latest.plan as ClipPlan}
-          clips={(clips ?? []) as never[]}
-          promptVersion={latest.prompt_version}
-          planCount={plans?.length ?? 1}
-        />
-      ) : (
-        <p className="rounded border border-dashed border-neutral-800 px-4 py-6 text-sm text-neutral-500">
-          Nog geen clip-plan. Genereer er een hierboven.
-        </p>
       )}
     </div>
   );

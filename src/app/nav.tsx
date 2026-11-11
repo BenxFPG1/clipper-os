@@ -13,16 +13,25 @@ import { roepApiAan } from './api-aanroep';
  */
 const VERBORGEN_OP = ['/toegang', '/auth', '/privacy', '/voorwaarden'];
 
+/**
+ * De hoofdroute, in de volgorde waarin je werkt: video erin, clips maken,
+ * beoordelen, posten en de cijfers bekijken.
+ */
 const NAV = [
-  { href: '/', label: 'Dashboard' },
-  { href: '/beoordelen', label: 'Beoordelen' },
+  { href: '/', label: 'Start' },
   { href: '/videos', label: "Video's" },
-  { href: '/opdrachten', label: 'Opdrachten' },
-  { href: '/outliers', label: 'Outliers' },
-  { href: '/scout', label: 'Research' },
-  { href: '/vault', label: 'Vault' },
-  { href: '/performance', label: 'Performance' },
-  { href: '/inbox', label: 'Agent-inbox' },
+  { href: '/beoordelen', label: 'Beoordelen' },
+  { href: '/performance', label: 'Resultaten' },
+];
+
+/** Alles wat je niet dagelijks nodig hebt. */
+const MEER = [
+  { href: '/opdrachten', label: 'Opdrachten', uitleg: 'briefings en scripts voor nieuwe opnames' },
+  { href: '/scout', label: 'Research', uitleg: 'accounts en zoektermen die de tool volgt' },
+  { href: '/outliers', label: 'Uitschieters', uitleg: 'posts van anderen die opvallend goed gingen' },
+  { href: '/vault', label: 'Kennisbank', uitleg: 'regels en lessen die de tool gebruikt' },
+  { href: '/inbox', label: 'Voorstellen', uitleg: 'wijzigingen die op jouw akkoord wachten' },
+  { href: '/instellingen', label: 'Instellingen', uitleg: 'ClipArmy-koppeling, verbruik en leerstand' },
 ];
 
 export function Nav() {
@@ -35,14 +44,38 @@ export function Nav() {
     <header className="border-b border-neutral-800">
       <nav className="mx-auto flex max-w-6xl flex-wrap items-center gap-x-6 gap-y-2 px-6 py-4">
         <span className="font-semibold tracking-tight">Clipper OS</span>
-        {NAV.map((item) => (
-          <Link key={item.href} href={item.href} className="text-sm text-neutral-400 hover:text-neutral-100">
-            {item.label}
-            {item.href === '/beoordelen' && teBeoordelen !== null && (
-              <span className={teBeoordelen > 0 ? 'text-amber-300' : ''}> ({teBeoordelen})</span>
-            )}
-          </Link>
-        ))}
+        {NAV.map((item) => {
+          const actief = item.href === '/' ? pathname === '/' : pathname?.startsWith(item.href);
+          return (
+            <Link
+              key={item.href}
+              href={item.href}
+              className={`text-sm hover:text-neutral-100 ${actief ? 'text-neutral-100' : 'text-neutral-400'}`}
+            >
+              {item.label}
+              {item.href === '/beoordelen' && teBeoordelen !== null && teBeoordelen > 0 && (
+                <span className="ml-1 rounded-full bg-amber-400 px-1.5 text-xs font-medium text-neutral-900">{teBeoordelen}</span>
+              )}
+            </Link>
+          );
+        })}
+        <details key={pathname} className="group relative">
+          <summary
+            className={`cursor-pointer list-none text-sm hover:text-neutral-100 ${
+              MEER.some((m) => pathname?.startsWith(m.href)) ? 'text-neutral-100' : 'text-neutral-400'
+            }`}
+          >
+            Meer ▾
+          </summary>
+          <div className="absolute left-0 z-20 mt-2 w-72 rounded border border-neutral-800 bg-neutral-950 p-1 shadow-xl">
+            {MEER.map((item) => (
+              <Link key={item.href} href={item.href} className="block rounded px-3 py-2 hover:bg-neutral-900">
+                <span className="text-sm text-neutral-100">{item.label}</span>
+                <span className="block text-xs text-neutral-500">{item.uitleg}</span>
+              </Link>
+            ))}
+          </div>
+        </details>
         <UitlogKnop />
       </nav>
     </header>

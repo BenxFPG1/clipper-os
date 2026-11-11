@@ -170,6 +170,15 @@ async function main() {
     const breed = (1080 / (1920 * (16 / 9))) / (sp.zoom ?? basisZoom(sp));
     toets('zelfherstel op spoor: uitsnede ruim genoeg voor beweging + meetverschil', breed >= 0.36 - 0.31 + 1.4 * 0.06 + 2 * 0.058 - 0.005, JSON.stringify({ zoom: sp.zoom, breed }));
     toets('zelfherstel op spoor: verre punten blijven op het spoor', sp.spoor!.find((p) => p.t === 2)!.x === 0.32, JSON.stringify(sp.spoor));
+    // Spreker beweegt binnen een vast shot: ronde 1 corrigeert op het begin
+    // (0,81), ronde 2 op het eind (0,71). Niet heen en weer, maar één kader
+    // dat beide standen bevat.
+    const bw: Shot = { ...shot(0, 2), focusX: 0.7, focusW: 0.08, gezicht: { x: 0.7, breedte: 0.08, top: 0.3, hoogte: 0.2 } };
+    herstelSprekerKader([bw], [{ volgorde: 1, t: 0.15, soort: 'buiten', waarde: 0.35, gezicht: { x: 0.81, breedte: 0.08, top: 0.3, hoogte: 0.2 } }]);
+    toets('ronde 1: kader naar het gezicht aan het begin', bw.focusX === 0.81, String(bw.focusX));
+    herstelSprekerKader([bw], [{ volgorde: 1, t: 1.65, soort: 'buiten', waarde: 0.3, gezicht: { x: 0.71, breedte: 0.08, top: 0.3, hoogte: 0.2 } }]);
+    const ub = uitsnedeVan(bw.focusX ?? 0.5, bw.zoom ?? basisZoom(bw), bw.focusY ?? 0.5);
+    toets('ronde 2: kader tussen beide standen, beide hoofden erin', Math.abs((bw.focusX ?? 0) - 0.76) < 0.001 && ub.x0 <= 0.67 && ub.x1 >= 0.85, JSON.stringify({ focus: bw.focusX, zoom: bw.zoom, x0: ub.x0, x1: ub.x1 }));
   }
 
   console.log('tweeshot alleen als het werkt in 9:16');

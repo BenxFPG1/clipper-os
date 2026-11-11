@@ -38,13 +38,14 @@ type Job = {
 const STATUS_TEKST: Record<Job['status'], string> = {
   wachtend: 'in de wachtrij',
   bezig: 'bezig met monteren…',
-  klaar: 'klaar om te downloaden',
+  klaar: 'klaar',
   mislukt: 'mislukt',
 };
 
 /**
- * Ruwe montages aanvragen en downloaden. De site rendert niet zelf (geen ffmpeg
- * op serverless); hij zet een opdracht klaar die in de cloud wordt opgepakt.
+ * Clips laten maken, bekijken en beoordelen. De site rendert niet zelf (geen
+ * ffmpeg op serverless); hij zet een opdracht klaar die in de cloud wordt
+ * opgepakt.
  */
 export function RenderPanel({ videoId, aantalClips }: { videoId: string; aantalClips: number }) {
   const [jobs, setJobs] = useState<Job[]>([]);
@@ -82,8 +83,8 @@ export function RenderPanel({ videoId, aantalClips }: { videoId: string; aantalC
     setMelding(
       json.melding ??
         (json.direct_gestart
-          ? 'Opdracht klaargezet — de cloud is direct gestart.'
-          : 'Opdracht klaargezet. De montage wordt binnen een kwartier opgepakt.'),
+          ? 'Gestart. Een clip duurt ongeveer 6 tot 12 minuten; deze pagina werkt zichzelf bij.'
+          : 'Klaargezet. Het begint binnen een uur; deze pagina werkt zichzelf bij.'),
     );
     laad();
   }
@@ -91,13 +92,10 @@ export function RenderPanel({ videoId, aantalClips }: { videoId: string; aantalC
   return (
     <section className="space-y-3 rounded border border-neutral-800 p-4">
       <div>
-        <h2 className="text-lg font-medium">Ruwe montages</h2>
-        <p className="mt-1 text-sm text-neutral-500">
-          De fragmenten uit het plan achter elkaar gezet, verticaal, klaar om in CapCut af te maken. Het monteren
-          gebeurt in de cloud; je krijgt hier een downloadlink.
-        </p>
-        <p className="mt-1 text-sm text-neutral-500">
-          Beoordeel elk bestand (goed / matig / weg) en plak de link zodra hij online staat: daar leert de tool van.
+        <h2 className="text-lg font-medium">Clips maken</h2>
+        <p className="mt-1 text-sm text-neutral-400">
+          Kies welke clips uit het plan je wilt. Je krijgt per clip een verticale video met ondertitels en muziek,
+          die je hier kunt bekijken, beoordelen en downloaden.
         </p>
       </div>
 
@@ -122,7 +120,7 @@ export function RenderPanel({ videoId, aantalClips }: { videoId: string; aantalC
           disabled={busy}
           className="rounded bg-neutral-100 px-4 py-2 text-sm font-medium text-neutral-900 disabled:opacity-40"
         >
-          {busy ? 'Bezig…' : 'Montage aanvragen'}
+          {busy ? 'Bezig…' : 'Clips maken'}
         </button>
       </div>
 
@@ -172,6 +170,15 @@ export function RenderPanel({ videoId, aantalClips }: { videoId: string; aantalC
                 <ul className="mt-2 space-y-3">
                   {job.downloads.map((d) => (
                     <li key={d.naam}>
+                      {d.url && !d.hook_variant && (
+                        <video
+                          src={d.url}
+                          controls
+                          playsInline
+                          preload="metadata"
+                          className="mb-2 block aspect-[9/16] w-44 rounded border border-neutral-800 bg-black"
+                        />
+                      )}
                       {d.url ? (
                         <a href={d.url} download className="text-xs underline hover:text-neutral-100">
                           {d.naam}

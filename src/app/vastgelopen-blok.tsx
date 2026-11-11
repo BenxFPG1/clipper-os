@@ -12,12 +12,16 @@ import { OpnieuwKnop } from './opnieuw-knop';
 export function VastgelopenBlok({ items }: { items: VastgelopenItem[] }) {
   if (items.length === 0) return null;
   return (
-    <section className="space-y-3 rounded border border-red-900/70 bg-red-950/20 p-4">
-      <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <h2 className="text-lg font-medium text-red-200">Vastgelopen ({items.length})</h2>
-        <span className="text-xs text-red-300/70">Komt niet vanzelf goed — kijk ernaar of probeer het opnieuw.</span>
-      </div>
-      <ul className="space-y-2">
+    // Ingeklapt bij meer dan twee: zeven rode regels duwden de eigenlijke
+    // route (video erin, clips maken) van het scherm.
+    <details open={items.length <= 2} className="rounded border border-red-900/70 bg-red-950/20 p-4">
+      <summary className="cursor-pointer">
+        <span className="text-lg font-medium text-red-200">
+          {items.length} {items.length === 1 ? 'ding is' : 'dingen zijn'} vastgelopen
+        </span>
+        <span className="ml-3 text-xs text-red-300/70">Komt niet vanzelf goed. Klik om te bekijken of opnieuw te proberen.</span>
+      </summary>
+      <ul className="mt-3 space-y-2">
         {items.map((item) => (
           <li key={`${item.soort}:${item.id}`} className="rounded border border-red-900/40 bg-neutral-950/40 p-3">
             <div className="flex flex-wrap items-start justify-between gap-3">
@@ -50,6 +54,6 @@ export function VastgelopenBlok({ items }: { items: VastgelopenItem[] }) {
           </li>
         ))}
       </ul>
-    </section>
+    </details>
   );
 }

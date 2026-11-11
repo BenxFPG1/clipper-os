@@ -561,8 +561,25 @@ export function herstelSprekerKader(segmenten: Shot[], fouten: SprekerFout[]): {
     const seg = segmenten.find((s) => s.volgorde === volgorde);
     if (!seg) continue;
     const med = (xs: number[]) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)];
-    const x = med(eigen.map((f) => f.gezicht.x));
+    let x = med(eigen.map((f) => f.gezicht.x));
     const breedte = Math.max(...eigen.map((f) => f.gezicht.breedte));
+    // Onthouden waar eerdere rondes dit shot al op corrigeerden. Beweegt de
+    // spreker binnen het shot (0,81 aan het begin, 0,71 aan het eind), dan
+    // zette ronde 1 het kader op 0,81 en ronde 2 op 0,71 — en keurde de
+    // keuring telkens het andere moment af. Een vast kader moet dan beide
+    // standen bevatten: het midden ertussen, en niet verder inzoomen dan dat
+    // die spreiding plus het hoofd past.
+    if (!seg.spoor?.length) {
+      const eerder = (seg.herstelGezichten ?? []).filter((g) => !eigen.some((f) => Math.abs(f.t - g.t) < 0.05));
+      seg.herstelGezichten = [...eerder, ...eigen.map((f) => ({ t: f.t, x: f.gezicht.x, breedte: f.gezicht.breedte }))];
+      const xs = seg.herstelGezichten.map((g) => g.x);
+      const spreiding = Math.max(...xs) - Math.min(...xs);
+      if (eerder.length && spreiding > 0.03) {
+        x = (Math.max(...xs) + Math.min(...xs)) / 2;
+        const nodig = spreiding + 1.4 * Math.max(breedte, ...seg.herstelGezichten.map((g) => g.breedte));
+        seg.zoomPlafond = Math.min(seg.zoomPlafond ?? Infinity, Math.max(1, (1080 / (1920 * (16 / 9))) / nodig));
+      }
+    }
     if (seg.spoor?.length) {
       // Alleen het stuk spoor rond de foute momenten naar het gezicht; de
       // rest volgde al goed.
@@ -587,7 +604,7 @@ export function herstelSprekerKader(segmenten: Shot[], fouten: SprekerFout[]): {
       const xs = seg.spoor.map((p) => p.x);
       const nodig = Math.max(...xs) - Math.min(...xs) + 1.4 * breedte + 2 * verschil;
       seg.zoomPlafond = Math.min(seg.zoomPlafond ?? Infinity, Math.max(1, (1080 / (1920 * (16 / 9))) / nodig));
-    } else if (eigen.every((f) => f.soort === 'uit_midden') && typeof seg.focusX === 'number' && !seg.paneel) {
+    } else if (eigen.every((f) => f.soort === 'uit_midden') && typeof seg.focusX === 'number' && !seg.paneel && (seg.herstelGezichten?.length ?? 0) <= eigen.length) {
       // Alleen wat uit het midden: zo weinig mogelijk verschuiven (het gezicht
       // naar 10% van het midden), niet helemaal centreren op dat ene moment —
       // anders schuiven alle andere momenten van het shot uit het midden.

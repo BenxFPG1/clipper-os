@@ -40,6 +40,12 @@ export function poortClient(request: NextRequest, response: NextResponse) {
  * de client zelf verzinnen.
  */
 export async function ingelogdeGebruiker(request: NextRequest, response: NextResponse): Promise<Gebruiker | null> {
+  // Alleen bij lokaal ontwikkelen (next dev): de pagina's bekijken zonder
+  // Google-ronde. Het adres moet nog steeds op de toegangslijst staan, en in
+  // een productie-build bestaat deze tak niet.
+  if (process.env.NODE_ENV === 'development' && process.env.DEV_GEBRUIKER) {
+    return gebruikerVoor(process.env.DEV_GEBRUIKER);
+  }
   if (!optionalEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY')) return null;
   try {
     const { data, error } = await poortClient(request, response).auth.getUser();
