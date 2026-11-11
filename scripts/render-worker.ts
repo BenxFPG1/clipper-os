@@ -177,6 +177,16 @@ async function main() {
         .update({ status: 'klaar', bestanden, klaar_at: new Date().toISOString() })
         .eq('id', job.id);
       console.log(`  klaar: ${bestanden.length} bestand(en)`);
+      // Vaste testset (golden.yml): een clip die de keuring niet haalt maakt
+      // de run rood, zodat een wijziging die een eerder goede clip breekt
+      // meteen opvalt in plaats van in ronde dertien.
+      if (process.env.KEURING_STRENG === '1') {
+        const fout = bestanden.filter((b) => (b as { keuring?: { status?: string } | null }).keuring?.status !== 'goed');
+        if (fout.length) {
+          console.log(`  KEURING NIET GOED: ${fout.map((b) => b.naam).join(', ')}`);
+          mislukt += 1;
+        }
+      }
     } catch (e) {
       const fout = e instanceof Error ? e.message : String(e);
       console.error(`  MISLUKT: ${fout}`);

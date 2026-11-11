@@ -1,0 +1,36 @@
+# De vaste testset: dezelfde clips, met hun opgeslagen plan, opnieuw renderen
+# en eisen dat de keuring GOED zegt. Elke klacht over een clip die eenmaal
+# goed was hoort hier als geval bij te komen. Draait wekelijks en op verzoek;
+# draai hem ook na elke grote wijziging aan de montage.
+name: golden
+
+on:
+  schedule:
+    - cron: '0 2 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  start:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        geval:
+          - { naam: 'comedy-ambulance', video: 'ad3cfac5-b675-4d47-9f42-a0f9ec02def2', van: 1000, tot: 1065 }
+          - { naam: 'uitleg-platina', video: '82df1c6f-fc95-4c5e-a78d-2a713a5fbfee', van: 260, tot: 330 }
+          - { naam: 'interview-michelle', video: '7125f34f-5f88-41d0-b48e-f419573b64fe', van: 300, tot: 380 }
+          - { naam: 'interview-koen', video: 'a48414d1-cb86-4d88-9769-ebd22f80a096', van: 3480, tot: 3720 }
+    steps:
+      # train-clip.yml doet het werk (zelfde installatie, zelfde render).
+      # Met streng=1 wordt die run rood als de keuring niet GOED is.
+      - name: Start ${{ matrix.geval.naam }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow run train-clip.yml --repo "${{ github.repository }}" --ref master \
+            -f video=${{ matrix.geval.video }} -f van=${{ matrix.geval.van }} -f tot=${{ matrix.geval.tot }} \
+            -f titel="GOLDEN ${{ matrix.geval.naam }}" -f modus=herbruik -f streng=1

@@ -24,9 +24,16 @@ on:
         description: 'Leeg = opnieuw plannen; herbruik = laatste plan opnieuw monteren'
         required: false
         default: ''
+      streng:
+        description: '1 = rood als de keuring niet GOED is (vaste testset)'
+        required: false
+        default: '0'
 
+# Per video: twee rondes op dezelfde video mogen niet door elkaar lopen, maar
+# de vaste testset (golden.yml) start vier video's tegelijk. Met één groep
+# hield GitHub er maar één wachtend en vervielen de andere.
 concurrency:
-  group: train-clip
+  group: train-clip-${{ inputs.video }}
   cancel-in-progress: false
 
 jobs:
@@ -126,4 +133,5 @@ jobs:
           TOT: ${{ inputs.tot }}
           TITEL: ${{ inputs.titel }}
           MODUS: ${{ inputs.modus }}
+          KEURING_STRENG: ${{ inputs.streng }}
         run: npx tsx scripts/train-clip.ts "$VIDEO" "$VAN" "$TOT" "$TITEL" "$MODUS"
