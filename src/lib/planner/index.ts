@@ -435,7 +435,7 @@ function repairPlan(plan: ClipPlan, input: PlannerInput): ClipPlan {
   const structureSlugs = new Set(input.vault.structures.map((s) => s.slug));
   const hookSlugs = new Set(input.vault.hooks.map((h) => h.slug));
   const fallbackStructure = input.vault.structures[0]?.slug ?? 'belofte_afstraffing';
-  const fallbackHook = input.vault.hooks[0]?.slug ?? 'onthoud_deze_zin';
+  const fallbackHook = input.vault.hooks[0]?.slug ?? 'getal_absurditeit';
 
   const clips = plan.clips.map((clip) => {
     const shots = [...clip.shots]

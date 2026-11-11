@@ -270,6 +270,17 @@ function bronZinNa(t: number, transcript: TranscriptSegment[]): TranscriptSegmen
 
 const overlaptMet = (shots: ShotLike[], van: number, tot: number, behalve: ShotLike) => shots.some((s) => s !== behalve && s.start < tot - 0.2 && s.end > van + 0.2);
 
+/** Onder deze overlap met de bron is een shottekst geen citaat meer. Transcripten en het model verschillen in spelling, dus niet 1. */
+export const CITAAT_MIN_OVERLAP = 0.5;
+
+/** De brontekst rond een shot: alle transcriptsegmenten die zijn tijdvak (met een seconde marge) raken. */
+export function citaatInBron(shot: { start: number; end: number }, transcript: TranscriptSegment[]): string {
+  return transcript
+    .filter((t) => t.end_seconds > shot.start - 1 && t.start_seconds < shot.end + 1)
+    .map((t) => t.text)
+    .join(' ');
+}
+
 /** Welk deel van de inhoudswoorden van `a` ook in `b` staat (0..1). Korte woorden tellen niet. */
 export function woordOverlap(a: string, b: string): number {
   const inhoudsWoorden = (t: string) => kaal(t).split(' ').filter((w) => w.length > 2);
@@ -335,6 +346,24 @@ export function pasClipRegelsToe(
   const signalen: string[] = [];
   const ingrepen: string[] = [];
   let shots = [...invoer.shots].sort((a, b) => a.volgorde - b.volgorde).map((s) => ({ ...s }));
+
+  // --- 0. Het citaat staat echt in de bron --------------------------------
+  // Het model controleerde zijn eigen citaten; de eerste echte controle was
+  // het terugluisteren ná een render van minuten. Hier, gratis: klopt de
+  // tekst van het shot met wat er in het transcript op die tijd staat? Een
+  // verzonnen of verschoven fragment geeft anders een clip waarin iets
+  // anders klinkt dan het plan belooft.
+  if (opties.transcript?.length) {
+    for (const s of shots) {
+      const fragment = s.transcript_fragment ?? '';
+      if (fragment.split(/\s+/).filter((w) => w.length > 2).length < 3) continue;
+      const bron = citaatInBron(s, opties.transcript);
+      const overlap = woordOverlap(fragment, bron);
+      if (overlap < CITAAT_MIN_OVERLAP) {
+        fouten.push(`shot ${s.volgorde}: de tekst "${fragment.slice(0, 50)}" staat niet in de bron op ${Math.round(s.start)}–${Math.round(s.end)} s (${Math.round(overlap * 100)}% overeen) — verkeerde tijd of verzonnen citaat`);
+      }
+    }
+  }
 
   // --- 3. Einde = moment --------------------------------------------------
   const laatstePayoff = () => {

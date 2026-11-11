@@ -316,6 +316,14 @@ async function main() {
     toets('wijstTerug herkent "daarop" en laat een gewone zin staan', wijstTerug('En platina beweegt ook daarop') && !wijstTerug('Meer dan 70 procent komt uit Zuid-Afrika.'));
     toets('prompt noemt de collage- en sprongregel', /GEEN COLLAGE/.test(planExamenSystem(4, { naam: 'uitleg', min: 25, max: 50 })) && /GEEN GAT BIJ EEN SPRONG/.test(planExamenSystem(4, { naam: 'uitleg', min: 25, max: 50 })));
     toets('schets stuurt niet meer op fragmenten die ver uit elkaar liggen', !/fragmenten die ver uit elkaar liggen/.test(schetsSystem(4, { naam: 'uitleg', min: 25, max: 50 })));
+
+    // Citaatcontrole: de shottekst moet op die tijd in de bron staan.
+    const echt = pasClipRegelsToe(clip([shot(1, 95, 98, 'hook', 'Goud beweegt op vertrouwen en monetaire politiek.'), shot(2, 98, 103, 'payoff', 'En platina beweegt ook daarop, maar ook op autoverkopen.')]), 'uitleg', { transcript: bron });
+    toets('citaat dat in de bron staat: geen fout', !echt.oordeel.fouten.some((f) => /staat niet in de bron/.test(f)), echt.oordeel.fouten.join(' | '));
+    const verzonnen = pasClipRegelsToe(clip([shot(1, 95, 98, 'hook', 'Zilver wordt binnenkort het nieuwe bitcoin volgens analisten.'), shot(2, 98, 103, 'payoff', 'En platina beweegt ook daarop, maar ook op autoverkopen.')]), 'uitleg', { transcript: bron });
+    toets('citaat dat niet in de bron staat: harde fout', verzonnen.oordeel.fouten.some((f) => /shot 1: .*staat niet in de bron/.test(f)), verzonnen.oordeel.fouten.join(' | '));
+    const verschoven = pasClipRegelsToe(clip([shot(1, 10, 14, 'hook', 'Goud beweegt op vertrouwen en monetaire politiek.'), shot(2, 98, 103, 'payoff', 'En platina beweegt ook daarop, maar ook op autoverkopen.')]), 'uitleg', { transcript: bron });
+    toets('juiste tekst op de verkeerde tijd: harde fout', verschoven.oordeel.fouten.some((f) => /shot 1: .*staat niet in de bron/.test(f)));
   }
 
   console.log('wat de kijker leest voegt toe');

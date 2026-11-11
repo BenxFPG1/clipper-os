@@ -9,14 +9,15 @@ name: clipper-jobs
 on:
   schedule:
     - cron: '15 0,6,12,18 * * *' # tracking: 4x per dag
-    - cron: '30 5,14 * * *'      # scout: 2x per dag (~7:30 en ~16:30 NL)
+    - cron: '30 5 * * *'         # scout: dagelijks ~7:30 NL (was 2x; de tweede run leverde vooral dubbele vondsten)
     - cron: '30 7 * * 0'         # retro: zondag ~9:30 NL
     - cron: '0 9 * * 1'          # kennis: maandag ~11:00 NL
     - cron: '20 * * * *'         # cliparmy: elk uur nieuwe campagnes ophalen
-    - cron: '0 10 * * 2,4,6'     # kijken: di/do/za, topvondsten visueel analyseren
-    - cron: '0 9 * * *'          # editleraar: dagelijks, leren van edit-tutorials
-    - cron: '30 10 * * 0'        # editleraar_visueel: zondag, toffe effecten spotten in topvondsten
-    - cron: '0 6,15 * * *'       # trends: 2x per dag, net na elke scout-run (~7:30/16:30 NL) — slaat zichzelf over zonder genoeg nieuwe vondsten
+    - cron: '0 10 * * 6'         # kijken: zaterdag, topvondsten visueel analyseren (lessen wachten op akkoord)
+    - cron: '0 9 * * 3'          # editleraar: woensdag, leren van edit-tutorials (lessen wachten op akkoord)
+    # editleraar_visueel: niet meer ingepland. Zijn uitkomst ("Effect gezien",
+    # kandidaat-effecten) kwam in geen enkele prompt terecht; alleen nog handmatig.
+    - cron: '0 6 * * *'          # trends: dagelijks, na de scout-run — slaat zichzelf over zonder genoeg nieuwe vondsten
     - cron: '0 12 * * 0'         # consolideer: zondag ~14:00 NL, bijna-duplicaten in vault_kennis samenvoegen
     - cron: '40 3 * * *'         # render_vingerafdruk: dagelijks ~5:40 NL, eigen renders meetbaar maken (max 10 per run)
     - cron: '10 4 * * *'         # smaak: dagelijks ~6:10 NL, lessen uit eigen oordelen + cijfers (slaat over bij < 5 nieuwe)
@@ -29,8 +30,11 @@ on:
         type: choice
         options: [tracking, scout, retro, kennis, kanaal, cliparmy, kijken, editleraar, editleraar_visueel, trends, consolideer, smaak, render_vingerafdruk, vingerafdruk, diag]
 
+# Eén groep per taak. Met één gedeelde groep bewaarde GitHub maar één
+# wachtende run: kwam de uurlijkse cliparmy erachter, dan verviel de wachtende
+# taak (de wekelijkse kennis- of retro-run) zonder melding.
 concurrency:
-  group: clipper-jobs
+  group: clipper-jobs-${{ github.event.schedule || inputs.job }}
   cancel-in-progress: false
 
 jobs:
@@ -45,7 +49,7 @@ jobs:
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "job=${{ inputs.job }}" >> "$GITHUB_OUTPUT"
-          elif [ "${{ github.event.schedule }}" = "30 5,14 * * *" ]; then
+          elif [ "${{ github.event.schedule }}" = "30 5 * * *" ]; then
             echo "job=scout" >> "$GITHUB_OUTPUT"
           elif [ "${{ github.event.schedule }}" = "30 7 * * 0" ]; then
             echo "job=retro" >> "$GITHUB_OUTPUT"
@@ -53,13 +57,13 @@ jobs:
             echo "job=kennis" >> "$GITHUB_OUTPUT"
           elif [ "${{ github.event.schedule }}" = "20 * * * *" ]; then
             echo "job=cliparmy" >> "$GITHUB_OUTPUT"
-          elif [ "${{ github.event.schedule }}" = "0 10 * * 2,4,6" ]; then
+          elif [ "${{ github.event.schedule }}" = "0 10 * * 6" ]; then
             echo "job=kijken" >> "$GITHUB_OUTPUT"
-          elif [ "${{ github.event.schedule }}" = "0 9 * * *" ]; then
+          elif [ "${{ github.event.schedule }}" = "0 9 * * 3" ]; then
             echo "job=editleraar" >> "$GITHUB_OUTPUT"
           elif [ "${{ github.event.schedule }}" = "30 10 * * 0" ]; then
             echo "job=editleraar_visueel" >> "$GITHUB_OUTPUT"
-          elif [ "${{ github.event.schedule }}" = "0 6,15 * * *" ]; then
+          elif [ "${{ github.event.schedule }}" = "0 6 * * *" ]; then
             echo "job=trends" >> "$GITHUB_OUTPUT"
           elif [ "${{ github.event.schedule }}" = "0 12 * * 0" ]; then
             echo "job=consolideer" >> "$GITHUB_OUTPUT"

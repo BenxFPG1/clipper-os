@@ -58,6 +58,17 @@ export type VaultSnapshot = {
 export type VaultContext = { platform?: string | null; theme?: string | null };
 
 /**
+ * Hooks die de clipregels (planner/prompts.ts) verbieden. Ze staan nog in de
+ * tabel, zodat oude plannen hun label houden, maar de planner krijgt ze niet
+ * meer aangeboden:
+ *  - onthoud_deze_zin: regel 10 verbiedt een opdracht aan de kijker ("Onthoud
+ *    deze zin") als overlay — en hij was zelfs de terugvaloptie in de code;
+ *  - vraag_aan_kijker: regel 3, geen "laat het weten in de comments";
+ *  - part_teaser: regel 3, het moment zelf is het einde, geen "part 2".
+ */
+export const UITGEFASEERDE_HOOKS = new Set(['onthoud_deze_zin', 'vraag_aan_kijker', 'part_teaser']);
+
+/**
  * Laadt de vault zoals hij geldt voor één platform en thema. De definities
  * (beats, formules) zijn gedeeld tussen alle accounts; alleen de gewichten
  * verschillen per combinatie. Deze snapshot gaat mee in clip_plans en
@@ -88,6 +99,7 @@ export async function loadVault(context: VaultContext = {}): Promise<VaultSnapsh
     .sort((a, b) => b.weight - a.weight);
 
   const gewogenHooks = (hooks.data ?? [])
+    .filter((h) => !UITGEFASEERDE_HOOKS.has(h.slug as string))
     .map((h) => {
       const { weight, herkomst } = weights.resolve('hook', h.slug, platform, theme);
       return { ...(h as VaultHook), weight, herkomst };

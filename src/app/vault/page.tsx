@@ -1,28 +1,67 @@
 import { db } from '@/lib/supabase';
 import { WeightMatrix } from './weight-matrix';
+import { KennisLijst, type KennisItem } from './kennis-lijst';
+import { kennisStatus } from '@/lib/vault/kennis';
 
 export const dynamic = 'force-dynamic';
 
 export default async function VaultPage() {
   const supabase = db();
-  const [structures, hooks, heuristics, changelog, weights, themes] = await Promise.all([
+  const [structures, hooks, heuristics, changelog, weights, themes, kennis] = await Promise.all([
     supabase.from('vault_structures').select('*').order('weight', { ascending: false }),
     supabase.from('vault_hooks').select('*').order('weight', { ascending: false }),
     supabase.from('vault_heuristics').select('*').order('status'),
     supabase.from('vault_changelog').select('*').order('created_at', { ascending: false }).limit(25),
     supabase.from('vault_weights').select('*'),
     supabase.from('themes').select('slug, name').order('name'),
+    supabase.from('vault_kennis').select('id, categorie, titel, inhoud, bron, actief').order('created_at', { ascending: false }),
   ]);
+  const lessen = (kennis.data ?? []) as (KennisItem & { actief: boolean })[];
+  const wacht = lessen.filter((l) => kennisStatus(l) === 'wacht');
+  const actief = lessen.filter((l) => kennisStatus(l) === 'actief');
+  const uit = lessen.filter((l) => kennisStatus(l) === 'uit');
 
   return (
     <div className="space-y-10">
       <div>
-        <h1 className="text-2xl font-semibold">Vault</h1>
+        <h1 className="text-2xl font-semibold">Kennisbank</h1>
         <p className="mt-1 text-sm text-neutral-400">
-          De definities zijn gedeeld; de gewichten verschillen per platform en thema. Waar een combinatie nog te weinig
-          data heeft, valt de tool terug op een breder gewicht.
+          Wat de tool weet over goede clips. De lessen hieronder gaan mee in de opdracht aan de planner en de
+          edit-agent — maar alleen als jij ze goedkeurt.
         </p>
       </div>
+
+      <section className="space-y-3">
+        <h2 className="text-lg font-medium">
+          Wacht op jouw akkoord <span className="text-neutral-500">({wacht.length})</span>
+        </h2>
+        <p className="text-sm text-neutral-500">
+          Nieuw bijgeleerd door de agents (uit onderzoek, tutorials, trends en jouw oordelen). Pas na goedkeuring
+          gebruikt de tool ze.
+        </p>
+        {wacht.length ? <KennisLijst items={wacht} knop="beoordelen" /> : <p className="text-sm text-neutral-600">Niets te beoordelen.</p>}
+      </section>
+
+      <section className="space-y-3">
+        <h2 className="text-lg font-medium">
+          In gebruik <span className="text-neutral-500">({actief.length})</span>
+        </h2>
+        {actief.length ? <KennisLijst items={actief} knop="uitzetten" /> : <p className="text-sm text-neutral-600">Geen lessen in gebruik.</p>}
+      </section>
+
+      <details className="rounded border border-neutral-800 p-4">
+        <summary className="cursor-pointer text-sm text-neutral-400">Uitgezet of afgewezen ({uit.length})</summary>
+        <div className="mt-3">
+          <KennisLijst items={uit.slice(0, 200)} knop="aanzetten" />
+          {uit.length > 200 && <p className="mt-2 text-xs text-neutral-600">De nieuwste 200 van {uit.length}.</p>}
+        </div>
+      </details>
+
+      <h2 className="pt-4 text-xl font-semibold">Structuren, hooks en gewichten</h2>
+      <p className="-mt-6 text-sm text-neutral-400">
+        De definities zijn gedeeld; de gewichten verschillen per platform en thema. Waar een combinatie nog te weinig
+        data heeft, valt de tool terug op een breder gewicht.
+      </p>
 
       <WeightMatrix weights={weights.data ?? []} themes={themes.data ?? []} />
 

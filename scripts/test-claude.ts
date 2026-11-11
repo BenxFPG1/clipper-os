@@ -11,6 +11,7 @@ import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod';
+import { DATA_GEEN_OPDRACHT } from '../src/lib/claude';
 
 // Geen verbruikslog naar de database vanuit een test.
 delete process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -82,7 +83,7 @@ process.stdin.on('end', () => {
     }
     const v = JSON.parse(readFileSync(verslag, 'utf8')) as { viaBestand: boolean; bestand: string; systeemBytes: number; argBytes: number };
     toets('geen E2BIG: de call slaagt', fout === null && uit?.ok === true, fout ?? '');
-    toets('systeemprompt via --system-prompt-file, volledig', v.viaBestand && v.systeemBytes === Buffer.byteLength(groot), JSON.stringify(v));
+    toets('systeemprompt via --system-prompt-file, volledig', v.viaBestand && v.systeemBytes === Buffer.byteLength(groot + DATA_GEEN_OPDRACHT), JSON.stringify(v));
     toets('commandline blijft klein', v.argBytes < 4096, String(v.argBytes));
     let opgeruimd = false;
     try {
@@ -110,7 +111,7 @@ process.stdin.on('end', () => {
     console.log('kleine systeemprompt');
     await structuredCall({ system: 'kort', user: 'x', schema, toolName: 't', toolDescription: 'test', operation: 'test' });
     const v2 = JSON.parse(readFileSync(verslag, 'utf8')) as { viaBestand: boolean; systeemBytes: number };
-    toets('klein blijft gewoon --system-prompt', !v2.viaBestand && v2.systeemBytes === 4, JSON.stringify(v2));
+    toets('klein blijft gewoon --system-prompt', !v2.viaBestand && v2.systeemBytes === 4 + Buffer.byteLength(DATA_GEEN_OPDRACHT), JSON.stringify(v2));
 
     console.log('CLI zonder --system-prompt-file');
     const zonder = systeemPromptVoorCli(groot, 'de vraag', { kentBestand: false });
