@@ -1,4 +1,4 @@
-import { isOpdracht } from '../roughcut/tekstkaarten';
+import { isOpdracht } from '../roughcut/kaarttekst';
 import { instelling } from '../roughcut/instellingen';
 import type { TranscriptSegment } from '../ingest/transcript';
 import type { Clip, ClipPlan, Energiemoment } from './schema';

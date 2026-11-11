@@ -3,6 +3,9 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { createCanvas, GlobalFonts } from '@napi-rs/canvas';
 import { instelling } from './instellingen';
+import { isOpdracht } from './kaarttekst';
+
+export { isOpdracht };
 
 export type Huisstijl = {
   accent?: string | null;
@@ -255,10 +258,6 @@ function kaartkleuren(stijl?: Huisstijl | null): { vlak: string; tekst: string; 
  * begint en geen vraag is ("en dan die prijs nog", trainingsronde 3), of een
  * tekst die vooral herhaalt wat er gezegd wordt, hoort niet als kaart in beeld.
  */
-/** Een opdracht aan de kijker ("Let op wat hij straks bidt", "Onthoud deze zin") is geen tekst die iets toevoegt. */
-export function isOpdracht(tekst: string | null | undefined): boolean {
-  return /^(onthoud|let op|kijk|luister|wacht|blijf|hou vol|houd vol)\b/i.test((tekst ?? '').trim());
-}
 
 export function zelfstandigeKaart(tekst: string, gesproken = ''): boolean {
   const t = tekst.trim();
