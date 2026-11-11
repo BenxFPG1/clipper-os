@@ -549,6 +549,28 @@ export async function meetSprekers(
  * die momenten — met een zoom waarbij het hele hoofd erin past. Muteert de
  * segmenten; levert een logregel per aangepast shot.
  */
+/**
+ * Was de naad vóór dit shot een kaderwissel (zoomverschil), en is dat door het
+ * herstel weggevallen, dan zet hij het kader iets wijder dan de buur — wijder
+ * is altijd veilig voor het hoofd. Lukt dat niet (al op zoom 1), dan blijft
+ * het zoals het is.
+ */
+function houdWissel(seg: Shot, alle: Shot[], zoomVoor: Map<number, number>): void {
+  const min = instelling('ZOOM_NAAD_MIN_VERSCHIL');
+  const bump = instelling('ZOOM_NAADBUMP');
+  const volg = [...alle].sort((a, b) => a.volgorde - b.volgorde);
+  const i = volg.indexOf(seg);
+  const buren = [volg[i - 1], volg[i + 1]].filter((b): b is Shot => Boolean(b) && (Math.abs(b.end - seg.start) < 0.06 || Math.abs(seg.end - b.start) < 0.06));
+  const zoom = () => seg.zoom ?? basisZoom(seg);
+  for (const b of buren) {
+    const was = Math.abs((zoomVoor.get(seg.volgorde) ?? zoom()) - (zoomVoor.get(b.volgorde) ?? (b.zoom ?? basisZoom(b))));
+    const nu = Math.abs(zoom() - (b.zoom ?? basisZoom(b)));
+    if (was < min - 1e-6 || nu >= min - 1e-6) continue;
+    const wijder = Math.round(Math.max(1, (b.zoom ?? basisZoom(b)) - bump) * 1000) / 1000;
+    if ((b.zoom ?? basisZoom(b)) - wijder >= min - 1e-6) seg.zoom = wijder;
+  }
+}
+
 export function herstelSprekerKader(segmenten: Shot[], fouten: SprekerFout[]): { log: string[]; shots: Shot[] } {
   const BUITEN = instelling('ZELFHERSTEL_SPREKER_BUITEN');
   const MIDDEN = instelling('ZELFHERSTEL_SPREKER_MIDDEN');
@@ -556,6 +578,11 @@ export function herstelSprekerKader(segmenten: Shot[], fouten: SprekerFout[]): {
   const log: string[] = [];
   const shots: Shot[] = [];
   const perShot = new Map<number, SprekerFout[]>();
+  // De zoom vóór het herstel: was een naad een kaderwissel, dan moet hij dat
+  // na het herstel nog zijn. Koen: de retentie-editor zette 1,15 / 1,27 /
+  // 1,15, het herstel maakte er 1,15 / 1,16 / 1,15 van — 9,2 s zonder
+  // beeldwissel.
+  const zoomVoor = new Map(segmenten.map((s) => [s.volgorde, s.zoom ?? basisZoom(s)]));
   for (const f of telt) perShot.set(f.volgorde, [...(perShot.get(f.volgorde) ?? []), f]);
   for (const [volgorde, eigen] of perShot) {
     const seg = segmenten.find((s) => s.volgorde === volgorde);
@@ -637,6 +664,7 @@ export function herstelSprekerKader(segmenten: Shot[], fouten: SprekerFout[]): {
     const maxZoom = (0.6 * (1080 / (1920 * (16 / 9)))) / Math.max(0.01, breedte);
     seg.zoom = Math.max(1, Math.min(huidig, maxZoom, seg.zoomPlafond ?? Infinity, instelling('ZOOM_MAX')));
     seg.sprekerBepaald = true;
+    houdWissel(seg, segmenten, zoomVoor);
     shots.push(seg);
     log.push(`zelfherstel spreker: shot ${volgorde} → kader naar gezicht op ${x.toFixed(2)} (${eigen.length} moment(en): ${eigen.map((f) => `${f.t.toFixed(1)} s ${f.soort}`).join(', ')}; zoom ${seg.zoom.toFixed(2)})`);
   }

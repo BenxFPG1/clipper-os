@@ -52,7 +52,7 @@ async function main() {
       shot(2, 108, 120, { scenes: [{ van: 108, tot: 120, gezicht: true }] } as Partial<Shot>),
     ];
     const z = tijdlijnZonderMens(segs, 'vullend');
-    toets('graphic-deelstuk staat als "geen mens verwacht" op de tijdlijn', z.length === 1 && Math.abs(z[0][0] + 0.3) < 1e-6 && Math.abs(z[0][1] - 8.3) < 1e-6, JSON.stringify(z));
+    toets('graphic-deelstuk staat als "geen mens verwacht" op de tijdlijn', z.some(([a, b]) => a <= -0.3 + 1e-6 && b >= 8.3 - 1e-6) && z.every(([, b]) => b <= 8.3 + 1e-6), JSON.stringify(z));
   }
 
   console.log('geluid en zwart');

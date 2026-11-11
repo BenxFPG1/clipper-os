@@ -177,6 +177,11 @@ async function main() {
     herstelSprekerKader([bw], [{ volgorde: 1, t: 0.15, soort: 'buiten', waarde: 0.35, gezicht: { x: 0.81, breedte: 0.08, top: 0.3, hoogte: 0.2 } }]);
     toets('ronde 1: kader naar het gezicht aan het begin', bw.focusX === 0.81, String(bw.focusX));
     herstelSprekerKader([bw], [{ volgorde: 1, t: 1.65, soort: 'buiten', waarde: 0.3, gezicht: { x: 0.71, breedte: 0.08, top: 0.3, hoogte: 0.2 } }]);
+    // Een kaderwissel blijft een kaderwissel na het herstel.
+    const a: Shot = { ...shot(0, 3), volgorde: 4.02, zoom: 1.15, focusX: 0.58 };
+    const b: Shot = { ...shot(3, 6), volgorde: 4.03, zoom: 1.27, focusX: 0.58, gezicht: { x: 0.58, breedte: 0.12, top: 0.3, hoogte: 0.2 } };
+    herstelSprekerKader([a, b], [{ volgorde: 4.03, t: 4, soort: 'buiten', waarde: 0.3, gezicht: { x: 0.56, breedte: 0.165, top: 0.3, hoogte: 0.2 } }]);
+    toets('herstel houdt het zoomverschil met de buur (kaderwissel blijft)', Math.abs((b.zoom ?? 0) - (a.zoom ?? 0)) >= instelling('ZOOM_NAAD_MIN_VERSCHIL') - 1e-6, JSON.stringify({ a: a.zoom, b: b.zoom }));
     const sp2 = bw.spoor ?? [];
     const opT = (t: number) => sp2.reduce((a, b) => (Math.abs(b.t - t) < Math.abs(a.t - t) ? b : a)).x;
     toets('ronde 2: het kader volgt de spreker (spoor van 0,81 naar 0,71)', sp2.length >= 2 && opT(0.15) === 0.81 && opT(1.65) === 0.71 && opT(0) === 0.81 && opT(2) === 0.71, JSON.stringify(sp2));

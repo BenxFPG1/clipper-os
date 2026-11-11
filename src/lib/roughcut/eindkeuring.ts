@@ -5,6 +5,7 @@ import { instelling } from './instellingen';
 import type { Kader } from './kader';
 import type { KeuringRegel } from './keuring';
 import { deelstukken } from './scenes';
+import { leestijdPlan } from './leestijd';
 import type { BronWoord } from './woorden';
 
 /**
@@ -106,6 +107,15 @@ export function beeldMeterVia(montagePad: string, py: { cmd: string; voor: strin
  */
 export function tijdlijnZonderMens(segmenten: Shot[], kader: Kader): [number, number][] {
   const uit: [number, number][] = [];
+  // Een graphic blijft langer staan dan zijn stuk bron als hij leestijd
+  // nodig heeft (leestijd.ts, "vasthouden"). Precies daar zocht de keuring
+  // eerst een mens: platina, niemand in beeld van 6,8 tot 8,0 s — de graphic
+  // stond er nog. Hier dus wat de render werkelijk toont.
+  try {
+    for (const g of leestijdPlan(segmenten, kader).graphics) uit.push([g.beeldStart - 0.3, g.beeldStart + g.getoond + 0.3]);
+  } catch {
+    // zonder leesplan alleen de deelstukken hieronder
+  }
   let c = 0;
   for (const seg of [...segmenten].sort((a, b) => a.volgorde - b.volgorde)) {
     for (const d of deelstukken(seg, kader)) {
