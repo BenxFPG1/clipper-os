@@ -1367,7 +1367,7 @@ async function verwerk(job: Job) {
     // megabytes over alle rondes, anders staat er na een tweede ronde "0 MB".
     let mbRenderbron = 0;
     let beeldRondeGedaan = false;
-    let randHersteld = false;
+    let randRondes = 0;
     let keuringsuitslag: Awaited<ReturnType<typeof keurMontage>> | null = null;
     let ondertitels: Ondertitels | null = null;
     let streamNogInBeeld: number[] = [];
@@ -1933,14 +1933,14 @@ async function verwerk(job: Job) {
     // Zelfherstel op het eindbeeld: staat een hoofd tegen de beeldrand, dan
     // dat shot iets wijder en een fractie die kant op, en één keer opnieuw.
     // Gemeten op de mp4 zelf, dus onafhankelijk van wat het plan denkt.
-    if (!randHersteld && poging < MAX_POGINGEN && process.env.ZELFHERSTEL_SPREKER !== '0') {
+    if (randRondes < 2 && poging < MAX_POGINGEN && process.env.ZELFHERSTEL_SPREKER !== '0') {
       try {
         const duurNu = segmenten.reduce((t, sg) => t + (sg.end - sg.start), 0);
         const tijden = eindbeeldTijden(duurNu, tijdlijnZonderMens(segmenten, kaderClip));
         const meting = tijden.length ? await beeldMeterVia(montage.pad, pythonMetOpenCV())(tijden) : null;
         const rand = meting ? randMomenten(tijden, meting) : [];
         if (rand.length >= 2) {
-          randHersteld = true;
+          randRondes++;
           const volg = [...segmenten].sort((a, b) => a.volgorde - b.volgorde);
           let c = 0;
           const geraakt = new Map<Shot, { links: number; rechts: number }>();
@@ -1959,7 +1959,9 @@ async function verwerk(job: Job) {
             const wijder = Math.round(Math.max(1, huidig - 0.15) * 1000) / 1000;
             // Links afgesneden: het hoofd zit links van de uitsnede, dus de
             // uitsnede een fractie naar links (en omgekeerd).
-            const schuif = (g.links >= g.rechts ? -1 : 1) * 0.03;
+            // Kan het shot niet wijder (al op zoom 1, een close-up in de
+            // bron), dan is schuiven het enige middel: dubbel zo ver.
+            const schuif = (g.links >= g.rechts ? -1 : 1) * (huidig - wijder < 0.05 ? 0.06 : 0.03);
             sg.zoom = wijder;
             sg.zoomPlafond = Math.min(sg.zoomPlafond ?? Infinity, wijder);
             if (sg.gezicht) sg.gezicht = { ...sg.gezicht, x: Math.min(1, Math.max(0, sg.gezicht.x + schuif)) };
