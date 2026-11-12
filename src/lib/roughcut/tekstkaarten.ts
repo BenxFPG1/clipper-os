@@ -278,7 +278,7 @@ export function metHoofdletter(tekst: string): string {
   return tekst.replace(/^(\s*["'“„(]*)(\p{Ll})/u, (_, voor: string, l: string) => voor + l.toUpperCase());
 }
 
-export async function tekenKaart(ruweTekst: string, pad: string, stijl?: Huisstijl | null): Promise<void> {
+export async function tekenKaart(ruweTekst: string, pad: string, stijl?: Huisstijl | null, opties: { y?: number } = {}): Promise<void> {
   const tekst = metHoofdletter(veiligeTekst(ruweTekst));
   const accent = stijl?.accent ?? undefined;
   const font = fontVoor(stijl);
@@ -310,7 +310,8 @@ export async function tekenKaart(ruweTekst: string, pad: string, stijl?: Huissti
   // rond de kin van de spreker schuiven), en twee tekstlagen op dezelfde
   // hoogte botsen. De kaart komt pas ná de hook in beeld (de worker schuift
   // hem daarachter), dus met de hookkaart botst hij niet.
-  const y = H * instelling('KAART_Y');
+  // `opties.y`: een andere hoogte als de standaardplek over een gezicht valt (kaartHoogte).
+  const y = H * (opties.y ?? instelling('KAART_Y'));
 
   const kleuren = kaartkleuren(stijl);
   ctx.fillStyle = kleuren.vlak;
@@ -539,3 +540,25 @@ export async function kaartenMap(basis: string): Promise<string> {
 
 
 export { editorTekst } from './editortekst';
+
+/**
+ * Waar een kaart hoort te staan zodat hij niet over een gezicht valt.
+ * `gezichten`: per moment waarop de kaart in beeld is, waar het gezicht in het
+ * eindbeeld staat (fracties van de hoogte). Standaard bovenin (KAART_Y); valt
+ * dat over het gezicht, dan boven het hoofd als daar ruimte is, anders onder
+ * de kin. Koen: de contextkaart stond over zijn voorhoofd en ogen.
+ */
+export function kaartHoogte(gezichten: { boven: number; onder: number }[]): number {
+  const standaard = instelling('KAART_Y');
+  if (gezichten.length === 0) return standaard;
+  const KAART = 0.095; // hoogte van een kaart van twee regels
+  const boven = Math.min(...gezichten.map((g) => g.boven));
+  const onder = Math.max(...gezichten.map((g) => g.onder));
+  if (standaard + KAART <= boven || standaard >= onder) return standaard;
+  // Boven het hoofd, binnen de veilige zone van het platform.
+  if (boven - KAART - 0.01 >= 0.06) return Math.round((boven - KAART - 0.01) * 1000) / 1000;
+  // Onder de kin, boven de ondertitels.
+  if (onder + 0.02 + KAART <= 0.66) return Math.round((onder + 0.02) * 1000) / 1000;
+  return standaard;
+}
+

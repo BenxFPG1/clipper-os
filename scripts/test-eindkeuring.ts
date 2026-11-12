@@ -57,6 +57,17 @@ async function main() {
     toets('rand telt als mens in beeld', (await keurMensInBeeld(40, randMeter([[11.5, 12.2]]))).goed === true);
   }
 
+  console.log('kaart niet over een gezicht');
+  {
+    const { kaartHoogte } = await import('../src/lib/roughcut/tekstkaarten');
+    toets('gezicht ruim onder de kaart: standaardplek', kaartHoogte([{ boven: 0.35, onder: 0.6 }]) === 0.19);
+    const koen = kaartHoogte([{ boven: 0.12, onder: 0.5 }]);
+    toets('gezicht hoog in beeld (Koen): kaart onder de kin, boven de ondertitels', koen >= 0.5 && koen + 0.095 <= 0.66, String(koen));
+    const hoog = kaartHoogte([{ boven: 0.24, onder: 0.55 }]);
+    toets('ruimte boven het hoofd: kaart erboven', hoog + 0.095 <= 0.24 && hoog >= 0.06, String(hoog));
+    toets('geen gezicht gemeten: standaardplek', kaartHoogte([]) === 0.19);
+  }
+
   console.log('graphics op de tijdlijn');
   {
     const segs = [

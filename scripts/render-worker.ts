@@ -23,6 +23,7 @@ import {
 import {
   tekenHookKaart,
   tekenKaart,
+  kaartHoogte,
   hookDuur,
   kleurUitThumbnail,
   kaartenMap,
@@ -31,7 +32,7 @@ import {
   zelfstandigeKaart,
   type Huisstijl,
 } from '../src/lib/roughcut/tekstkaarten';
-import { controleerAssFont, maakOndertitels, type Ondertitels } from '../src/lib/roughcut/ondertitels';
+import { controleerAssFont, gezichtOpBeeld, maakOndertitels, type Ondertitels } from '../src/lib/roughcut/ondertitels';
 import { gezichtMeterVia, kiesBevries, meetOvergangen, vulScenes, waaromGeenBevries } from '../src/lib/roughcut/scenes';
 import { graphicMeterVia, lijktGraphic } from '../src/lib/roughcut/graphics';
 import { behandelEindscherm, bronDuur, keurOverlayDetail, overlayMeterVia, vermijdOverlay } from '../src/lib/roughcut/eindscherm';
@@ -1008,28 +1009,44 @@ async function verwerk(job: Job) {
 
       // De contextkaart (één regel situering, uit het plan) komt direct na de
       // hook — kort, want de hook heeft de belofte al gedaan.
+      // Waar staat het gezicht terwijl een kaart in beeld is? Daar hoort de
+      // kaart niet overheen (kaartHoogte).
+      const kaartY = (van: number, tot: number): number => {
+        const gezichten: { boven: number; onder: number }[] = [];
+        let c = 0;
+        for (const sg of [...segmenten].sort((a, b) => a.volgorde - b.volgorde)) {
+          const eind = c + (sg.end - sg.start);
+          for (const t of [van + 0.1, (van + tot) / 2, tot - 0.1]) {
+            if (t < c || t >= eind) continue;
+            const g = gezichtOpBeeld(sg, kaderClip, sg.start + (t - c));
+            if (g) gezichten.push(g);
+          }
+          c = eind;
+        }
+        return kaartHoogte(gezichten);
+      };
       if (clip.context_kaart && metContext()) {
         const pad = join(kaartMap, `c${nummer}-context.png`);
-        await tekenKaart(clip.context_kaart, pad, stijl);
+        await tekenKaart(clip.context_kaart, pad, stijl, { y: kaartY(hookTot + 0.3, Math.min(totaal, hookTot + 0.3 + 2.2)) });
         overlays.push({ pad, start: hookTot + 0.3, end: Math.min(totaal, hookTot + 0.3 + 2.2) });
       }
       // Uitvalrisico's uit de retentie-simulatie: op de genoemde seconde een
       // korte re-hook-kaart met de fix, als die als regel tekst te lezen is.
       for (const { i, tekst, seconde } of uitvalKaarten(totaal)) {
         const pad = join(kaartMap, `c${nummer}-rehook-${i}.png`);
-        await tekenKaart(tekst, pad, stijl);
+        await tekenKaart(tekst, pad, stijl, { y: kaartY(seconde, Math.min(totaal, seconde + 2.0)) });
         overlays.push({ pad, start: seconde, end: Math.min(totaal, seconde + 2.0) });
       }
       for (const [i, k] of planKaarten().entries()) {
         const pad = join(kaartMap, `c${nummer}-plankaart-${i}.png`);
-        await tekenKaart(k.tekst, pad, stijl);
+        await tekenKaart(k.tekst, pad, stijl, { y: kaartY(k.start, k.end) });
         overlays.push({ pad, start: k.start, end: k.end });
       }
       // De re-hook van de retentie-editor: in het zwaarste risicogat vóór de
       // payoff, niet op een vaste seconde.
       if (retentie?.rehook?.tekst && retentie.rehook.start < totaal - 1) {
         const pad = join(kaartMap, `c${nummer}-retentie-rehook.png`);
-        await tekenKaart(retentie.rehook.tekst, pad, stijl);
+        await tekenKaart(retentie.rehook.tekst, pad, stijl, { y: kaartY(retentie.rehook.start, Math.min(totaal, retentie.rehook.end)) });
         overlays.push({ pad, start: retentie.rehook.start, end: Math.min(totaal, retentie.rehook.end) });
       }
 
