@@ -470,11 +470,11 @@ function regelBreedte(tekst: string, stijl?: Huisstijl | null): number {
   return ctx.measureText(tekst).width + 2 * instelling('ONDERTITEL_RAND');
 }
 
-export type Plek = 'standaard' | 'onder_kin' | 'lager' | 'kleiner' | 'kader_omhoog' | 'zoom_terug' | 'boven_hoofd' | 'overlap';
+export type Plek = 'standaard' | 'onder_kin' | 'lager' | 'kleiner' | 'kader_omhoog' | 'zoom_terug' | 'boven_hoofd' | 'op_kin' | 'overlap';
 
 /** Lege telling per plek, voor log en keuring. */
 export function legePlekTelling(): Record<Plek, number> {
-  return { standaard: 0, onder_kin: 0, lager: 0, kleiner: 0, kader_omhoog: 0, zoom_terug: 0, boven_hoofd: 0, overlap: 0 };
+  return { standaard: 0, onder_kin: 0, lager: 0, kleiner: 0, kader_omhoog: 0, zoom_terug: 0, boven_hoofd: 0, op_kin: 0, overlap: 0 };
 }
 
 /**
@@ -624,6 +624,14 @@ export function plaatsRegels(
           // (f) pas als niets anders kan: boven het hoofd.
           y = boven - marge;
           plek = 'boven_hoofd';
+        } else if (noodOnder - regelH >= boven + 0.78 * (onder - boven)) {
+          // (g) een close-up waarin het gezicht bijna het hele beeld vult
+          // (Koen: gezicht van 21% tot 80%): er is geen vrije strook. Dan op
+          // de kin, onder de mond — ogen en mond blijven vrij, en dat is waar
+          // een kijker naar kijkt. Alleen als de regel echt onder de mondlijn
+          // blijft (de onderste ~22% van het gezichtsvak).
+          y = noodOnder;
+          plek = 'op_kin';
         } else {
           y = noodOnder;
           plek = 'overlap';
@@ -647,7 +655,9 @@ export function plaatsRegels(
     }
     return { plaatsing, plekken, schalen, terug: null };
   };
-  const score = (u: Uitkomst) => u.plekken.reduce((n, p) => n + (p === 'overlap' ? 1000 : p === 'boven_hoofd' ? 1 : 0), 0);
+  // 'op_kin' is een noodoplossing: een kaderwijziging die de regel onder de kin
+  // krijgt blijft de voorkeur houden.
+  const score = (u: Uitkomst) => u.plekken.reduce((n, p) => n + (p === 'overlap' ? 1000 : p === 'op_kin' ? 500 : p === 'boven_hoofd' ? 1 : 0), 0);
   let beste = plaatsAlles(false);
   for (let ronde = 0; ronde < 4 * regels.length + 10; ronde++) {
     const poging = plaatsAlles(true);
@@ -756,7 +766,7 @@ export function keurOndertitelPlek(plekken: Record<Plek, number> | null | undefi
   const naam = 'ondertitel over gezicht';
   if (!plekken) return { naam, goed: null, detail: 'geen ondertitels' };
   const n = (p: Plek) => plekken[p] ?? 0;
-  const detail = `${n('standaard')} standaard, ${n('onder_kin')} onder kin, ${n('lager')} lager, ${n('kleiner')} kleiner, ${n('kader_omhoog')} kader omhoog, ${n('zoom_terug')} zoom terug, ${n('boven_hoofd')} boven hoofd`;
+  const detail = `${n('standaard')} standaard, ${n('onder_kin')} onder kin, ${n('lager')} lager, ${n('kleiner')} kleiner, ${n('kader_omhoog')} kader omhoog, ${n('zoom_terug')} zoom terug, ${n('boven_hoofd')} boven hoofd${n('op_kin') ? `, ${n('op_kin')} op de kin (close-up)` : ''}`;
   return n('overlap') > 0
     ? { naam, goed: false, detail: `${n('overlap')} regel(s) over het gezicht; ${detail}` }
     : { naam, goed: true, detail };
