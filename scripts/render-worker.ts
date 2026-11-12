@@ -1983,13 +1983,15 @@ async function verwerk(job: Job) {
           randRondes++;
           const volg = [...segmenten].sort((a, b) => a.volgorde - b.volgorde);
           let c = 0;
-          const geraakt = new Map<Shot, { links: number; rechts: number }>();
+          const geraakt = new Map<Shot, { links: number; rechts: number; momenten: { t: number; kant: 'links' | 'rechts' }[] }>();
           for (const sg of volg) {
             const tot = c + (sg.end - sg.start);
             for (const r of rand) {
               if (r.t < c || r.t >= tot) continue;
-              const g = geraakt.get(sg) ?? { links: 0, rechts: 0 };
+              const g = geraakt.get(sg) ?? { links: 0, rechts: 0, momenten: [] };
               g[r.kant]++;
+              // In brontijd: daar staat het spoor in.
+              g.momenten.push({ t: sg.start + (r.t - c), kant: r.kant });
               geraakt.set(sg, g);
             }
             c = tot;
@@ -2028,7 +2030,19 @@ async function verwerk(job: Job) {
                 const buren = punten.slice(Math.max(0, k - 1), k + 2);
                 return { t: p.t, x: Math.round((buren.reduce((s, q) => s + q.x, 0) / buren.length) * 1000) / 1000 };
               });
-              sg.spoor = [{ t: sg.start, x: glad[0].x }, ...glad, { t: sg.end, x: glad[glad.length - 1].x }];
+              // Op de momenten zelf waar het hoofd de rand raakte: het kader
+              // daar nog een stuk die kant op. Draait de spreker zich weg
+              // (Koen naar zijn collega), dan vindt de meting op de bron daar
+              // geen gezicht en liep het spoor er in een rechte lijn onderdoor.
+              const opT = (t: number) => {
+                const na = glad.findIndex((p) => p.t >= t);
+                if (na <= 0) return (na === 0 ? glad[0] : glad[glad.length - 1]).x;
+                const [a, b] = [glad[na - 1], glad[na]];
+                return a.x + ((b.x - a.x) * (t - a.t)) / Math.max(1e-6, b.t - a.t);
+              };
+              const extra = g.momenten.map((mo) => ({ t: Math.round(mo.t * 100) / 100, x: Math.min(1, Math.max(0, Math.round((opT(mo.t) + (mo.kant === 'links' ? -0.08 : 0.08)) * 1000) / 1000)) }));
+              const metExtra = [...glad.filter((p) => !extra.some((e) => Math.abs(e.t - p.t) < 0.2)), ...extra].sort((a, b) => a.t - b.t);
+              sg.spoor = [{ t: sg.start, x: metExtra[0].x }, ...metExtra, { t: sg.end, x: metExtra[metExtra.length - 1].x }];
               const xs = glad.map((p) => p.x);
               sg.spreiding = Math.max(...xs) - Math.min(...xs);
               const midden = [...xs].sort((p, q) => p - q)[Math.floor(xs.length / 2)];
