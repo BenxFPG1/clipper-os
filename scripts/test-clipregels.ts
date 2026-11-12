@@ -26,6 +26,7 @@ import {
   wijstTerug,
 } from '../src/lib/planner/clipregels';
 import { pasVerhaaldokterToe } from '../src/lib/planner';
+import { toetsVerhaalclips, verhaalHaaltDeToets, verhaalVoorToets } from '../src/lib/planner/verhaaltoets';
 import { planExamenSystem, schetsSystem, verhaaldokterSystem } from '../src/lib/planner/prompts';
 import { PROMPT_VERSION_PLAN, verhaaldokterDiffSchema, type Clip } from '../src/lib/planner/schema';
 import { pasRetentieToe } from '../src/lib/roughcut/retentie';
@@ -336,6 +337,20 @@ async function main() {
     const halverwege = pasClipRegelsToe({ ...clip([verhaalShots(true)[0], stuk(2, 200, 210, 'setup', 'ik denk ook dat een aantal nieuwe beleggers nog geen crash kent.', 'De belofte wordt op de proef gesteld.'), verhaalShots(true)[3]]), soort: 'verhaal' } as Clip, 'interview');
     toets('verhaalclip: stuk dat na een sprong midden in een zin begint is een fout', halverwege.oordeel.fouten.some((f) => /midden in een zin/.test(f)), halverwege.oordeel.fouten.join(' | '));
     toets('prompt beschrijft de verhaalclip en de brug', /VERHAALCLIP/.test(planExamenSystem(4, { naam: 'interview', min: 25, max: 50 })) && /"brug"/.test(schetsSystem(4, { naam: 'interview', min: 25, max: 50 })));
+
+    // Verhaaltoets: alleen wat de kijker hoort, en twijfel is afkeuren.
+    const tekst = verhaalVoorToets({ shots: verhaalShots(true) } as Pick<Clip, 'shots'>);
+    toets('verhaaltoets krijgt de stukken met de sprongen, zonder brug of uitleg', (tekst.match(/SPRONG/g) ?? []).length === 3 && /\[stuk 4\] En toen heeft hij getekend/.test(tekst) && !/brug|belofte/i.test(tekst), tekst);
+    const basis = { clip: 1, navertelling: 'Hij beloofde nooit te verkopen en tekende toch.', sprongen: [{ naar_stuk: 2, volgt: true, waarom: '' }], slot_lost_begin_in: true, verband_staat_in_de_tekst: true, oordeel: 'een_verhaal' as const };
+    toets('alles klopt: door', verhaalHaaltDeToets(basis).goed);
+    toets('één sprong volgt niet: afgekeurd', !verhaalHaaltDeToets({ ...basis, sprongen: [{ naar_stuk: 2, volgt: false, waarom: 'ander onderwerp' }] }).goed);
+    toets('verband alleen in het hoofd van de maker: afgekeurd', !verhaalHaaltDeToets({ ...basis, verband_staat_in_de_tekst: false }).goed);
+    toets('slot lost het begin niet in: afgekeurd', !verhaalHaaltDeToets({ ...basis, slot_lost_begin_in: false }).goed);
+    const plan2 = { clips: [{ ...clip(verhaalShots(true)), soort: 'verhaal', titel_intern: 'V' } as Clip, { ...clip([shot(1, 0, 10, 'hook', 'Een gewone clip.')]), titel_intern: 'M' } as Clip] };
+    const afgekeurd = await toetsVerhaalclips(plan2, undefined, (async () => ({ oordelen: [{ ...basis, oordeel: 'losse_uitspraken' }] })) as never);
+    toets('afgekeurde verhaalclip verdwijnt, de gewone clip blijft', afgekeurd.clips.length === 1 && afgekeurd.clips[0].titel_intern === 'M');
+    const stuk2 = await toetsVerhaalclips(plan2, undefined, (async () => { throw new Error('limiet'); }) as never);
+    toets('toets mislukt: verhaalclip valt af (niet ongetoetst door)', stuk2.clips.length === 1 && stuk2.clips[0].titel_intern === 'M');
 
     // Citaatcontrole: de shottekst moet op die tijd in de bron staan.
     const echt = pasClipRegelsToe(clip([shot(1, 95, 98, 'hook', 'Goud beweegt op vertrouwen en monetaire politiek.'), shot(2, 98, 103, 'payoff', 'En platina beweegt ook daarop, maar ook op autoverkopen.')]), 'uitleg', { transcript: bron });

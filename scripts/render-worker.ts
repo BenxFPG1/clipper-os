@@ -64,7 +64,8 @@ import {
   zoekStilstePunt,
 } from '../src/lib/roughcut/knipcontrole';
 import { controleerScript, kopInBron } from '../src/lib/roughcut/scriptcontrole';
-import { eindNaReactie, haalBronWoorden, vindFragment } from '../src/lib/roughcut/woorden';
+import { eindNaReactie, haalBronWoorden, vindFragment, weggelatenInFragment } from '../src/lib/roughcut/woorden';
+import { knipStukkenUit } from '../src/lib/roughcut/snap';
 import { poort, verzetGrens } from '../src/lib/roughcut/poort';
 import { herhaaldInBron, keurGezichtDetail, keurGraphicsDetail, keurMontage, keurScriptCompleet, keuringStatus, sprekerPuntMeterVia, type Keuringsrapport } from '../src/lib/roughcut/keuring';
 import { beeldMeterVia, eindbeeldTijden, keurEindbestand, randMomenten, tijdlijnZonderMens } from '../src/lib/roughcut/eindkeuring';
@@ -582,6 +583,23 @@ async function verwerk(job: Job) {
       uitgelijnd: aantalUitgelijnd > 0,
       woordgrenzen,
     });
+
+    // Wat het script binnen een shot weglaat (een verspreking, een
+    // zelfcorrectie, een aarzeling) gaat er ook echt uit. Zonder dit knipte
+    // de montage van het eerste tot het laatste woord van het fragment en
+    // bleef alles ertussen staan.
+    if (bronWoorden && process.env.SCRIPT_WEGLATINGEN !== '0') {
+      for (let i = segmenten.length - 1; i >= 0; i--) {
+        const sg = segmenten[i] as Shot & { transcript_fragment?: string; subKnip?: boolean };
+        if (!sg.transcript_fragment || sg.subKnip || sg.tease) continue;
+        const gaten = weggelatenInFragment(bronWoorden, sg.transcript_fragment, sg.start, sg.end);
+        if (gaten.length === 0) continue;
+        const delen = knipStukkenUit(sg, gaten);
+        if (delen.length < 2) continue;
+        segmenten.splice(i, 1, ...delen);
+        console.log(`     script laat weg in shot ${sg.volgorde}: ${gaten.map((g) => `"${g.tekst.slice(0, 40)}" (${(g.tot - g.van).toFixed(1)} s)`).join(', ')} → geknipt`);
+      }
+    }
 
     // Een halve zin twee keer horen komt hiervandaan: de planner zette de hook
     // en de payoff op hetzelfde bronfragment (cold open), en dan hoort de

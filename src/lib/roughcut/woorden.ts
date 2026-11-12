@@ -449,3 +449,65 @@ export function vindFragment(
     gapNa: volgend ? Math.max(0, volgend.s - laatste.e) : 2,
   };
 }
+
+/**
+ * Wat het script binnen een shot WEGLAAT: woorden die in de bron tussen twee
+ * opeenvolgende scriptwoorden staan en niet in het fragment voorkomen.
+ *
+ * De planner schrijft een schoon fragment ("…170 psychologische biases
+ * geïdentificeerd waaraan mensen lijden") en noteert erbij "de dubbele
+ * formulering is teruggebracht". De montage knipte echter van het eerste tot
+ * het laatste woord en liet alles ertussen staan: "gedefinieerd, of ja,
+ * geïdentificeerd moet ik zeggen" bleef te horen. Dit geeft de stukken terug
+ * die eruit moeten, op woordgrenzen.
+ *
+ * Voorzichtig: alleen als het fragment verder goed op de bron past (≥ 75%),
+ * alleen stukken van minstens twee woorden en MIN_S seconden, en samen nooit
+ * meer dan 40% van het shot — anders is het fragment een parafrase en geen
+ * knipinstructie.
+ */
+export function weggelatenInFragment(
+  woorden: BronWoord[],
+  fragment: string,
+  start: number,
+  end: number,
+  minS = 0.6,
+): { van: number; tot: number; tekst: string }[] {
+  const doel = fragment.split(/\s+/).map(norm).filter((w) => w.length >= 1);
+  const bron = woorden.filter((w) => (w.s + w.e) / 2 >= start - 0.2 && (w.s + w.e) / 2 <= end + 0.2).map((w) => ({ w, n: norm(w.w) })).filter((x) => x.n.length > 0);
+  if (doel.length < 4 || bron.length < 4) return [];
+  const lijkt = (a: string, b: string) => a === b || (a.length >= 4 && b.length >= 4 && (a.startsWith(b) || b.startsWith(a)));
+  const n = bron.length;
+  const m = doel.length;
+  const dp: number[][] = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0));
+  for (let k = n - 1; k >= 0; k--) {
+    for (let d = m - 1; d >= 0; d--) {
+      dp[k][d] = lijkt(bron[k].n, doel[d]) ? 1 + dp[k + 1][d + 1] : Math.max(dp[k + 1][d], dp[k][d + 1]);
+    }
+  }
+  if (dp[0][0] / m < 0.75) return [];
+  const paren: { b: number; d: number }[] = [];
+  let k = 0;
+  let d = 0;
+  while (k < n && d < m) {
+    if (lijkt(bron[k].n, doel[d]) && dp[k][d] === 1 + dp[k + 1][d + 1]) {
+      paren.push({ b: k, d });
+      k++;
+      d++;
+    } else if (dp[k + 1][d] >= dp[k][d + 1]) k++;
+    else d++;
+  }
+  const uit: { van: number; tot: number; tekst: string }[] = [];
+  for (let i = 1; i < paren.length; i++) {
+    const [a, b] = [paren[i - 1], paren[i]];
+    // Het script gaat direct door (opeenvolgende woorden), de bron niet.
+    if (b.d !== a.d + 1 || b.b - a.b - 1 < 2) continue;
+    const van = bron[a.b].w.e;
+    const tot = bron[b.b].w.s;
+    if (tot - van < minS) continue;
+    uit.push({ van, tot, tekst: bron.slice(a.b + 1, b.b).map((x) => x.w.w).join(' ') });
+  }
+  const weg = uit.reduce((t, g) => t + (g.tot - g.van), 0);
+  return weg > 0.4 * (end - start) ? [] : uit;
+}
+

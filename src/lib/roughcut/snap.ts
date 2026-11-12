@@ -224,3 +224,35 @@ export function verwijderDodeLucht<T extends SnapShot & { volgorde?: number }>(
   // "script compleet" shots miste die er gewoon waren.
   return uit;
 }
+
+/**
+ * Knipt stukken uit een shot (bijvoorbeeld wat het script weglaat,
+ * woorden.ts → weggelatenInFragment). Zelfde afspraken als bij dode lucht:
+ * alleen het eerste deel houdt het beginanker en alleen het laatste het
+ * eindanker, en het plannummer blijft herkenbaar (1 → 1.001, 1.002).
+ */
+export function knipStukkenUit<T extends SnapShot & { volgorde?: number }>(shot: T, gaten: { van: number; tot: number }[]): (T & { subKnip?: boolean })[] {
+  const binnen = gaten
+    .filter((g) => g.van > shot.start + 0.3 && g.tot < shot.end - 0.3 && g.tot > g.van)
+    .sort((a, b) => a.van - b.van);
+  if (binnen.length === 0) return [shot];
+  const volgorde = shot.volgorde ?? 0;
+  const deel = (start: number, end: number, i: number, laatste: boolean) => ({
+    ...shot,
+    start,
+    end,
+    subKnip: i > 0 || (shot as { subKnip?: boolean }).subKnip,
+    volgorde: Math.round((volgorde + i * 0.001) * 1e6) / 1e6,
+    ankerStart: i === 0 ? (shot as { ankerStart?: number }).ankerStart : undefined,
+    ankerEind: laatste ? (shot as { ankerEind?: number }).ankerEind : undefined,
+  });
+  const uit: (T & { subKnip?: boolean })[] = [];
+  let cursor = shot.start;
+  for (const [i, g] of binnen.entries()) {
+    uit.push(deel(cursor, g.van, i, false));
+    cursor = g.tot;
+  }
+  uit.push(deel(cursor, shot.end, binnen.length, true));
+  return uit;
+}
+

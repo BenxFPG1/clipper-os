@@ -14,7 +14,8 @@ import { poort, verzetGrens, woordOnder } from '../src/lib/roughcut/poort';
 import { keurKnippen, keurOverlap, keurScriptCompleet, keuringStatus } from '../src/lib/roughcut/keuring';
 import { corrigeerKadrering, uitsnedeVan } from '../src/lib/roughcut/kadercontrole';
 import { basisZoom, type Shot } from '../src/lib/roughcut';
-import { eindNaReactie, vindFragment, type BronWoord } from '../src/lib/roughcut/woorden';
+import { eindNaReactie, vindFragment, weggelatenInFragment, type BronWoord } from '../src/lib/roughcut/woorden';
+import { knipStukkenUit } from '../src/lib/roughcut/snap';
 import { verwijderDodeLucht } from '../src/lib/roughcut/snap';
 
 let gefaald = 0;
@@ -353,6 +354,23 @@ console.log('woordanker — een los kort woord uit de vorige zin is geen begin')
   const a = vindFragment(bron, 'Je hebt ook je hypotheek. Je wil misschien nog wat boodschappen doen.', 318);
   const verwacht = bron[10].s;
   toets('anker begint bij "Je hebt", niet bij "je" in "met je handen"', a?.start === verwacht, JSON.stringify({ start: a?.start, verwacht }));
+}
+
+console.log('script laat weg — de editor knipt het er ook uit');
+{
+  const zin = 'in de academische wereld hebben ze ongeveer 170 psychologische biases gedefinieerd of ja geïdentificeerd moet ik zeggen waaraan mensen lijden en die in de weg staan';
+  const bron: BronWoord[] = zin.split(' ').map((w, i) => ({ w, s: 407 + i * 0.4, e: 407 + i * 0.4 + 0.35 }));
+  const fragment = 'In de academische wereld hebben ze ongeveer 170 psychologische biases geïdentificeerd waaraan mensen lijden en die in de weg staan';
+  const gaten = weggelatenInFragment(bron, fragment, 407, 407 + bron.length * 0.4);
+  toets('zelfcorrectie die het script weglaat wordt gevonden', gaten.length >= 1 && /moet ik zeggen/.test(gaten.map((g) => g.tekst).join(' ')), JSON.stringify(gaten));
+  const delen = knipStukkenUit({ ...shot(1, 407, 407 + bron.length * 0.4), ankerStart: 407, ankerEind: 407 + bron.length * 0.4 } as Shot, gaten);
+  const gehoord = bron.filter((w) => delen.some((d) => (w.s + w.e) / 2 >= d.start && (w.s + w.e) / 2 <= d.end)).map((w) => w.w).join(' ');
+  toets('na het knippen klinkt "moet ik zeggen" niet meer, de rest wel', !/moet ik zeggen/.test(gehoord) && /biases/.test(gehoord) && /waaraan mensen lijden/.test(gehoord), gehoord);
+  toets('delen houden hun eigen ankers (eerste begin, laatste eind)', delen[0].ankerStart === 407 && delen[0].ankerEind === undefined && delen[delen.length - 1].ankerStart === undefined);
+  // Een fragment dat de bron parafraseert is geen knipinstructie.
+  toets('parafrase: niets knippen', weggelatenInFragment(bron, 'De wetenschap kent honderdzeventig denkfouten die beleggers telkens maken', 407, 420).length === 0);
+  // Het fragment komt woord voor woord overeen: niets te knippen.
+  toets('letterlijk fragment: niets knippen', weggelatenInFragment(bron, zin, 407, 407 + bron.length * 0.4).length === 0);
 }
 
 console.log('opening — de clip begint met spraak');

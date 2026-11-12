@@ -20,6 +20,7 @@ import {
   renderbareTekst,
 } from './verhaaldokterpoort';
 import { editNormenVoorPrompt } from '../vault/normen';
+import { toetsVerhaalclips } from './verhaaltoets';
 import {
   MAX_BEELD_KANDIDATEN,
   beoordeelHookBeelden,
@@ -284,6 +285,8 @@ ${JSON.stringify(perClip, null, 1)}${signalenRapport}${regelsVoorPrompt(voorDokt
   // ook daarna aan voldoen. Daarna vallen clips onder de 6 af.
   const eind = pasPlanRegelsToe(doctored, formaat, regelOpties);
   doctored = eind.plan;
+  // Verhaalclips langs een toets die alleen leest wat de kijker hoort.
+  doctored = await toetsVerhaalclips(doctored, (m) => console.log(`[planner] ${m}`));
   // Geen enkele clip haalt de harde regels: één keer opnieuw plannen met de
   // fouten erbij, in plaats van de minst slechte clip te renderen.
   const harde = eind.oordelen.flatMap((o) => o.oordeel.fouten.map((f) => `"${o.titel}": ${f}`));
