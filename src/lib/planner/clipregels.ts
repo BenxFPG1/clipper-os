@@ -671,6 +671,14 @@ export function pasClipRegelsToe(
         if (!s) continue;
         if ((s.brug ?? '').trim().length < 15) fouten.push(`verhaalclip: shot ${s.volgorde} springt ${Math.abs(x.seconden)} s door de bron zonder brug — waarom volgt dit op wat de kijker net hoorde?`);
         if (s.end - s.start < minStuk) fouten.push(`verhaalclip: shot ${s.volgorde} is ${(s.end - s.start).toFixed(1)} s na een sprong — te kort om te landen (minstens ${minStuk} s)`);
+        // Na een sprong begint de kijker opnieuw: het stuk moet bij het begin
+        // van een zin starten. Het model schrijft een fragment dat midden in
+        // een zin begint zelf met een kleine letter ("ik denk ook dat een
+        // aantal…"); in de eerste verhaalclip gaf dat een rommelige overgang.
+        const eersteLetter = (s.transcript_fragment ?? '').trim().charAt(0);
+        if (eersteLetter && eersteLetter !== eersteLetter.toUpperCase()) {
+          fouten.push(`verhaalclip: shot ${s.volgorde} begint na een sprong midden in een zin ("${(s.transcript_fragment ?? '').trim().slice(0, 40)}…") — start bij het begin van de zin`);
+        }
       }
       if (sp.some((x) => x.seconden < -1)) signalen.push('verhaalclip springt terug in de tijd — klopt de volgorde voor iemand die de video niet kent?');
     } else {

@@ -333,6 +333,8 @@ async function main() {
     toets('dezelfde shots als gewone clip: te veel sprongen', alsMoment.oordeel.fouten.some((f) => /sprongen door de bron/.test(f)));
     const teKort = pasClipRegelsToe({ ...clip([verhaalShots(true)[0], stuk(2, 200, 201.5, 'setup', 'Drie maanden later.', 'De belofte wordt op de proef gesteld.'), verhaalShots(true)[3]]), soort: 'verhaal' } as Clip, 'interview');
     toets('verhaalclip: stuk van 1,5 s na een sprong is te kort', teKort.oordeel.fouten.some((f) => /te kort om te landen/.test(f)), teKort.oordeel.fouten.join(' | '));
+    const halverwege = pasClipRegelsToe({ ...clip([verhaalShots(true)[0], stuk(2, 200, 210, 'setup', 'ik denk ook dat een aantal nieuwe beleggers nog geen crash kent.', 'De belofte wordt op de proef gesteld.'), verhaalShots(true)[3]]), soort: 'verhaal' } as Clip, 'interview');
+    toets('verhaalclip: stuk dat na een sprong midden in een zin begint is een fout', halverwege.oordeel.fouten.some((f) => /midden in een zin/.test(f)), halverwege.oordeel.fouten.join(' | '));
     toets('prompt beschrijft de verhaalclip en de brug', /VERHAALCLIP/.test(planExamenSystem(4, { naam: 'interview', min: 25, max: 50 })) && /"brug"/.test(schetsSystem(4, { naam: 'interview', min: 25, max: 50 })));
 
     // Citaatcontrole: de shottekst moet op die tijd in de bron staan.
