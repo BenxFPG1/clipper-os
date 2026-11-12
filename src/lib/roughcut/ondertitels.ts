@@ -620,18 +620,22 @@ export function plaatsRegels(
           // een eindscherm-shot zette de regels op de kin.
           gewijzigd.set(r, 'zoom_terug');
           return { plaatsing, plekken, schalen, terug };
-        } else if (boven - marge - regelH >= minBoven) {
-          // (f) pas als niets anders kan: boven het hoofd.
-          y = boven - marge;
-          plek = 'boven_hoofd';
         } else if (noodOnder - regelH >= boven + 0.78 * (onder - boven)) {
-          // (g) een close-up waarin het gezicht bijna het hele beeld vult
+          // (f) een close-up waarin het gezicht bijna het hele beeld vult
           // (Koen: gezicht van 21% tot 80%): er is geen vrije strook. Dan op
           // de kin, onder de mond — ogen en mond blijven vrij, en dat is waar
           // een kijker naar kijkt. Alleen als de regel echt onder de mondlijn
           // blijft (de onderste ~22% van het gezichtsvak).
+          // Vóór "boven het hoofd": in de Koen-clip stonden vijf regels die
+          // boven het hoofd hoorden over zijn ogen, omdat hij in de tussentijd
+          // voorover leunde. De kin ligt vast onder de mond; de ruimte boven
+          // een bewegend hoofd niet.
           y = noodOnder;
           plek = 'op_kin';
+        } else if (boven - marge - regelH >= minBoven) {
+          // (g) pas als niets anders kan: boven het hoofd.
+          y = boven - marge;
+          plek = 'boven_hoofd';
         } else {
           y = noodOnder;
           plek = 'overlap';

@@ -1027,7 +1027,8 @@ async function main() {
       toets('eindscherm-shot met punch-in: geen regel op het gezicht', !pe.plekken.includes('overlap'), JSON.stringify({ pe, zoom: eind.zoom, focusY: eind.focusY }));
       toets('en het eindscherm blijft buiten de uitsnede', keurOverlay([eind], 'vullend').goed === true, JSON.stringify({ zoom: eind.zoom, focusY: eind.focusY }));
       const hoofd = plek(vlak(0.45, 0.31, 1));
-      toets('zonder punch-in en zonder ruimte: pas dan boven het hoofd', hoofd.plekken[0] === 'boven_hoofd', JSON.stringify(hoofd));
+      // Sinds de Koen-clip: eerst op de kin (onder de mond), pas daarna boven het hoofd.
+      toets('zonder punch-in en zonder ruimte: op de kin of boven het hoofd, nooit over ogen en mond', hoofd.plekken[0] === 'op_kin' || hoofd.plekken[0] === 'boven_hoofd', JSON.stringify(hoofd));
       toets('keuring "ondertitel over gezicht" groen zonder overlap', keurOndertitelPlek({ ...legePlekTelling(), onder_kin: 3, lager: 1, boven_hoofd: 1 }).goed === true);
       toets('en rood bij een regel over het gezicht', keurOndertitelPlek({ ...legePlekTelling(), overlap: 1 }).goed === false);
       const graphicShot: Shot = { ...midden, scenes: [{ van: 10, tot: 14, gezicht: false }] };
