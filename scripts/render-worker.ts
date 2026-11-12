@@ -68,7 +68,7 @@ import { eindNaReactie, haalBronWoorden, vindFragment, weggelatenInFragment } fr
 import { knipStukkenUit } from '../src/lib/roughcut/snap';
 import { poort, verzetGrens } from '../src/lib/roughcut/poort';
 import { herhaaldInBron, keurGezichtDetail, keurGraphicsDetail, keurMontage, keurScriptCompleet, keuringStatus, sprekerPuntMeterVia, type Keuringsrapport } from '../src/lib/roughcut/keuring';
-import { beeldMeterVia, eindbeeldTijden, keurEindbestand, randMomenten, tijdlijnZonderMens } from '../src/lib/roughcut/eindkeuring';
+import { beeldMeterVia, eindbeeldTijden, keurEindbestand, keurHoofdHeel, randMomenten, tijdlijnZonderMens } from '../src/lib/roughcut/eindkeuring';
 import { zelfherstelStap } from '../src/lib/roughcut/herstel';
 import { corrigeerWoorden, tweedeLezing, verfijnWoorden, volgCaptions } from '../src/lib/roughcut/ondertitelwoorden';
 import { ruimBronCacheOp } from '../src/lib/roughcut/broncache';
@@ -1957,7 +1957,12 @@ async function verwerk(job: Job) {
         const tijden = eindbeeldTijden(duurNu, tijdlijnZonderMens(segmenten, kaderClip));
         const meting = tijden.length ? await beeldMeterVia(montage.pad, pythonMetOpenCV())(tijden) : null;
         const rand = meting ? randMomenten(tijden, meting) : [];
-        if (rand.length >= 2) {
+        // Alleen ingrijpen als de keuring het ook zou afkeuren. Twee losse
+        // momenten tegen de rand vindt de keuring goed; het herstel greep dan
+        // toch in en maakte een goede clip slechter (ambulance, twee extra
+        // renders en een andere uitkomst).
+        const oordeel = meting ? await keurHoofdHeel(duurNu, async () => meting, tijdlijnZonderMens(segmenten, kaderClip)) : null;
+        if (oordeel?.goed === false) {
           randRondes++;
           const volg = [...segmenten].sort((a, b) => a.volgorde - b.volgorde);
           let c = 0;
@@ -1974,6 +1979,11 @@ async function verwerk(job: Job) {
           }
           const puntMeter = sprekerPuntMeterVia(bronPad, pythonMetOpenCV());
           for (const [sg, g] of geraakt) {
+            // Eén los moment in een shot is geen reden om dat shot te verbouwen.
+            if (g.links + g.rechts < 2) {
+              geraakt.delete(sg);
+              continue;
+            }
             const kant = g.links >= g.rechts ? 'linker' : 'rechter';
             // Eerste keus: het kader laten meelopen. Een spreker die in een
             // close-up heen en weer beweegt (Koen) past in geen enkel vast
@@ -1982,14 +1992,19 @@ async function verwerk(job: Job) {
             const tijdenBron: number[] = [];
             for (let t = sg.start + 0.05; t < sg.end; t += 0.25) tijdenBron.push(Math.round(t * 100) / 100);
             const gemeten = tijdenBron.length >= 3 ? await puntMeter(tijdenBron) : null;
-            const verwacht = sg.gezicht?.x ?? sg.focusX ?? 0.5;
-            const punten = (gemeten ?? []).flatMap((m, k) => {
-              if (!m) return [];
-              // Het gezicht dat het dichtst bij het huidige kader staat: dat is
-              // wie er in beeld hoort, niet toevallig de buurman.
-              const wie = (m.gezichten?.length ? m.gezichten : [m]).reduce((p, q) => (Math.abs(q.x - verwacht) < Math.abs(p.x - verwacht) ? q : p));
-              return Math.abs(wie.x - verwacht) <= 0.2 ? [{ t: tijdenBron[k], x: wie.x }] : [];
-            });
+            // Volgen van punt naar punt: het gezicht dat het dichtst bij de
+            // vorige stand staat. Met één vast verwachtingspunt viel een
+            // spreker die ver wegleunt (Koen draait naar zijn collega) buiten
+            // de marge en liep het kader niet mee.
+            let vorigeX = sg.gezicht?.x ?? sg.focusX ?? 0.5;
+            const punten: { t: number; x: number }[] = [];
+            for (const [k, m] of (gemeten ?? []).entries()) {
+              if (!m) continue;
+              const wie = (m.gezichten?.length ? m.gezichten : [m]).reduce((p, q) => (Math.abs(q.x - vorigeX) < Math.abs(p.x - vorigeX) ? q : p));
+              if (Math.abs(wie.x - vorigeX) > 0.2) continue;
+              punten.push({ t: tijdenBron[k], x: wie.x });
+              vorigeX = wie.x;
+            }
             if (punten.length >= 3) {
               // Licht gladstrijken: een trillend kader is erger dan een hoofd dat even schuift.
               const glad = punten.map((p, k) => {

@@ -267,6 +267,14 @@ export function eindNaReactie(woorden: BronWoord[], eind: number, tot: number): 
   if (erna.length === 0) return Math.min(tot, eind + 2.5);
   const zinseinde = erna.find((w) => /[.?!…]$/.test(w.w));
   if (!zinseinde || zinseinde.e > eind + 6) return eind;
+  // Is die zin een herhaling van wat er net gezegd is ("Je bent echt dom man.
+  // Je bent echt dom man."), dan hoort hij er niet bij: de kijker hoort de
+  // slotzin dan twee keer. Dat hing eerst van het terugluisteren af en
+  // wisselde per run.
+  const zin = erna.slice(0, erna.indexOf(zinseinde) + 1).map((w) => norm(w.w)).filter(Boolean);
+  const ervoor = woorden.filter((w) => w.e <= eind + 0.05).slice(-(zin.length + 2)).map((w) => norm(w.w));
+  const gedeeld = zin.filter((w) => ervoor.includes(w)).length;
+  if (zin.length >= 3 && gedeeld / zin.length >= 0.75) return eind;
   return zinseinde.e + 0.3;
 }
 

@@ -339,6 +339,8 @@ console.log('reactie — de zin na de punchline blijft erbij');
   toets('eerste hele zin', Math.abs(eindNaReactie(na, 50.5, 59) - 52.8) < 0.01);
   toets('alleen gelach loopt door', eindNaReactie([], 50, 59) === 52.5);
   toets('geen zinseinde: niets erbij', eindNaReactie(na.slice(0, 3), 50.5, 59) === 50.5);
+  const tweeKeer = [r('Je', 48), r('bent', 48.4), r('echt', 48.8), r('dom', 49.2), r('man.', 49.6), r('Je', 51), r('bent', 51.4), r('echt', 51.8), r('dom', 52.2), r('man.', 52.6)];
+  toets('de reactie is dezelfde zin nog eens: niet meenemen', eindNaReactie(tweeKeer, 50.0, 59) === 50.0);
   const bron = 'mag ze dat ze is geen dief vind ik heel mooi gezegd broeder stel die nog een keer geen'.split(' ').map((w, i) => r(w, i));
   const a = vindFragment(bron, 'mag ze dat ze is toch geen dief zeker', 0);
   const dubbel = 'ha je bent echt dom man je bent echt dom man hey'.split(' ').map((w, i) => r(w, i));
