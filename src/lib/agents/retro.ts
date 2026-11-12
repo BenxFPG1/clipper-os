@@ -208,7 +208,11 @@ export async function collectRetroStats(): Promise<GroupStats[]> {
   for (const find of externRes.data ?? []) {
     if (find.outlier_score === null) continue;
     const score = Number(find.outlier_score);
-    const decoded = (find.decoded ?? {}) as { hook_type?: string; structuur?: string; overdraagbaar_naar_ons?: boolean };
+    const decoded = (find.decoded ?? {}) as { hook_type?: string; structuur?: string; overdraagbaar_naar_ons?: boolean; betrouwbaarheid?: 'laag' | 'hoog' };
+    // Een label dat de scout alleen op de caption baseerde (geen transcript)
+    // is een gok over wat er in de video gebeurt. Als bewijs voor een gewicht
+    // telde het even zwaar als een echte waarneming; nu niet meer.
+    if (decoded.betrouwbaarheid === 'laag') continue;
     // Bewust géén filter op "overdraagbaar": een hook die in financien werkt is
     // een echte meting, ook als hij niet direct op ons materiaal past. Relevantie
     // regelen we via het thema — die kennis telt zwaar mee bij een financien-

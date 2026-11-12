@@ -1081,9 +1081,10 @@ async function schrijfKandidaten(
 
   let geschreven = 0;
   for (const kandidaat of decoded.kandidaat_heuristieken) {
-    const accounts = new Set(
-      kandidaat.post_urls.map((url) => handleVanPost.get(url)).filter((h): h is string => Boolean(h)),
-    );
+    // Alleen links die we zelf hebben aangeleverd tellen als bewijs: een
+    // link die het model erbij verzon blies de bewijsscore op.
+    const echteUrls = [...new Set(kandidaat.post_urls.filter((url) => handleVanPost.has(url)))];
+    const accounts = new Set(echteUrls.map((url) => handleVanPost.get(url)).filter((h): h is string => Boolean(h)));
     if (accounts.size < MIN_ACCOUNTS_PER_HEURISTIEK) continue;
     if (bekend.has(kandidaat.regel)) continue;
 
@@ -1091,10 +1092,10 @@ async function schrijfKandidaten(
       rule: kandidaat.regel,
       source: 'scout_agent',
       status: 'candidate',
-      evidence_score: kandidaat.post_urls.length * accounts.size,
+      evidence_score: echteUrls.length * accounts.size,
       platform: kandidaat.platform,
       theme: themeVanPosts(kandidaat.post_urls, outliers),
-      evidence: { post_urls: kandidaat.post_urls, accounts: [...accounts], onderbouwing: kandidaat.onderbouwing },
+      evidence: { post_urls: echteUrls, accounts: [...accounts], onderbouwing: kandidaat.onderbouwing },
     });
     if (!error) geschreven++;
     else {
@@ -1104,7 +1105,7 @@ async function schrijfKandidaten(
         rule: kandidaat.regel,
         source: 'scout_agent',
         status: 'candidate',
-        evidence_score: kandidaat.post_urls.length * accounts.size,
+        evidence_score: echteUrls.length * accounts.size,
         platform: kandidaat.platform,
         theme: themeVanPosts(kandidaat.post_urls, outliers),
       });

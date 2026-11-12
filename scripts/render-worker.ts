@@ -66,7 +66,7 @@ import {
 import { controleerScript, kopInBron } from '../src/lib/roughcut/scriptcontrole';
 import { eindNaReactie, haalBronWoorden, vindFragment } from '../src/lib/roughcut/woorden';
 import { poort, verzetGrens } from '../src/lib/roughcut/poort';
-import { herhaaldInBron, keurGezichtDetail, keurGraphicsDetail, keurMontage, keurScriptCompleet, keuringStatus, type Keuringsrapport } from '../src/lib/roughcut/keuring';
+import { herhaaldInBron, keurGezichtDetail, keurGraphicsDetail, keurMontage, keurScriptCompleet, keuringStatus, sprekerPuntMeterVia, type Keuringsrapport } from '../src/lib/roughcut/keuring';
 import { beeldMeterVia, eindbeeldTijden, keurEindbestand, randMomenten, tijdlijnZonderMens } from '../src/lib/roughcut/eindkeuring';
 import { zelfherstelStap } from '../src/lib/roughcut/herstel';
 import { corrigeerWoorden, tweedeLezing, verfijnWoorden, volgCaptions } from '../src/lib/roughcut/ondertitelwoorden';
@@ -1954,22 +1954,50 @@ async function verwerk(job: Job) {
             }
             c = tot;
           }
+          const puntMeter = sprekerPuntMeterVia(bronPad, pythonMetOpenCV());
           for (const [sg, g] of geraakt) {
+            const kant = g.links >= g.rechts ? 'linker' : 'rechter';
+            // Eerste keus: het kader laten meelopen. Een spreker die in een
+            // close-up heen en weer beweegt (Koen) past in geen enkel vast
+            // kader; wijder maken haalde bovendien de kaderwissels weg. Dus
+            // vier keer per seconde meten waar hij is en dat volgen.
+            const tijdenBron: number[] = [];
+            for (let t = sg.start + 0.05; t < sg.end; t += 0.25) tijdenBron.push(Math.round(t * 100) / 100);
+            const gemeten = tijdenBron.length >= 3 ? await puntMeter(tijdenBron) : null;
+            const verwacht = sg.gezicht?.x ?? sg.focusX ?? 0.5;
+            const punten = (gemeten ?? []).flatMap((m, k) => {
+              if (!m) return [];
+              // Het gezicht dat het dichtst bij het huidige kader staat: dat is
+              // wie er in beeld hoort, niet toevallig de buurman.
+              const wie = (m.gezichten?.length ? m.gezichten : [m]).reduce((p, q) => (Math.abs(q.x - verwacht) < Math.abs(p.x - verwacht) ? q : p));
+              return Math.abs(wie.x - verwacht) <= 0.2 ? [{ t: tijdenBron[k], x: wie.x }] : [];
+            });
+            if (punten.length >= 3) {
+              // Licht gladstrijken: een trillend kader is erger dan een hoofd dat even schuift.
+              const glad = punten.map((p, k) => {
+                const buren = punten.slice(Math.max(0, k - 1), k + 2);
+                return { t: p.t, x: Math.round((buren.reduce((s, q) => s + q.x, 0) / buren.length) * 1000) / 1000 };
+              });
+              sg.spoor = [{ t: sg.start, x: glad[0].x }, ...glad, { t: sg.end, x: glad[glad.length - 1].x }];
+              const xs = glad.map((p) => p.x);
+              sg.spreiding = Math.max(...xs) - Math.min(...xs);
+              const midden = [...xs].sort((p, q) => p - q)[Math.floor(xs.length / 2)];
+              if (sg.gezicht) sg.gezicht = { ...sg.gezicht, x: midden };
+              sg.focusX = midden;
+              sg.sprekerBepaald = true;
+              console.log(`     zelfherstel eindbeeld: shot ${sg.volgorde} hoofd ${g.links + g.rechts}× tegen de ${kant}rand → kader loopt mee (${glad.length} meetpunten, ${Math.min(...xs).toFixed(2)}–${Math.max(...xs).toFixed(2)})`);
+              continue;
+            }
+            // Geen bruikbare meting: dan iets wijder en een fractie die kant op.
             const huidig = sg.zoom ?? basisZoom(sg);
             const wijder = Math.round(Math.max(1, huidig - 0.15) * 1000) / 1000;
-            // Links afgesneden: het hoofd zit links van de uitsnede, dus de
-            // uitsnede een fractie naar links (en omgekeerd).
-            // Kan het shot niet wijder (al op zoom 1, een close-up in de
-            // bron), dan is schuiven het enige middel: dubbel zo ver.
             const schuif = (g.links >= g.rechts ? -1 : 1) * (huidig - wijder < 0.05 ? 0.06 : 0.03);
             sg.zoom = wijder;
             sg.zoomPlafond = Math.min(sg.zoomPlafond ?? Infinity, wijder);
             if (sg.gezicht) sg.gezicht = { ...sg.gezicht, x: Math.min(1, Math.max(0, sg.gezicht.x + schuif)) };
             if (typeof sg.focusX === 'number') sg.focusX = Math.min(1, Math.max(0, sg.focusX + schuif));
             if (sg.spoor?.length) sg.spoor = sg.spoor.map((p) => ({ t: p.t, x: Math.min(1, Math.max(0, p.x + schuif)) }));
-            console.log(
-              `     zelfherstel eindbeeld: shot ${sg.volgorde} hoofd ${g.links + g.rechts}× tegen de ${g.links >= g.rechts ? 'linker' : 'rechter'}rand → zoom ${huidig.toFixed(2)} → ${wijder.toFixed(2)}, kader ${schuif < 0 ? 'naar links' : 'naar rechts'}`,
-            );
+            console.log(`     zelfherstel eindbeeld: shot ${sg.volgorde} hoofd ${g.links + g.rechts}× tegen de ${kant}rand → zoom ${huidig.toFixed(2)} → ${wijder.toFixed(2)}, kader ${schuif < 0 ? 'naar links' : 'naar rechts'}`);
           }
           if (geraakt.size) continue;
         }
