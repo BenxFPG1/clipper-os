@@ -18,6 +18,7 @@ import {
   pasNaadZoomToe,
   zorgVoorBron,
   type BurnOverlay,
+  basisZoom,
 } from '../src/lib/roughcut';
 import {
   tekenHookKaart,
@@ -66,7 +67,7 @@ import { controleerScript, kopInBron } from '../src/lib/roughcut/scriptcontrole'
 import { eindNaReactie, haalBronWoorden, vindFragment } from '../src/lib/roughcut/woorden';
 import { poort, verzetGrens } from '../src/lib/roughcut/poort';
 import { herhaaldInBron, keurGezichtDetail, keurGraphicsDetail, keurMontage, keurScriptCompleet, keuringStatus, type Keuringsrapport } from '../src/lib/roughcut/keuring';
-import { keurEindbestand } from '../src/lib/roughcut/eindkeuring';
+import { beeldMeterVia, eindbeeldTijden, keurEindbestand, randMomenten, tijdlijnZonderMens } from '../src/lib/roughcut/eindkeuring';
 import { zelfherstelStap } from '../src/lib/roughcut/herstel';
 import { corrigeerWoorden, tweedeLezing, verfijnWoorden, volgCaptions } from '../src/lib/roughcut/ondertitelwoorden';
 import { ruimBronCacheOp } from '../src/lib/roughcut/broncache';
@@ -1366,6 +1367,7 @@ async function verwerk(job: Job) {
     // megabytes over alle rondes, anders staat er na een tweede ronde "0 MB".
     let mbRenderbron = 0;
     let beeldRondeGedaan = false;
+    let randHersteld = false;
     let keuringsuitslag: Awaited<ReturnType<typeof keurMontage>> | null = null;
     let ondertitels: Ondertitels | null = null;
     let streamNogInBeeld: number[] = [];
@@ -1925,6 +1927,52 @@ async function verwerk(job: Job) {
         }
       } catch (e) {
         console.log(`     zelfherstel retentie overgeslagen (${(e as Error).message.slice(0, 70)})`);
+      }
+    }
+
+    // Zelfherstel op het eindbeeld: staat een hoofd tegen de beeldrand, dan
+    // dat shot iets wijder en een fractie die kant op, en één keer opnieuw.
+    // Gemeten op de mp4 zelf, dus onafhankelijk van wat het plan denkt.
+    if (!randHersteld && poging < MAX_POGINGEN && process.env.ZELFHERSTEL_SPREKER !== '0') {
+      try {
+        const duurNu = segmenten.reduce((t, sg) => t + (sg.end - sg.start), 0);
+        const tijden = eindbeeldTijden(duurNu, tijdlijnZonderMens(segmenten, kaderClip));
+        const meting = tijden.length ? await beeldMeterVia(montage.pad, pythonMetOpenCV())(tijden) : null;
+        const rand = meting ? randMomenten(tijden, meting) : [];
+        if (rand.length >= 2) {
+          randHersteld = true;
+          const volg = [...segmenten].sort((a, b) => a.volgorde - b.volgorde);
+          let c = 0;
+          const geraakt = new Map<Shot, { links: number; rechts: number }>();
+          for (const sg of volg) {
+            const tot = c + (sg.end - sg.start);
+            for (const r of rand) {
+              if (r.t < c || r.t >= tot) continue;
+              const g = geraakt.get(sg) ?? { links: 0, rechts: 0 };
+              g[r.kant]++;
+              geraakt.set(sg, g);
+            }
+            c = tot;
+          }
+          for (const [sg, g] of geraakt) {
+            const huidig = sg.zoom ?? basisZoom(sg);
+            const wijder = Math.round(Math.max(1, huidig - 0.15) * 1000) / 1000;
+            // Links afgesneden: het hoofd zit links van de uitsnede, dus de
+            // uitsnede een fractie naar links (en omgekeerd).
+            const schuif = (g.links >= g.rechts ? -1 : 1) * 0.03;
+            sg.zoom = wijder;
+            sg.zoomPlafond = Math.min(sg.zoomPlafond ?? Infinity, wijder);
+            if (sg.gezicht) sg.gezicht = { ...sg.gezicht, x: Math.min(1, Math.max(0, sg.gezicht.x + schuif)) };
+            if (typeof sg.focusX === 'number') sg.focusX = Math.min(1, Math.max(0, sg.focusX + schuif));
+            if (sg.spoor?.length) sg.spoor = sg.spoor.map((p) => ({ t: p.t, x: Math.min(1, Math.max(0, p.x + schuif)) }));
+            console.log(
+              `     zelfherstel eindbeeld: shot ${sg.volgorde} hoofd ${g.links + g.rechts}× tegen de ${g.links >= g.rechts ? 'linker' : 'rechter'}rand → zoom ${huidig.toFixed(2)} → ${wijder.toFixed(2)}, kader ${schuif < 0 ? 'naar links' : 'naar rechts'}`,
+            );
+          }
+          if (geraakt.size) continue;
+        }
+      } catch (e) {
+        console.log(`     zelfherstel eindbeeld overgeslagen (${(e as Error).message.slice(0, 70)})`);
       }
     }
 

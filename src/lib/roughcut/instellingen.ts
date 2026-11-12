@@ -67,6 +67,9 @@ const STANDAARD = {
   EINDKEURING_LEEG_MAX_S: 0.7,
   /** Hoogstens dit aandeel van de momenten zonder mens (detectie mist weleens een profiel). */
   EINDKEURING_LEEG_MAX_AANDEEL: 0.15,
+  /** Hoofd tegen de beeldrand: zo lang aaneen, of dit aandeel van de momenten, is een fout. */
+  EINDKEURING_RAND_MAX_S: 0.5,
+  EINDKEURING_RAND_MAX_AANDEEL: 0.05,
   /** Zwart beeld vanaf deze duur is een fout. */
   EINDKEURING_ZWART_MIN_S: 0.25,
   /** De eerste gesproken lettergreep hoort binnen deze tijd te klinken. */

@@ -2,7 +2,13 @@
 """Staat er op deze momenten een mens in het eindbeeld?
 
 Gebruik: eindbeeld.py <mp4> '<json-lijst van tijden>'
-Uitvoer: json-lijst met true/false per tijd (null als het frame niet te lezen was).
+Uitvoer: json-lijst per tijd: true (mens in beeld), false (niemand), "links" of
+"rechts" (het grootste gezicht raakt die beeldrand: het hoofd is afgesneden), of
+null als het frame niet te lezen was.
+
+De randmeting is geijkt op vier renders: in drie goede clips (378 momenten)
+raakt geen enkel gezichtsvak de rand; in de Koen-clip met een half hoofd in
+beeld 11 van de 160.
 
 Bewust los van gezichten.py: daar wordt op de bron gemeten, waar gezichten
 klein zijn. In het eindbeeld (1080x1920) vult een gezicht tot de helft van de
@@ -40,6 +46,13 @@ for t in tijden:
         _, r = det.detect(klein)
         if r is not None and len(r):
             gevonden = True
+            # Het grootste gezicht: raakt zijn vak de linker- of rechterrand?
+            x, _y, w, _h = [float(v) for v in max(r, key=lambda q: q[2] * q[3])[:4]]
+            b = klein.shape[1]
+            if x < 0.01 * b:
+                gevonden = "links"
+            elif x + w > 0.99 * b:
+                gevonden = "rechts"
             break
     uit.append(gevonden)
 print(json.dumps(uit))

@@ -81,9 +81,13 @@ export function keurZwart(stukken: [number, number][] | null): KeuringRegel {
 
 // --------------------------------------------------------- mens in beeld
 
-/** Per meetmoment: staat er een gezicht in het eindbeeld? null = meting van dat moment mislukt. */
-export type BeeldMonster = { t: number; gezicht: boolean | null };
-export type BeeldMeter = (tijden: number[]) => Promise<(boolean | null)[] | null>;
+/**
+ * Per meetmoment: staat er een gezicht in het eindbeeld? true/false, of
+ * 'links'/'rechts' als het grootste gezicht die beeldrand raakt (afgesneden
+ * hoofd). null = meting van dat moment mislukt.
+ */
+export type BeeldUitslag = boolean | 'links' | 'rechts' | null;
+export type BeeldMeter = (tijden: number[]) => Promise<BeeldUitslag[] | null>;
 
 /** De standaardmeter: scripts/eindbeeld.py op het eindbestand (verkleind, zie daar waarom). */
 export function beeldMeterVia(montagePad: string, py: { cmd: string; voor: string[] }): BeeldMeter {
@@ -92,7 +96,7 @@ export function beeldMeterVia(montagePad: string, py: { cmd: string; voor: strin
     try {
       // OpenCV schrijft soms zelf naar stdout; pak de laatste regel die JSON is.
       const regel = (res.stdout ?? '').split('\n').map((r) => r.trim()).reverse().find((r) => r.startsWith('['));
-      const m = JSON.parse(regel || '[]') as (boolean | null)[];
+      const m = JSON.parse(regel || '[]') as BeeldUitslag[];
       return m.length === tijden.length ? m : null;
     } catch {
       return null;
@@ -133,10 +137,7 @@ export function tijdlijnZonderMens(segmenten: Shot[], kader: Kader): [number, nu
 export async function keurMensInBeeld(duur: number, meter: BeeldMeter, zonderMens: [number, number][] = []): Promise<KeuringRegel> {
   const naam = 'mens in beeld (eindbestand)';
   const stap = 1 / instelling('EINDKEURING_FPS');
-  const tijden: number[] = [];
-  for (let t = stap / 2; t < duur - 0.1; t += stap) {
-    if (!zonderMens.some(([a, b]) => t >= a && t <= b)) tijden.push(Math.round(t * 100) / 100);
-  }
+  const tijden = eindbeeldTijden(duur, zonderMens);
   if (tijden.length === 0) {
     return verplicht({ naam, goed: true, detail: 'de hele clip is graphic; geen mens verwacht' });
   }
@@ -169,6 +170,55 @@ export async function keurMensInBeeld(duur: number, meter: BeeldMeter, zonderMen
     goed: fouten.length === 0,
     detail: fouten.length ? fouten.join('; ') : `${gemeten} momenten bekeken, ${leeg.length} zonder gezicht (los, korter dan ${maxLeeg} s)`,
   });
+}
+
+/** De meetmomenten van de eindkeuring: EINDKEURING_FPS keer per seconde, buiten de graphics. */
+export function eindbeeldTijden(duur: number, zonderMens: [number, number][] = []): number[] {
+  const stap = 1 / instelling('EINDKEURING_FPS');
+  const tijden: number[] = [];
+  for (let t = stap / 2; t < duur - 0.1; t += stap) {
+    if (!zonderMens.some(([a, b]) => t >= a && t <= b)) tijden.push(Math.round(t * 100) / 100);
+  }
+  return tijden;
+}
+
+/** Momenten waarop het hoofd tegen de beeldrand staat: [tijd, kant]. */
+export function randMomenten(tijden: number[], m: BeeldUitslag[]): { t: number; kant: 'links' | 'rechts' }[] {
+  return tijden.flatMap((t, i) => (m[i] === 'links' || m[i] === 'rechts' ? [{ t, kant: m[i] as 'links' | 'rechts' }] : []));
+}
+
+/**
+ * Regel: het hoofd staat heel in beeld. Een gezicht dat de linker- of
+ * rechterrand raakt is afgesneden — de regel "mens in beeld" ziet dat niet
+ * (er ís een gezicht), en de planmeting miste het in de Koen-clip.
+ */
+export async function keurHoofdHeel(duur: number, meter: BeeldMeter, zonderMens: [number, number][] = []): Promise<KeuringRegel> {
+  const naam = 'hoofd heel in beeld (eindbestand)';
+  const tijden = eindbeeldTijden(duur, zonderMens);
+  if (tijden.length === 0) return verplicht({ naam, goed: true, detail: 'de hele clip is graphic' });
+  const m = await meter(tijden);
+  if (!m) return verplicht({ naam, goed: null, detail: 'gezichtsmeting op het eindbestand mislukt' });
+  const rand = randMomenten(tijden, m);
+  const stap = 1 / instelling('EINDKEURING_FPS');
+  let langste = 0;
+  let reeks = 0;
+  let vanaf = 0;
+  let langsteVanaf = 0;
+  for (let i = 0; i < tijden.length; i++) {
+    if (m[i] === 'links' || m[i] === 'rechts') {
+      if (reeks === 0) vanaf = tijden[i];
+      reeks++;
+      if (reeks > langste) {
+        langste = reeks;
+        langsteVanaf = vanaf;
+      }
+    } else reeks = 0;
+  }
+  const aandeel = rand.length / tijden.length;
+  const fouten: string[] = [];
+  if (langste * stap >= instelling('EINDKEURING_RAND_MAX_S')) fouten.push(`hoofd ${(langste * stap).toFixed(1)} s tegen de ${rand.find((r) => r.t >= langsteVanaf)?.kant === 'links' ? 'linker' : 'rechter'}rand vanaf ${langsteVanaf.toFixed(1)} s`);
+  if (aandeel > instelling('EINDKEURING_RAND_MAX_AANDEEL')) fouten.push(`op ${Math.round(aandeel * 100)}% van de momenten raakt het hoofd de rand`);
+  return verplicht({ naam, goed: fouten.length === 0, detail: fouten.length ? fouten.join('; ') : `${tijden.length} momenten bekeken, ${rand.length} tegen de rand` });
 }
 
 // ------------------------------------------------------------ hook en einde
@@ -239,14 +289,24 @@ export async function keurEindbestand(
     ondertitelsVerwacht: boolean;
   },
 ): Promise<KeuringRegel[]> {
-  const meter = opties.beeldMeter ?? beeldMeterVia(montagePad, opties.python ?? { cmd: 'python3', voor: [] });
-  const [geluid, zwart, mens] = await Promise.all([
+  // Eén meting voor beide beeldregels (zelfde momenten).
+  const ruw = opties.beeldMeter ?? beeldMeterVia(montagePad, opties.python ?? { cmd: 'python3', voor: [] });
+  const onthouden = new Map<string, Promise<BeeldUitslag[] | null>>();
+  const meter: BeeldMeter = (tijden) => {
+    const sleutel = tijden.join(',');
+    if (!onthouden.has(sleutel)) onthouden.set(sleutel, ruw(tijden));
+    return onthouden.get(sleutel)!;
+  };
+  const zonderMens = tijdlijnZonderMens(segmenten, opties.kader);
+  const [geluid, zwart, mens, hoofd] = await Promise.all([
     meetGeluid(montagePad).then(keurGeluid),
     meetZwart(montagePad).then(keurZwart),
-    keurMensInBeeld(opties.duur, meter, tijdlijnZonderMens(segmenten, opties.kader)),
+    keurMensInBeeld(opties.duur, meter, zonderMens),
+    keurHoofdHeel(opties.duur, meter, zonderMens),
   ]);
   return [
     mens,
+    hoofd,
     zwart,
     geluid,
     keurHook(segmenten, bronWoorden),

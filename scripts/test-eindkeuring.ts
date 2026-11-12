@@ -3,7 +3,7 @@
  * meters zijn nagebootst; de ijking op echte clips staat bij de instellingen.
  */
 import type { Shot } from '../src/lib/roughcut';
-import { keurGeluid, keurHook, keurMensInBeeld, keurOndertitelsAanwezig, keurStaart, keurZwart, tijdlijnZonderMens } from '../src/lib/roughcut/eindkeuring';
+import { keurGeluid, keurHoofdHeel, keurHook, keurMensInBeeld, keurOndertitelsAanwezig, keurStaart, keurZwart, tijdlijnZonderMens, type BeeldUitslag } from '../src/lib/roughcut/eindkeuring';
 import { keuringStatus, type KeuringRegel } from '../src/lib/roughcut/keuring';
 import type { BronWoord } from '../src/lib/roughcut/woorden';
 
@@ -43,6 +43,18 @@ async function main() {
     toets('nergens een gezicht: niet "goed" maar "bekijk de clip" (verplicht)', nergens.goed === null && nergens.verplicht === true, nergens.detail);
     const kapot = await keurMensInBeeld(20, meter([], true));
     toets('meting mislukt: verplicht, dus review', kapot.goed === null && keuringStatus([kapot, { naam: 'x', goed: true, detail: '' }]) === 'review_nodig');
+  }
+
+  console.log('hoofd heel in beeld');
+  {
+    const randMeter = (rand: [number, number][], kant: 'links' | 'rechts' = 'links') => async (tijden: number[]): Promise<BeeldUitslag[]> =>
+      tijden.map((t) => (rand.some(([a, b]) => t >= a && t <= b) ? kant : true));
+    toets('nergens tegen de rand: goed', (await keurHoofdHeel(28, randMeter([]))).goed === true);
+    const half = await keurHoofdHeel(40, randMeter([[11.5, 12.2]]));
+    toets('0,75 s tegen de linkerrand: afgekeurd met tijd en kant', half.goed === false && /linkerrand vanaf 11\.6/.test(half.detail), half.detail);
+    toets('één los moment: goed', (await keurHoofdHeel(40, randMeter([[5.3, 5.4]]))).goed === true);
+    // Een hoofd tegen de rand telt wél als "mens in beeld".
+    toets('rand telt als mens in beeld', (await keurMensInBeeld(40, randMeter([[11.5, 12.2]]))).goed === true);
   }
 
   console.log('graphics op de tijdlijn');
